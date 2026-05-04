@@ -1,0 +1,31 @@
+[package]
+name = "scrap4rs"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+description = "Static test smell detector for Rust — finds zero-assertion, tautological, no-op, and surface-only test bodies"
+keywords = ["scrap", "testing", "quality", "static-analysis", "smell"]
+categories = ["development-tools::testing", "command-line-utilities"]
+rust-version.workspace = true
+
+# Binstall metadata is intentionally not wired during v0.x — see ops
+# kickstart plan §3 for the no-release-until-v1.0 policy. When v1.0
+# lands, mirror crap4rs's [package.metadata.binstall] block.
+
+[lib]
+name = "scrap4rs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "scrap4rs"
+path = "src/main.rs"
+
+[dependencies]
+# Real dependencies (clap, syn, serde, etc.) land via subsequent v0.1
+# sub-issue PRs (P5 onwards). The bootstrap commit ships a hello-world
+# skeleton so the workspace builds cleanly on a stable toolchain.
+
+[dev-dependencies]
