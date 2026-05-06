@@ -2,13 +2,25 @@
 //!
 //! Designed for future extraction into `scrap-core` at v1.0. Anything
 //! that mentions `syn`, `walkdir`, `proc-macro2`, or any I/O type
-//! belongs in `adapters/`, never here.
+//! belongs in `adapters/`, never here. The only external dependency
+//! permitted is `serde` (derive only), so wire shapes round-trip
+//! identically across the v1.0 split.
 //!
-//! Module skeleton:
-//! - `finding.rs` — `Finding`, `Severity`, `Actionability` (v0.1 P5)
-//! - `smell.rs` — `SmellCategory` enum (v0.1 P5)
-//! - `report.rs` — `Report`, `FileReport`, `Summary` (v0.1 P5)
-//! - `threshold.rs` — `ThresholdMode` (v0.1 P5)
-//! - `assertion_sources.rs` — implicit-assertion recognition list (v0.1 P6)
-//! - `score.rs` — saturating-curve helpers (v0.3+)
-//! - `types.rs` — `Location`, `Span`, `FilePath`, `QualifiedName` (v0.1 P5)
+//! Module roster (live):
+//! - `types` — `Span`, `FilePath`, `QualifiedName`, `TestIdentity`, `InvertedSpan`
+//! - `classification` — `Severity`, `Actionability`, `Confidence`, `RemediationMode`, `BaselineVerdict`
+//! - `smell` — `SmellCategory`, `Smell`
+//! - `finding` — `Finding`
+//! - `report` — `Report`, `FileReport`, `Summary`, `Distribution`
+//! - `threshold` — `ThresholdMode`
+//!
+//! Module roster (planned, not yet implemented):
+//! - `assertion_sources` — implicit-assertion recognition list (lands with scrap-rs#4 / P6)
+//! - `score` — saturating-curve helpers (v0.3+ per kickstart plan §3)
+
+pub mod classification;
+pub mod finding;
+pub mod report;
+pub mod smell;
+pub mod threshold;
+pub mod types;
