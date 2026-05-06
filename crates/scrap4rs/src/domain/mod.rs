@@ -2,13 +2,21 @@
 //!
 //! Designed for future extraction into `scrap-core` at v1.0. Anything
 //! that mentions `syn`, `walkdir`, `proc-macro2`, or any I/O type
-//! belongs in `adapters/`, never here.
+//! belongs in `adapters/`, never here. The only external dependency
+//! permitted is `serde` (derive only), so wire shapes round-trip
+//! identically across the v1.0 split.
 //!
-//! Module skeleton:
-//! - `finding.rs` — `Finding`, `Severity`, `Actionability` (v0.1 P5)
-//! - `smell.rs` — `SmellCategory` enum (v0.1 P5)
-//! - `report.rs` — `Report`, `FileReport`, `Summary` (v0.1 P5)
-//! - `threshold.rs` — `ThresholdMode` (v0.1 P5)
-//! - `assertion_sources.rs` — implicit-assertion recognition list (v0.1 P6)
-//! - `score.rs` — saturating-curve helpers (v0.3+)
-//! - `types.rs` — `Location`, `Span`, `FilePath`, `QualifiedName` (v0.1 P5)
+//! Module roster:
+//! - `types` — `Span`, `FilePath`, `QualifiedName`, `Location`, `TestIdentity`
+//! - `smell` — `SmellCategory`, `Smell`
+//! - `finding` — `Severity`, `Actionability`, `Finding`
+//! - `report` — `Report`, `FileReport`, `ExampleReport`, `Summary`, `Distribution`
+//! - `threshold` — `ThresholdMode`
+//! - `assertion_sources` — implicit-assertion recognition list (lands with P6)
+//! - `score` — saturating-curve helpers (v0.3+)
+
+pub mod finding;
+pub mod report;
+pub mod smell;
+pub mod threshold;
+pub mod types;

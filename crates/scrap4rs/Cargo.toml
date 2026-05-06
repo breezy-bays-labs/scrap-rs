@@ -24,8 +24,12 @@ name = "scrap4rs"
 path = "src/main.rs"
 
 [dependencies]
-# Real dependencies (clap, syn, serde, etc.) land via subsequent v0.1
-# sub-issue PRs (P5 onwards). The bootstrap commit ships a hello-world
-# skeleton so the workspace builds cleanly on a stable toolchain.
+# AST parsing (syn), file walking (walkdir/ignore), CLI (clap), and
+# rendering crates land in subsequent v0.1 sub-issue PRs. Domain types
+# only depend on serde for derive-only (de)serialization — no
+# serde-on-AST in domain per hexagonal layering invariant.
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
+proptest = "1"
+serde_json = "1"
