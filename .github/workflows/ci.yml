@@ -85,6 +85,45 @@ jobs:
           path: lcov.info
           retention-days: 7
 
-  # Self-check, mutants, and scorecard-smoke jobs land as detectors come
+  msrv:
+    name: MSRV (1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: scrap-rs-msrv
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo check --all-targets --locked
+
+  deny:
+    name: cargo-deny (advisories + licenses + bans)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  docs:
+    name: cargo doc (warnings as errors)
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: scrap-rs
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo doc --no-deps --document-private-items
+
+  # cargo-public-api (semver-style public API gate) and cargo-mutants
+  # (mutation testing) are deliberately deferred. cargo-public-api lands
+  # at v1.0 when semver gating begins; cargo-mutants lands with the
+  # first detector PR (P13) when mutating real logic earns its keep.
+  # Self-check, scorecard-smoke, and crap-self land as detectors come
   # online (sub-issues P24/P25). They require a non-trivial scrap4rs
   # binary to operate against, so they are deferred from the bootstrap.

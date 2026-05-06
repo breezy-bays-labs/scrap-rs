@@ -16,7 +16,9 @@ use std::path::PathBuf;
 /// becomes a typed precondition violation, not a silent semantic bug.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InvertedSpan {
+    /// The supplied start line (greater than `end_line`).
     pub start_line: u32,
+    /// The supplied end line (less than `start_line`).
     pub end_line: u32,
 }
 
@@ -40,7 +42,9 @@ impl std::error::Error for InvertedSpan {}
 /// `schema_version: 1`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Span {
+    /// 1-based inclusive line where the span begins.
     pub start_line: u32,
+    /// 1-based inclusive line where the span ends.
     pub end_line: u32,
 }
 
@@ -104,10 +108,13 @@ impl Span {
 pub struct FilePath(PathBuf);
 
 impl FilePath {
+    /// Wrap any `PathBuf`-convertible value as a `FilePath`.
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self(path.into())
     }
 
+    /// Borrow the wrapped path. Use when interoperating with std I/O
+    /// or path-manipulation routines at the adapter boundary.
     pub fn as_path(&self) -> &std::path::Path {
         &self.0
     }
@@ -127,10 +134,15 @@ impl FilePath {
 pub struct QualifiedName(String);
 
 impl QualifiedName {
+    /// Wrap any string-convertible value as a `QualifiedName`. The
+    /// caller is responsible for choosing a separator consistent with
+    /// the source language (`::` for Rust paths).
     pub fn new(name: impl Into<String>) -> Self {
         Self(name.into())
     }
 
+    /// Borrow the wrapped string. Use when formatting reports or
+    /// interoperating with string-based APIs at the adapter boundary.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -140,12 +152,18 @@ impl QualifiedName {
 /// name + span. Each `Finding` carries exactly one.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TestIdentity {
+    /// Source file containing the test.
     pub file_path: FilePath,
+    /// Fully qualified Rust path of the test function.
     pub qualified_name: QualifiedName,
+    /// Inclusive line range covered by the test body.
     pub span: Span,
 }
 
 impl TestIdentity {
+    /// Construct a `TestIdentity` from its three coordinates. Adapters
+    /// at the test-discovery boundary call this once per discovered
+    /// `#[test]` fn.
     pub fn new(file_path: FilePath, qualified_name: QualifiedName, span: Span) -> Self {
         Self {
             file_path,

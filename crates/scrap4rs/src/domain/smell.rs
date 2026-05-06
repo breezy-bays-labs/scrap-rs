@@ -70,10 +70,18 @@ impl SmellCategory {
 /// classifier without changing the wire shape.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Smell {
+    /// Which smell category the detector matched.
     pub category: SmellCategory,
+    /// Severity bucket for this instance.
     pub severity: Severity,
+    /// Recommended follow-up class.
     pub actionability: Actionability,
+    /// Human-readable follow-up suggestion. v0.1 uses static templates
+    /// from `default_message`; detector-specific messages flow through
+    /// `Smell::with_message`.
     pub ai_actionability_message: String,
+    /// Score contribution from this smell. Sum across all smells on a
+    /// `Finding` becomes the `scrap_score`.
     pub penalty: u32,
 }
 

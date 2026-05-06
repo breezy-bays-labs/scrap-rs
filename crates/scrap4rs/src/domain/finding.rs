@@ -26,9 +26,15 @@ use serde::{Deserialize, Serialize};
 /// not consult thresholds themselves.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Finding {
+    /// Identity of the test this finding applies to.
     pub test: TestIdentity,
+    /// All smells the detector pipeline emitted for this test.
     pub smells: Vec<Smell>,
+    /// Aggregate score for this test. v0.1: sum of `Smell::penalty`
+    /// across `smells`. v0.3+: saturating curve replaces the sum.
     pub scrap_score: f64,
+    /// True when `scrap_score` exceeds the active `ThresholdMode`
+    /// cutoff. Set by the reporter, not by domain construction.
     pub exceeds_threshold: bool,
     /// `#[allow(scrap::*)]` attributes observed on or above the test —
     /// reported for visibility but suppress threshold contribution.
@@ -36,6 +42,10 @@ pub struct Finding {
 }
 
 impl Finding {
+    /// Build a `Finding` from a test identity and detector-emitted
+    /// smells. Computes `scrap_score` as the sum of penalties; leaves
+    /// `exceeds_threshold` false (the reporter sets it) and `opt_outs`
+    /// empty (the parser populates it post-construction).
     pub fn new(test: TestIdentity, smells: Vec<Smell>) -> Self {
         let scrap_score = smells.iter().map(|s| f64::from(s.penalty)).sum();
         Self {

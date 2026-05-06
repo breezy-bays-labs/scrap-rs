@@ -22,10 +22,15 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Severity {
+    /// Low severity — informational; never trips a strict gate.
     #[serde(rename = "low")]
     Low,
+    /// Moderate severity — surfaces in default-mode reports but does
+    /// not necessarily fail the gate.
     #[serde(rename = "moderate")]
     Moderate,
+    /// High severity — top of the bucket; flagged prominently and
+    /// usually contributes to gate failure.
     #[serde(rename = "high")]
     High,
 }
@@ -42,10 +47,16 @@ pub enum Severity {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Actionability {
+    /// Mechanical refactor candidate — the smell shape suggests an
+    /// automatable transformation (add an assertion, replace tautology).
     #[serde(rename = "auto_refactor")]
     AutoRefactor,
+    /// Test boundary needs to move — split a multi-purpose example
+    /// into focused tests.
     #[serde(rename = "manual_split")]
     ManualSplit,
+    /// Human review needed before any change — context-dependent or
+    /// ambiguous signal.
     #[serde(rename = "review_first")]
     ReviewFirst,
 }
@@ -63,10 +74,13 @@ pub enum Actionability {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Confidence {
+    /// Low confidence — heuristic match, surface as suggestion only.
     #[serde(rename = "low")]
     Low,
+    /// Medium confidence — most signals align; reasonable to act on.
     #[serde(rename = "medium")]
     Medium,
+    /// High confidence — multiple signals agree; safe to act on.
     #[serde(rename = "high")]
     High,
 }
@@ -83,10 +97,14 @@ pub enum Confidence {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum RemediationMode {
+    /// No structural change advised — leave the test as-is.
     #[serde(rename = "stable")]
     Stable,
+    /// Refactor in place — change the test body without moving its
+    /// boundary.
     #[serde(rename = "local")]
     Local,
+    /// Split the example — the test boundary itself needs to move.
     #[serde(rename = "split")]
     Split,
 }
@@ -99,12 +117,16 @@ pub enum RemediationMode {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum BaselineVerdict {
+    /// Current run scores strictly better than baseline.
     #[serde(rename = "improved")]
     Improved,
+    /// Current run scores strictly worse than baseline.
     #[serde(rename = "worse")]
     Worse,
+    /// Some metrics improved, others regressed.
     #[serde(rename = "mixed")]
     Mixed,
+    /// Current run is identical to baseline.
     #[serde(rename = "unchanged")]
     Unchanged,
 }
