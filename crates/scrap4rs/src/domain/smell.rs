@@ -6,7 +6,7 @@
 //! v0.3–v0.5; `#[non_exhaustive]` lets new variants slot in without
 //! breaking the wire envelope.
 
-use crate::domain::finding::{Actionability, Severity};
+use crate::domain::classification::{Actionability, Severity};
 use serde::{Deserialize, Serialize};
 
 /// Test smell taxonomy. Wire format mirrors envelope §6 in the kickstart
@@ -44,7 +44,10 @@ pub enum SmellCategory {
 impl SmellCategory {
     /// Stable wire string for this smell category. Used by reporters
     /// that need the category outside a serde context (e.g. SARIF
-    /// `ruleId` fields, scorecard-row tags).
+    /// `ruleId` fields, scorecard-row tags). Kept in lock-step with
+    /// the per-variant `#[serde(rename = ...)]` annotations; the
+    /// `enum_wire_strings_match_serde_output` test in the crate root
+    /// pins the agreement.
     pub fn as_wire_str(&self) -> &'static str {
         match self {
             Self::ZeroAssertion => "zero_assertion",
@@ -62,10 +65,10 @@ impl SmellCategory {
 ///
 /// `ai_actionability_message` is the human-facing follow-up suggestion.
 /// v0.1 defaults to a static template per category (see
-/// `Smell::default_message`); v0.5 swaps in context-aware messages from
-/// the actionability classifier.
+/// `Smell::default_message`); detectors that want to supply context-
+/// aware text can use `Smell::with_message`. v0.5 swaps in a richer
+/// classifier without changing the wire shape.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[non_exhaustive]
 pub struct Smell {
     pub category: SmellCategory,
     pub severity: Severity,
@@ -76,19 +79,39 @@ pub struct Smell {
 
 impl Smell {
     /// Build a `Smell` with the v0.1 default actionability message for
-    /// the given category. Detectors call this so messages stay
-    /// consistent across the codebase until the v0.5 classifier ships.
+    /// the given category. Detectors call this when the static
+    /// template suffices.
     pub fn new(
         category: SmellCategory,
         severity: Severity,
         actionability: Actionability,
         penalty: u32,
     ) -> Self {
-        Self {
-            ai_actionability_message: Self::default_message(category).to_owned(),
+        Self::with_message(
             category,
             severity,
             actionability,
+            penalty,
+            Self::default_message(category),
+        )
+    }
+
+    /// Build a `Smell` with a custom actionability message. Detectors
+    /// emitting context-aware text (e.g., "split this 47-line test
+    /// into 3 smaller examples") call this directly; the v0.5 5-class
+    /// classifier will route through here exclusively.
+    pub fn with_message(
+        category: SmellCategory,
+        severity: Severity,
+        actionability: Actionability,
+        penalty: u32,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            category,
+            severity,
+            actionability,
+            ai_actionability_message: message.into(),
             penalty,
         }
     }
@@ -150,6 +173,23 @@ mod tests {
             Smell::default_message(SmellCategory::ZeroAssertion),
         );
         assert_eq!(s.penalty, 10);
+    }
+
+    #[test]
+    fn smell_with_message_uses_supplied_text() {
+        let s = Smell::with_message(
+            SmellCategory::LargeExample,
+            Severity::Moderate,
+            Actionability::ManualSplit,
+            4,
+            "Split this 47-line test into three focused examples.",
+        );
+        assert_eq!(
+            s.ai_actionability_message,
+            "Split this 47-line test into three focused examples.",
+        );
+        assert_eq!(s.category, SmellCategory::LargeExample);
+        assert_eq!(s.penalty, 4);
     }
 
     #[test]

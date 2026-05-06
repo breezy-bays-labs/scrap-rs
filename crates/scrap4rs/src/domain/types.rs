@@ -6,6 +6,32 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Error returned by `Span::try_new` when the supplied range is
+/// inverted (`start_line > end_line`).
+///
+/// Adapters that source spans from `syn::spanned::Spanned` always
+/// produce well-ordered ranges and use `Span::new`. Adapters that
+/// reconstruct spans from external sources (LSP positions, diff hunks,
+/// baseline-diff replay) should prefer `try_new` so an inverted range
+/// becomes a typed precondition violation, not a silent semantic bug.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InvertedSpan {
+    pub start_line: u32,
+    pub end_line: u32,
+}
+
+impl std::fmt::Display for InvertedSpan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "inverted span: start_line {} > end_line {}",
+            self.start_line, self.end_line
+        )
+    }
+}
+
+impl std::error::Error for InvertedSpan {}
+
 /// 1-based inclusive line range into a source file.
 ///
 /// Columns are intentionally omitted for v0.1 — every detector operates
@@ -13,7 +39,6 @@ use std::path::PathBuf;
 /// extend the wire envelope additively at v0.2 without breaking
 /// `schema_version: 1`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[non_exhaustive]
 pub struct Span {
     pub start_line: u32,
     pub end_line: u32,
@@ -23,15 +48,45 @@ impl Span {
     /// Construct a span over the inclusive line range `[start_line,
     /// end_line]`. Caller is responsible for `start_line <= end_line`;
     /// detectors emit spans pulled directly from `syn::spanned::Spanned`,
-    /// which always produces well-ordered ranges.
+    /// which always produces well-ordered ranges. A `debug_assert!`
+    /// catches inverted ranges in dev/test builds; release builds rely
+    /// on the `line_count` saturating arithmetic.
     pub fn new(start_line: u32, end_line: u32) -> Self {
+        debug_assert!(
+            start_line <= end_line,
+            "Span::new: inverted range {start_line}..{end_line} (use Span::try_new for fallible construction)",
+        );
         Self {
             start_line,
             end_line,
         }
     }
 
-    /// Number of source lines covered, inclusive on both ends.
+    /// Fallible constructor: returns `Err(InvertedSpan)` when
+    /// `start_line > end_line`. Prefer this over `Span::new` when the
+    /// caller cannot guarantee well-ordered input (e.g., reconstructing
+    /// spans from external LSP positions or baseline-diff replay).
+    pub fn try_new(start_line: u32, end_line: u32) -> Result<Self, InvertedSpan> {
+        if start_line > end_line {
+            Err(InvertedSpan {
+                start_line,
+                end_line,
+            })
+        } else {
+            Ok(Self {
+                start_line,
+                end_line,
+            })
+        }
+    }
+
+    /// Number of source lines covered, inclusive on both ends. For a
+    /// well-formed span this is `end_line - start_line + 1`. For an
+    /// inverted span (which `try_new` rejects but `new` permits in
+    /// release builds), the saturating arithmetic returns `1` — a
+    /// defensive value that prevents integer underflow but is
+    /// semantically meaningless. Callers that need to distinguish
+    /// "1-line span" from "inverted span" should use `try_new`.
     pub fn line_count(&self) -> u32 {
         self.end_line
             .saturating_sub(self.start_line)
@@ -46,7 +101,6 @@ impl Span {
 /// `FilePath` constructed at the source-discovery boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-#[non_exhaustive]
 pub struct FilePath(PathBuf);
 
 impl FilePath {
@@ -64,10 +118,12 @@ impl FilePath {
 ///
 /// Newtype around `String` so reporters and aggregators can match on
 /// `QualifiedName` without trafficking arbitrary strings through the
-/// domain.
+/// domain. The wire format stays a flat string forever — when scrap-core
+/// extracts at v1.0 and gains a TS adapter, segment-aware constructors
+/// can join with `::` (Rust) or `/` (TS file paths) at the adapter
+/// boundary without changing this newtype's wire shape.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-#[non_exhaustive]
 pub struct QualifiedName(String);
 
 impl QualifiedName {
@@ -80,25 +136,9 @@ impl QualifiedName {
     }
 }
 
-/// Concrete location of a test in the analyzed tree.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct Location {
-    pub file_path: FilePath,
-    pub span: Span,
-}
-
-impl Location {
-    pub fn new(file_path: FilePath, span: Span) -> Self {
-        Self { file_path, span }
-    }
-}
-
 /// Identity of a single example (Rust `#[test]` fn) — file + qualified
-/// name + span. Each `Finding` and each `ExampleReport` carries exactly
-/// one.
+/// name + span. Each `Finding` carries exactly one.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[non_exhaustive]
 pub struct TestIdentity {
     pub file_path: FilePath,
     pub qualified_name: QualifiedName,
@@ -135,6 +175,20 @@ mod tests {
     }
 
     #[test]
+    fn span_try_new_rejects_inverted_range() {
+        let err = Span::try_new(10, 5).unwrap_err();
+        assert_eq!(err.start_line, 10);
+        assert_eq!(err.end_line, 5);
+        assert_eq!(err.to_string(), "inverted span: start_line 10 > end_line 5");
+    }
+
+    #[test]
+    fn span_try_new_accepts_equal_lines() {
+        let span = Span::try_new(7, 7).unwrap();
+        assert_eq!(span.line_count(), 1);
+    }
+
+    #[test]
     fn file_path_and_qualified_name_are_transparent() {
         let fp = FilePath::new("crates/foo/src/bar.rs");
         let qn = QualifiedName::new("foo::bar::tests::it");
@@ -159,14 +213,23 @@ mod tests {
         }
 
         #[test]
-        fn span_line_count_saturates_when_inverted(
-            start in 1u32..1_000_000,
-            end in 0u32..,
+        fn span_try_new_rejects_strictly_inverted(
+            end in 0u32..1_000_000,
+            len in 1u32..10_000,
         ) {
-            // When end < start (defensive, never produced by adapters),
-            // line_count() must not panic and must return at least 1.
-            let count = Span::new(start, end).line_count();
-            prop_assert!(count >= 1);
+            let start = end + len;
+            // start > end: must reject.
+            prop_assert!(Span::try_new(start, end).is_err());
+        }
+
+        #[test]
+        fn span_try_new_accepts_well_ordered(
+            start in 1u32..1_000_000,
+            len in 0u32..10_000,
+        ) {
+            let end = start + len;
+            let span = Span::try_new(start, end).unwrap();
+            prop_assert_eq!(span.line_count(), len + 1);
         }
     }
 }

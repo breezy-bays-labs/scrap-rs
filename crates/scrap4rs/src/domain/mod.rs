@@ -6,15 +6,19 @@
 //! permitted is `serde` (derive only), so wire shapes round-trip
 //! identically across the v1.0 split.
 //!
-//! Module roster:
-//! - `types` — `Span`, `FilePath`, `QualifiedName`, `Location`, `TestIdentity`
+//! Module roster (live):
+//! - `types` — `Span`, `FilePath`, `QualifiedName`, `TestIdentity`, `InvertedSpan`
+//! - `classification` — `Severity`, `Actionability`, `Confidence`, `RemediationMode`, `BaselineVerdict`
 //! - `smell` — `SmellCategory`, `Smell`
-//! - `finding` — `Severity`, `Actionability`, `Finding`
-//! - `report` — `Report`, `FileReport`, `ExampleReport`, `Summary`, `Distribution`
+//! - `finding` — `Finding`
+//! - `report` — `Report`, `FileReport`, `Summary`, `Distribution`
 //! - `threshold` — `ThresholdMode`
-//! - `assertion_sources` — implicit-assertion recognition list (lands with P6)
-//! - `score` — saturating-curve helpers (v0.3+)
+//!
+//! Module roster (planned, not yet implemented):
+//! - `assertion_sources` — implicit-assertion recognition list (lands with scrap-rs#4 / P6)
+//! - `score` — saturating-curve helpers (v0.3+ per kickstart plan §3)
 
+pub mod classification;
 pub mod finding;
 pub mod report;
 pub mod smell;

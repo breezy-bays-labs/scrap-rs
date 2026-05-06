@@ -1,0 +1,50 @@
+---
+source: crates/scrap4rs/tests/wire_envelope_snapshot.rs
+assertion_line: 65
+expression: pretty
+---
+{
+  "files": [
+    {
+      "file_path": "crates/foo/src/bar.rs",
+      "findings": [
+        {
+          "exceeds_threshold": false,
+          "opt_outs": [],
+          "scrap_score": 10.0,
+          "smells": [
+            {
+              "actionability": "auto_refactor",
+              "ai_actionability_message": "Add assertions for the function's observable effects.",
+              "category": "zero_assertion",
+              "penalty": 10,
+              "severity": "high"
+            }
+          ],
+          "test": {
+            "file_path": "crates/foo/src/bar.rs",
+            "qualified_name": "foo::bar::tests::it_does_a_thing",
+            "span": {
+              "end_line": 51,
+              "start_line": 42
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "passed": false,
+  "summary": {
+    "average_scrap_score": 0.024,
+    "by_severity": {
+      "high": 1
+    },
+    "by_smell": {
+      "zero_assertion": 1
+    },
+    "exceeding_threshold": 1,
+    "max_scrap_score": 10.0,
+    "total_files": 38,
+    "total_tests": 412
+  }
+}
