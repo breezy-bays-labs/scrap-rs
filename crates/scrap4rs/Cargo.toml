@@ -9,6 +9,7 @@ homepage.workspace = true
 description = "Static test smell detector for Rust — finds zero-assertion, tautological, no-op, and surface-only test bodies"
 keywords = ["scrap", "testing", "quality", "static-analysis", "smell"]
 categories = ["development-tools::testing", "command-line-utilities"]
+readme = "../../README.md"
 rust-version.workspace = true
 
 # Binstall metadata is intentionally not wired during v0.x — see ops

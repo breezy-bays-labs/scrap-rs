@@ -10,7 +10,7 @@ use crate::domain::classification::{Actionability, Severity};
 use serde::{Deserialize, Serialize};
 
 /// Test smell taxonomy. Wire format mirrors envelope §6 in the kickstart
-/// plan: snake_case strings on the wire, never integer codes.
+/// plan: `snake_case` strings on the wire, never integer codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -48,6 +48,7 @@ impl SmellCategory {
     /// the per-variant `#[serde(rename = ...)]` annotations; the
     /// `enum_wire_strings_match_serde_output` test in the crate root
     /// pins the agreement.
+    #[must_use]
     pub fn as_wire_str(&self) -> &'static str {
         match self {
             Self::ZeroAssertion => "zero_assertion",
@@ -88,6 +89,7 @@ impl Smell {
     /// Build a `Smell` with the v0.1 default actionability message for
     /// the given category. Detectors call this when the static
     /// template suffices.
+    #[must_use]
     pub fn new(
         category: SmellCategory,
         severity: Severity,
@@ -125,6 +127,7 @@ impl Smell {
 
     /// Static v0.1 follow-up template. Replaced by the v0.5 5-class
     /// classifier when richer context becomes available.
+    #[must_use]
     pub fn default_message(category: SmellCategory) -> &'static str {
         match category {
             SmellCategory::ZeroAssertion => "Add assertions for the function's observable effects.",

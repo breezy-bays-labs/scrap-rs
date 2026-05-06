@@ -55,6 +55,7 @@ impl Span {
     /// which always produces well-ordered ranges. A `debug_assert!`
     /// catches inverted ranges in dev/test builds; release builds rely
     /// on the `line_count` saturating arithmetic.
+    #[must_use]
     pub fn new(start_line: u32, end_line: u32) -> Self {
         debug_assert!(
             start_line <= end_line,
@@ -70,6 +71,10 @@ impl Span {
     /// `start_line > end_line`. Prefer this over `Span::new` when the
     /// caller cannot guarantee well-ordered input (e.g., reconstructing
     /// spans from external LSP positions or baseline-diff replay).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(InvertedSpan)` if `start_line > end_line`.
     pub fn try_new(start_line: u32, end_line: u32) -> Result<Self, InvertedSpan> {
         if start_line > end_line {
             Err(InvertedSpan {
@@ -91,6 +96,7 @@ impl Span {
     /// defensive value that prevents integer underflow but is
     /// semantically meaningless. Callers that need to distinguish
     /// "1-line span" from "inverted span" should use `try_new`.
+    #[must_use]
     pub fn line_count(&self) -> u32 {
         self.end_line
             .saturating_sub(self.start_line)
@@ -115,6 +121,7 @@ impl FilePath {
 
     /// Borrow the wrapped path. Use when interoperating with std I/O
     /// or path-manipulation routines at the adapter boundary.
+    #[must_use]
     pub fn as_path(&self) -> &std::path::Path {
         &self.0
     }
@@ -143,6 +150,7 @@ impl QualifiedName {
 
     /// Borrow the wrapped string. Use when formatting reports or
     /// interoperating with string-based APIs at the adapter boundary.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -164,6 +172,7 @@ impl TestIdentity {
     /// Construct a `TestIdentity` from its three coordinates. Adapters
     /// at the test-discovery boundary call this once per discovered
     /// `#[test]` fn.
+    #[must_use]
     pub fn new(file_path: FilePath, qualified_name: QualifiedName, span: Span) -> Self {
         Self {
             file_path,

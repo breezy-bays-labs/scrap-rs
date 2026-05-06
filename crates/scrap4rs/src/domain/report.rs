@@ -40,6 +40,7 @@ impl FileReport {
     /// inner finding's `test.file_path` matches the outer `file_path` —
     /// a divergence is always a constructor bug, never a runtime
     /// condition.
+    #[must_use]
     pub fn new(file_path: FilePath, findings: Vec<Finding>) -> Self {
         debug_assert!(
             findings.iter().all(|f| f.test.file_path == file_path),
@@ -67,6 +68,7 @@ pub struct Distribution {
 
 impl Distribution {
     /// Construct an empty `Distribution` with both axes at zero.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -79,6 +81,7 @@ impl Distribution {
 
     /// Total number of recorded smells. Equal to the sum across either
     /// axis (each smell contributes one count to each map).
+    #[must_use]
     pub fn total(&self) -> u32 {
         self.by_smell.values().sum()
     }

@@ -47,6 +47,7 @@ impl Finding {
     /// sum of penalties); leaves `exceeds_threshold` false (the reporter
     /// sets it) and `opt_outs` empty (the parser populates it
     /// post-construction).
+    #[must_use]
     pub fn new(test: TestIdentity, smells: Vec<Smell>) -> Self {
         let scrap_score = smells.iter().map(|s| f64::from(s.penalty)).sum();
         Self {
@@ -60,6 +61,10 @@ impl Finding {
 }
 
 #[cfg(test)]
+// `Finding::scrap_score` is `f64` but the v0.1 sum is computed from
+// `u32` penalties — every assertion in this module compares against an
+// exact integer-derived value, so direct equality is intentional.
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
     use crate::domain::classification::{Actionability, Severity};

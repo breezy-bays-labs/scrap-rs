@@ -10,22 +10,35 @@ its first crates.io release.
 ```bash
 git clone git@github.com:breezy-bays-labs/scrap-rs.git
 cd scrap-rs
+lefthook install            # wires pre-commit + pre-push hooks
 cargo build -p scrap4rs
 cargo nextest run
 ```
+
+`lefthook install` is one-time. After that, `cargo fmt --check` runs on
+every commit; the full pre-push battery (fmt + pedantic clippy + tests +
+cargo-deny + docs-as-errors) runs on every push and matches CI exactly.
+See [`lefthook.yml`](lefthook.yml) for what each hook runs.
 
 ## Development Loop
 
 | Step | Command |
 |------|---------|
-| Format | `cargo fmt` |
-| Lint | `cargo clippy --all-targets -- -D warnings` |
-| Test | `cargo nextest run` |
-| Coverage | `cargo llvm-cov nextest --lcov --output-path lcov.info` |
-| Quick verify | `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo nextest run` |
+| Format | `cargo fmt --all` |
+| Lint (with pedantic) | `cargo clippy --workspace --all-targets --locked -- -D warnings` |
+| Test | `cargo nextest run --workspace --all-targets --locked` |
+| Coverage | `cargo llvm-cov nextest --workspace --locked --fail-under-lines 85` |
+| Supply chain | `cargo deny check` |
+| Doc lint | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --locked` |
+| Quick verify | `lefthook run pre-push` |
+
+`#![warn(clippy::pedantic, clippy::cargo)]` lives at the crate root
+(`crates/scrap4rs/src/lib.rs`), so `clippy -D warnings` enforces
+pedantic and cargo lints automatically — no extra flag needed.
 
 CI runs the same chain on every PR. See `.github/workflows/ci.yml` for
-the full job set (matrix test on Linux / macOS arm64 / macOS x86_64).
+the full job set (matrix test on Linux / macOS arm64 / macOS x86_64,
+plus MSRV / cargo-deny / cargo doc / coverage gates).
 
 ## Branch + PR
 

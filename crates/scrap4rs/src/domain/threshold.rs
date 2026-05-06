@@ -33,6 +33,7 @@ pub enum ThresholdMode {
 impl ThresholdMode {
     /// Stable wire string. Used by scorecard-row and SARIF reporters
     /// that need the value outside a serde context.
+    #[must_use]
     pub fn as_wire_str(&self) -> &'static str {
         match self {
             Self::Strict => "strict",
