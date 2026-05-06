@@ -30,8 +30,8 @@ pub struct Finding {
     pub test: TestIdentity,
     /// All smells the detector pipeline emitted for this test.
     pub smells: Vec<Smell>,
-    /// Aggregate score for this test. v0.1: sum of `Smell::penalty`
-    /// across `smells`. v0.3+: saturating curve replaces the sum.
+    /// Aggregate score for this test, computed by `Finding::new`. See
+    /// the struct-level doc for the score-formula migration plan.
     pub scrap_score: f64,
     /// True when `scrap_score` exceeds the active `ThresholdMode`
     /// cutoff. Set by the reporter, not by domain construction.
@@ -43,9 +43,10 @@ pub struct Finding {
 
 impl Finding {
     /// Build a `Finding` from a test identity and detector-emitted
-    /// smells. Computes `scrap_score` as the sum of penalties; leaves
-    /// `exceeds_threshold` false (the reporter sets it) and `opt_outs`
-    /// empty (the parser populates it post-construction).
+    /// smells. Computes `scrap_score` from `smells` (current formula:
+    /// sum of penalties); leaves `exceeds_threshold` false (the reporter
+    /// sets it) and `opt_outs` empty (the parser populates it
+    /// post-construction).
     pub fn new(test: TestIdentity, smells: Vec<Smell>) -> Self {
         let scrap_score = smells.iter().map(|s| f64::from(s.penalty)).sum();
         Self {

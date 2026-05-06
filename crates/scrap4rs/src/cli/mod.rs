@@ -8,9 +8,9 @@
 
 use std::process::ExitCode;
 
-/// CLI entry point. Drives the analyzer pipeline and returns a process
-/// `ExitCode`. The bootstrap implementation is a placeholder; the real
-/// clap-derive surface lands with sub-issue P22 / P23.
+/// CLI entry point — bootstrap placeholder. Returns `ExitCode::SUCCESS`
+/// and prints a single line. The real clap-derive surface (analyzer
+/// pipeline + ExitCode shaping) lands with the CLI sub-issue.
 pub fn run() -> ExitCode {
     println!("scrap4rs (skeleton) — see https://github.com/breezy-bays-labs/scrap-rs");
     ExitCode::SUCCESS

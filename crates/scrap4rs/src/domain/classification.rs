@@ -22,15 +22,13 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Severity {
-    /// Low severity — informational; never trips a strict gate.
+    /// Low severity bucket. See enum-level doc for ordering.
     #[serde(rename = "low")]
     Low,
-    /// Moderate severity — surfaces in default-mode reports but does
-    /// not necessarily fail the gate.
+    /// Moderate severity bucket — between Low and High.
     #[serde(rename = "moderate")]
     Moderate,
-    /// High severity — top of the bucket; flagged prominently and
-    /// usually contributes to gate failure.
+    /// High severity bucket. See enum-level doc for ordering.
     #[serde(rename = "high")]
     High,
 }
@@ -74,13 +72,13 @@ pub enum Actionability {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Confidence {
-    /// Low confidence — heuristic match, surface as suggestion only.
+    /// Low confidence.
     #[serde(rename = "low")]
     Low,
-    /// Medium confidence — most signals align; reasonable to act on.
+    /// Medium confidence.
     #[serde(rename = "medium")]
     Medium,
-    /// High confidence — multiple signals agree; safe to act on.
+    /// High confidence.
     #[serde(rename = "high")]
     High,
 }
@@ -110,23 +108,24 @@ pub enum RemediationMode {
 }
 
 /// Verdict of a baseline-vs-current comparison run. Reserved for the
-/// v0.4 `--baseline` / `--compare` feature, which attaches one of these
-/// to each delta entry so reporters can summarize a run as
-/// "improved/worse/mixed/unchanged" without recomputing the diff.
+/// v0.4 `--baseline` / `--compare` feature; the partition between
+/// improved / worse / mixed / unchanged lands alongside the comparator
+/// implementation so the variant docs aren't decoupled from the actual
+/// thresholding logic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum BaselineVerdict {
-    /// Current run scores strictly better than baseline.
+    /// Improved verdict.
     #[serde(rename = "improved")]
     Improved,
-    /// Current run scores strictly worse than baseline.
+    /// Worse verdict.
     #[serde(rename = "worse")]
     Worse,
-    /// Some metrics improved, others regressed.
+    /// Mixed verdict.
     #[serde(rename = "mixed")]
     Mixed,
-    /// Current run is identical to baseline.
+    /// Unchanged verdict.
     #[serde(rename = "unchanged")]
     Unchanged,
 }

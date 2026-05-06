@@ -18,16 +18,14 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ThresholdMode {
-    /// Strict mode — tightest cutoffs; suited to repos with strong
-    /// existing assertion discipline.
+    /// Strict mode — tightest cutoffs.
     #[serde(rename = "strict")]
     Strict,
-    /// Default mode — recommended for new adopters.
+    /// Default mode — middle cutoffs.
     #[default]
     #[serde(rename = "default")]
     Default,
-    /// Lenient mode — looser cutoffs; suited to legacy crates being
-    /// onboarded incrementally.
+    /// Lenient mode — loosest cutoffs.
     #[serde(rename = "lenient")]
     Lenient,
 }

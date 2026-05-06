@@ -16,9 +16,9 @@ use std::path::PathBuf;
 /// becomes a typed precondition violation, not a silent semantic bug.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InvertedSpan {
-    /// The supplied start line (greater than `end_line`).
+    /// The supplied start line.
     pub start_line: u32,
-    /// The supplied end line (less than `start_line`).
+    /// The supplied end line.
     pub end_line: u32,
 }
 

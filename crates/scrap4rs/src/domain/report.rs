@@ -119,7 +119,10 @@ pub struct Report {
     pub files: Vec<FileReport>,
     /// Run-level summary across all files.
     pub summary: Summary,
-    /// Gate verdict — true when the run is below the active threshold.
+    /// Gate verdict, set by the reporter — not by domain construction.
+    /// Defaults to `false` on `Report::default()`; reporters set it
+    /// after comparing each finding's `scrap_score` against the active
+    /// `ThresholdMode` cutoff.
     pub passed: bool,
 }
 

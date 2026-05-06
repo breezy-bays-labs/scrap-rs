@@ -14,24 +14,25 @@ yanked = "deny"
 ignore = []
 
 [licenses]
+# Allowlisted to exactly the licenses encountered in the current dep
+# tree. Every additional license decision happens in the PR that
+# introduces the dep so the policy moment lands when it matters,
+# not as a pre-allowance. This also keeps cargo-deny's signal-to-noise
+# clean — every "unmatched license allowance" warning becomes a real
+# action item, not background noise.
 version = 2
 allow = [
   "MIT",
   "Apache-2.0",
-  "Apache-2.0 WITH LLVM-exception",
-  "BSD-2-Clause",
-  "BSD-3-Clause",
-  "ISC",
   "Unicode-3.0",
-  "Unicode-DFS-2016",
-  "MPL-2.0",
-  "Unlicense",
-  "Zlib",
-  "CC0-1.0",
 ]
 confidence-threshold = 0.93
 
 [bans]
+# `multiple-versions = "warn"` is intentional for v0.x: detector PRs
+# (P13–P17) will inevitably introduce duplicate-semver versions of
+# transitive deps (e.g., `bitflags` from `walkdir` + `clap`), and
+# `deny` would block on benign duplicates. Promote to `deny` at v1.0.
 multiple-versions = "warn"
 wildcards = "deny"
 allow = []
