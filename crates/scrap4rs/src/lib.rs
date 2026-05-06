@@ -9,6 +9,9 @@
 //! See <https://github.com/breezy-bays-labs/scrap-rs> for the epic
 //! roadmap.
 
+#![warn(missing_docs)]
+#![warn(clippy::pedantic, clippy::cargo)]
+
 pub mod adapters;
 pub mod cli;
 pub mod core;

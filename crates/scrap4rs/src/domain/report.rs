@@ -29,11 +29,18 @@ use std::collections::BTreeMap;
 /// outer file path and the inner test paths via debug-assert.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileReport {
+    /// Source file these findings originated from.
     pub file_path: FilePath,
+    /// Per-test findings inside this file, in source order.
     pub findings: Vec<Finding>,
 }
 
 impl FileReport {
+    /// Construct a per-file aggregation. Debug-asserts that every
+    /// inner finding's `test.file_path` matches the outer `file_path` —
+    /// a divergence is always a constructor bug, never a runtime
+    /// condition.
+    #[must_use]
     pub fn new(file_path: FilePath, findings: Vec<Finding>) -> Self {
         debug_assert!(
             findings.iter().all(|f| f.test.file_path == file_path),
@@ -53,15 +60,20 @@ impl FileReport {
 /// envelope example and produces reproducible snapshots.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Distribution {
+    /// Per-smell-category counter.
     pub by_smell: BTreeMap<SmellCategory, u32>,
+    /// Per-severity counter.
     pub by_severity: BTreeMap<Severity, u32>,
 }
 
 impl Distribution {
+    /// Construct an empty `Distribution` with both axes at zero.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Increment both axes for one detected smell.
     pub fn record(&mut self, category: SmellCategory, severity: Severity) {
         *self.by_smell.entry(category).or_insert(0) += 1;
         *self.by_severity.entry(severity).or_insert(0) += 1;
@@ -69,6 +81,7 @@ impl Distribution {
 
     /// Total number of recorded smells. Equal to the sum across either
     /// axis (each smell contributes one count to each map).
+    #[must_use]
     pub fn total(&self) -> u32 {
         self.by_smell.values().sum()
     }
@@ -80,12 +93,21 @@ impl Distribution {
 /// `distribution`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Summary {
+    /// Total tests inspected by the analyzer.
     pub total_tests: u32,
+    /// Total source files inspected.
     pub total_files: u32,
+    /// Number of tests whose `scrap_score` exceeded the active
+    /// threshold cutoff.
     pub exceeding_threshold: u32,
+    /// Distribution counters; flattened onto `summary` on the wire so
+    /// `by_smell` and `by_severity` appear as flat fields under
+    /// `summary` per kickstart plan §6.
     #[serde(flatten)]
     pub distribution: Distribution,
+    /// Highest `scrap_score` observed across all findings.
     pub max_scrap_score: f64,
+    /// Mean `scrap_score` across all inspected tests (zero when none).
     pub average_scrap_score: f64,
 }
 
@@ -96,8 +118,14 @@ pub struct Summary {
 /// directly.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Report {
+    /// Per-file aggregations, in source order.
     pub files: Vec<FileReport>,
+    /// Run-level summary across all files.
     pub summary: Summary,
+    /// Gate verdict, set by the reporter — not by domain construction.
+    /// Defaults to `false` on `Report::default()`; reporters set it
+    /// after comparing each finding's `scrap_score` against the active
+    /// `ThresholdMode` cutoff.
     pub passed: bool,
 }
 

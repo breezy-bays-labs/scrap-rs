@@ -1,0 +1,45 @@
+# cargo-deny configuration for scrap-rs.
+#
+# Locks the supply chain at v0.1 with `serde` (runtime) and
+# `proptest` + `serde_json` + `insta` (dev-only). Detectors and
+# reporters will add transitive deps as they land — this file is the
+# guardrail that keeps that addition deliberate.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Allowlisted to exactly the licenses encountered in the current dep
+# tree. Every additional license decision happens in the PR that
+# introduces the dep so the policy moment lands when it matters,
+# not as a pre-allowance. This also keeps cargo-deny's signal-to-noise
+# clean — every "unmatched license allowance" warning becomes a real
+# action item, not background noise.
+version = 2
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Unicode-3.0",
+]
+confidence-threshold = 0.93
+
+[bans]
+# `multiple-versions = "warn"` is intentional for v0.x: detector PRs
+# (P13–P17) will inevitably introduce duplicate-semver versions of
+# transitive deps (e.g., `bitflags` from `walkdir` + `clap`), and
+# `deny` would block on benign duplicates. Promote to `deny` at v1.0.
+multiple-versions = "warn"
+wildcards = "deny"
+allow = []
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

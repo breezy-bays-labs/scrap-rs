@@ -16,7 +16,9 @@ use std::path::PathBuf;
 /// becomes a typed precondition violation, not a silent semantic bug.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InvertedSpan {
+    /// The supplied start line.
     pub start_line: u32,
+    /// The supplied end line.
     pub end_line: u32,
 }
 
@@ -40,7 +42,9 @@ impl std::error::Error for InvertedSpan {}
 /// `schema_version: 1`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Span {
+    /// 1-based inclusive line where the span begins.
     pub start_line: u32,
+    /// 1-based inclusive line where the span ends.
     pub end_line: u32,
 }
 
@@ -51,6 +55,7 @@ impl Span {
     /// which always produces well-ordered ranges. A `debug_assert!`
     /// catches inverted ranges in dev/test builds; release builds rely
     /// on the `line_count` saturating arithmetic.
+    #[must_use]
     pub fn new(start_line: u32, end_line: u32) -> Self {
         debug_assert!(
             start_line <= end_line,
@@ -66,6 +71,10 @@ impl Span {
     /// `start_line > end_line`. Prefer this over `Span::new` when the
     /// caller cannot guarantee well-ordered input (e.g., reconstructing
     /// spans from external LSP positions or baseline-diff replay).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(InvertedSpan)` if `start_line > end_line`.
     pub fn try_new(start_line: u32, end_line: u32) -> Result<Self, InvertedSpan> {
         if start_line > end_line {
             Err(InvertedSpan {
@@ -87,6 +96,7 @@ impl Span {
     /// defensive value that prevents integer underflow but is
     /// semantically meaningless. Callers that need to distinguish
     /// "1-line span" from "inverted span" should use `try_new`.
+    #[must_use]
     pub fn line_count(&self) -> u32 {
         self.end_line
             .saturating_sub(self.start_line)
@@ -104,10 +114,14 @@ impl Span {
 pub struct FilePath(PathBuf);
 
 impl FilePath {
+    /// Wrap any `PathBuf`-convertible value as a `FilePath`.
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self(path.into())
     }
 
+    /// Borrow the wrapped path. Use when interoperating with std I/O
+    /// or path-manipulation routines at the adapter boundary.
+    #[must_use]
     pub fn as_path(&self) -> &std::path::Path {
         &self.0
     }
@@ -127,10 +141,16 @@ impl FilePath {
 pub struct QualifiedName(String);
 
 impl QualifiedName {
+    /// Wrap any string-convertible value as a `QualifiedName`. The
+    /// caller is responsible for choosing a separator consistent with
+    /// the source language (`::` for Rust paths).
     pub fn new(name: impl Into<String>) -> Self {
         Self(name.into())
     }
 
+    /// Borrow the wrapped string. Use when formatting reports or
+    /// interoperating with string-based APIs at the adapter boundary.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -140,12 +160,19 @@ impl QualifiedName {
 /// name + span. Each `Finding` carries exactly one.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TestIdentity {
+    /// Source file containing the test.
     pub file_path: FilePath,
+    /// Fully qualified Rust path of the test function.
     pub qualified_name: QualifiedName,
+    /// Inclusive line range covered by the test body.
     pub span: Span,
 }
 
 impl TestIdentity {
+    /// Construct a `TestIdentity` from its three coordinates. Adapters
+    /// at the test-discovery boundary call this once per discovered
+    /// `#[test]` fn.
+    #[must_use]
     pub fn new(file_path: FilePath, qualified_name: QualifiedName, span: Span) -> Self {
         Self {
             file_path,

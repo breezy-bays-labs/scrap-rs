@@ -14,18 +14,27 @@ env:
   CARGO_TARGET_DIR: target
   CARGO_TERM_COLOR: always
 
+# Workflow-level timeout. Per-job 15 min ceiling guards against a wedged
+# runner draining minutes overnight; current jobs complete in <2 min so
+# this is a generous backstop, not a tight bound.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   fmt:
     name: Format
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo fmt --check
+      - run: cargo fmt --all --check
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -33,11 +42,12 @@ jobs:
         with:
           shared-key: scrap-rs
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:
     name: Test (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -58,11 +68,12 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest@0.9
-      - run: cargo nextest run --all-targets
+      - run: cargo nextest run --workspace --all-targets --locked
 
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -78,13 +89,66 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov@0.6
-      - run: cargo llvm-cov nextest --lcov --output-path lcov.info
+      # Threshold rationale: domain-only achieves >95% line coverage
+      # trivially (constructors + getters covered by serde tests).
+      # Setting at 85% is conservative — accommodates the parser-heavy
+      # first detector PR (P13) where unreachable error branches
+      # legitimately inflate uncovered lines, but catches the agentic-
+      # dev failure mode where a future PR adds 200 lines of code and
+      # 30 lines of test. Promote to 90% once detector coverage settles.
+      - run: cargo llvm-cov nextest --workspace --locked --fail-under-lines 85 --lcov --output-path lcov.info
       - uses: actions/upload-artifact@v4
         with:
           name: lcov
           path: lcov.info
           retention-days: 7
 
-  # Self-check, mutants, and scorecard-smoke jobs land as detectors come
+  msrv:
+    name: MSRV (1.85)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: scrap-rs-msrv
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo check --workspace --all-targets --locked
+
+  deny:
+    name: cargo-deny (advisories + licenses + bans)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      # SHA-pinned: cargo-deny is the supply-chain gate itself, so a
+      # tag-poisoning attack on the action would silently disable every
+      # other supply-chain check. Tag v2 → 91bf2b6 (verified via
+      # `gh api repos/EmbarkStudios/cargo-deny-action/git/ref/tags/v2`).
+      - uses: EmbarkStudios/cargo-deny-action@91bf2b620e09e18d6eb78b92e7861937469acedb # v2
+        with:
+          command: check
+
+  docs:
+    name: cargo doc (warnings as errors)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: scrap-rs
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo doc --workspace --no-deps --document-private-items --locked
+
+  # cargo-public-api (semver-style public API gate) and cargo-mutants
+  # (mutation testing) are deliberately deferred. cargo-public-api lands
+  # at v1.0 when semver gating begins; cargo-mutants lands with the
+  # first detector PR (P13) when mutating real logic earns its keep.
+  # Self-check, scorecard-smoke, and crap-self land as detectors come
   # online (sub-issues P24/P25). They require a non-trivial scrap4rs
   # binary to operate against, so they are deferred from the bootstrap.

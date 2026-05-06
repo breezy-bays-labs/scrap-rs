@@ -22,10 +22,13 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Severity {
+    /// Low severity bucket. See enum-level doc for ordering.
     #[serde(rename = "low")]
     Low,
+    /// Moderate severity bucket — between Low and High.
     #[serde(rename = "moderate")]
     Moderate,
+    /// High severity bucket. See enum-level doc for ordering.
     #[serde(rename = "high")]
     High,
 }
@@ -42,10 +45,16 @@ pub enum Severity {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Actionability {
+    /// Mechanical refactor candidate — the smell shape suggests an
+    /// automatable transformation (add an assertion, replace tautology).
     #[serde(rename = "auto_refactor")]
     AutoRefactor,
+    /// Test boundary needs to move — split a multi-purpose example
+    /// into focused tests.
     #[serde(rename = "manual_split")]
     ManualSplit,
+    /// Human review needed before any change — context-dependent or
+    /// ambiguous signal.
     #[serde(rename = "review_first")]
     ReviewFirst,
 }
@@ -63,10 +72,13 @@ pub enum Actionability {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Confidence {
+    /// Low confidence.
     #[serde(rename = "low")]
     Low,
+    /// Medium confidence.
     #[serde(rename = "medium")]
     Medium,
+    /// High confidence.
     #[serde(rename = "high")]
     High,
 }
@@ -83,28 +95,37 @@ pub enum Confidence {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum RemediationMode {
+    /// No structural change advised — leave the test as-is.
     #[serde(rename = "stable")]
     Stable,
+    /// Refactor in place — change the test body without moving its
+    /// boundary.
     #[serde(rename = "local")]
     Local,
+    /// Split the example — the test boundary itself needs to move.
     #[serde(rename = "split")]
     Split,
 }
 
 /// Verdict of a baseline-vs-current comparison run. Reserved for the
-/// v0.4 `--baseline` / `--compare` feature, which attaches one of these
-/// to each delta entry so reporters can summarize a run as
-/// "improved/worse/mixed/unchanged" without recomputing the diff.
+/// v0.4 `--baseline` / `--compare` feature; the partition between
+/// improved / worse / mixed / unchanged lands alongside the comparator
+/// implementation so the variant docs aren't decoupled from the actual
+/// thresholding logic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum BaselineVerdict {
+    /// Improved verdict.
     #[serde(rename = "improved")]
     Improved,
+    /// Worse verdict.
     #[serde(rename = "worse")]
     Worse,
+    /// Mixed verdict.
     #[serde(rename = "mixed")]
     Mixed,
+    /// Unchanged verdict.
     #[serde(rename = "unchanged")]
     Unchanged,
 }

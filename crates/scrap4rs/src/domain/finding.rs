@@ -26,9 +26,15 @@ use serde::{Deserialize, Serialize};
 /// not consult thresholds themselves.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Finding {
+    /// Identity of the test this finding applies to.
     pub test: TestIdentity,
+    /// All smells the detector pipeline emitted for this test.
     pub smells: Vec<Smell>,
+    /// Aggregate score for this test, computed by `Finding::new`. See
+    /// the struct-level doc for the score-formula migration plan.
     pub scrap_score: f64,
+    /// True when `scrap_score` exceeds the active `ThresholdMode`
+    /// cutoff. Set by the reporter, not by domain construction.
     pub exceeds_threshold: bool,
     /// `#[allow(scrap::*)]` attributes observed on or above the test —
     /// reported for visibility but suppress threshold contribution.
@@ -36,6 +42,12 @@ pub struct Finding {
 }
 
 impl Finding {
+    /// Build a `Finding` from a test identity and detector-emitted
+    /// smells. Computes `scrap_score` from `smells` (current formula:
+    /// sum of penalties); leaves `exceeds_threshold` false (the reporter
+    /// sets it) and `opt_outs` empty (the parser populates it
+    /// post-construction).
+    #[must_use]
     pub fn new(test: TestIdentity, smells: Vec<Smell>) -> Self {
         let scrap_score = smells.iter().map(|s| f64::from(s.penalty)).sum();
         Self {
@@ -49,6 +61,10 @@ impl Finding {
 }
 
 #[cfg(test)]
+// `Finding::scrap_score` is `f64` but the v0.1 sum is computed from
+// `u32` penalties — every assertion in this module compares against an
+// exact integer-derived value, so direct equality is intentional.
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
     use crate::domain::classification::{Actionability, Severity};
