@@ -1,7 +1,7 @@
 //! Source-coordinate primitives shared by every domain type.
 //!
-//! These newtypes carry no I/O or AST dependency — they extract cleanly
-//! into `scrap-core` at v1.0 without rename.
+//! These newtypes carry no I/O or AST dependency, so every adapter
+//! binary in the workspace can produce them from its own parser.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -132,10 +132,10 @@ impl FilePath {
 ///
 /// Newtype around `String` so reporters and aggregators can match on
 /// `QualifiedName` without trafficking arbitrary strings through the
-/// domain. The wire format stays a flat string forever — when scrap-core
-/// extracts at v1.0 and gains a TS adapter, segment-aware constructors
-/// can join with `::` (Rust) or `/` (TS file paths) at the adapter
-/// boundary without changing this newtype's wire shape.
+/// domain. The wire format stays a flat string forever — adapter
+/// crates can join with `::` (Rust paths in `scrap4rs`) or `.`/`/`
+/// (TS paths in `scrap4ts`) at the parser boundary without changing
+/// this newtype's wire shape.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct QualifiedName(String);

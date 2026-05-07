@@ -8,14 +8,14 @@
 //! To update after an intentional schema change:
 //! `cargo insta review` → accept the new snapshot.
 
-use scrap4rs::domain::classification::{
+use scrap_core::domain::classification::{
     Actionability, BaselineVerdict, Confidence, RemediationMode, Severity,
 };
-use scrap4rs::domain::finding::Finding;
-use scrap4rs::domain::report::{Distribution, FileReport, Report, Summary};
-use scrap4rs::domain::smell::{Smell, SmellCategory};
-use scrap4rs::domain::threshold::ThresholdMode;
-use scrap4rs::domain::types::{FilePath, QualifiedName, Span, TestIdentity};
+use scrap_core::domain::finding::Finding;
+use scrap_core::domain::report::{Distribution, FileReport, Report, Summary};
+use scrap_core::domain::smell::{Smell, SmellCategory};
+use scrap_core::domain::threshold::ThresholdMode;
+use scrap_core::domain::types::{FilePath, QualifiedName, Span, TestIdentity};
 
 fn fixture_report() -> Report {
     let test = TestIdentity::new(

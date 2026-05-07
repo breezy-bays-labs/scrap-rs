@@ -1,10 +1,14 @@
-//! Domain layer — pure Rust types, no `syn`, no `serde`-on-AST, no I/O.
+//! Domain layer — language-agnostic types shared by every adapter
+//! binary in the workspace.
 //!
-//! Designed for future extraction into `scrap-core` at v1.0. Anything
-//! that mentions `syn`, `walkdir`, `proc-macro2`, or any I/O type
-//! belongs in `adapters/`, never here. The only external dependency
-//! permitted is `serde` (derive only), so wire shapes round-trip
-//! identically across the v1.0 split.
+//! No AST library types here, ever — `syn`, `swc_*`, `oxc_*`,
+//! `tree-sitter*`, `proc-macro2`, `quote` are banned from this crate
+//! per [`adr-hexagonal-layout`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-hexagonal-layout.md).
+//! Anything that mentions an AST library or any I/O type belongs in
+//! an adapter crate (`scrap4rs::parser`, future `scrap4ts::parser`),
+//! never here. The only external dependency permitted is `serde`
+//! (derive only), so wire shapes round-trip identically across every
+//! adapter binary that links `scrap-core`.
 //!
 //! Module roster (live):
 //! - `types` — `Span`, `FilePath`, `QualifiedName`, `TestIdentity`, `InvertedSpan`

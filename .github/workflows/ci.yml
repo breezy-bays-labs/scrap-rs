@@ -130,6 +130,40 @@ jobs:
         with:
           command: check
 
+  ast-purity:
+    name: scrap-core AST-library purity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The hexagonal layering ADR
+    # (`ops/decisions/scrap4rs/adr-hexagonal-layout.md`) bans AST
+    # libraries from `scrap-core`'s source. The structural mechanism is
+    # `crates/scrap-core/Cargo.toml` itself (a wrong dep would have to
+    # be added there to be `use`d), but `serde_derive` already pulls
+    # `syn` and `proc-macro2` transitively as proc-macro deps —
+    # cargo-deny's transitive-ban mechanism (`bans.deny.wrappers`)
+    # would either false-positive on serde_derive's chain or require a
+    # fragile, expanding wrapper list. A source-level grep is the right
+    # tool: the rule is "no AST-library imports inside
+    # crates/scrap-core/src/," and grep enforces exactly that.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject AST-library imports in scrap-core
+        # Static pattern, no untrusted-input interpolation. Regex notes:
+        #   - Matches both `use` and `extern crate` forms.
+        #   - Optional `(::)?` handles absolute-path imports (`use ::syn::Foo`).
+        #   - Trailing `([_:; ]|$)` is a portable word-boundary substitute
+        #     that works on GNU and BSD grep (avoids `\b`/`\w` non-portable
+        #     shortcuts). Catches `syn::`, `syn;`, `syn_codegen::`,
+        #     `swc_ecma_parser::`, `tree_sitter_typescript::`, etc.;
+        #     rejects false positives like `use syntactic_analysis::X`.
+        run: |
+          set -euo pipefail
+          if grep -rE '^[[:space:]]*(use|extern[[:space:]]+crate)[[:space:]]+(::)?(syn|quote|proc_macro2?|tree_sitter|swc|oxc)([_:; ]|$)' crates/scrap-core/src/; then
+            echo "::error::scrap-core must not import AST libraries — see decisions/scrap4rs/adr-hexagonal-layout.md"
+            exit 1
+          fi
+          echo "scrap-core is AST-library-pure"
+
   docs:
     name: cargo doc (warnings as errors)
     runs-on: ubuntu-latest

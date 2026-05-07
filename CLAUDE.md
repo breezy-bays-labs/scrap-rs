@@ -2,17 +2,20 @@
 
 # CLAUDE.md — scrap-rs
 
-Static test smell detector for Rust. Workspace at the root; the
-initial member is `crates/scrap4rs` (lib + bin). `crates/scrap-core`
-extracts at v1.0; `crates/scrap4ts` joins shortly after.
+Static test smell detector. Multi-crate Rust workspace: `crates/scrap-core`
+(lib — language-agnostic core shared by every adapter binary), and
+`crates/scrap4rs` (lib + bin — Rust-source adapter via `syn`). A
+`crates/scrap4ts` (lib + bin — TypeScript-source adapter via `swc` or
+`oxc`, distributed to npm via `napi-rs`) joins the workspace at v0.6+.
 
 ## Architecture
 
-Hexagonal (ports & adapters), strict dependency direction (see
-`AGENTS.md` for the full layer table). Never import inward. The
-`domain/` and `ports/` layers are pre-shaped for `scrap-core`
-extraction at v1.0 — keep them language-agnostic now, save the rename
-later.
+Hexagonal (ports & adapters), strict dependency direction enforced by
+Cargo crate boundaries: `scrap-core` lists no AST library in its
+deps; adapter crates depend on `scrap-core` and add their own parser
+library. A wrong inward import is a build error, not a review catch.
+See [`adr-hexagonal-layout`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-hexagonal-layout.md)
+for the full layering invariant + per-crate dep table.
 
 ## Phased Detector Roadmap
 
@@ -42,7 +45,9 @@ taxonomy lands in v0.3.
 
 ## Wire Envelope
 
-Mirrors crap4rs's nested JSON envelope (ADR D2-style forward-compat):
+Mirrors crap4rs's nested JSON envelope. See
+[`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md)
+for full forward-compat rules. Highlights:
 
 - `schema_version: u32` — bumps only on breaking changes; additive
   fields allowed at any time.
@@ -50,7 +55,12 @@ Mirrors crap4rs's nested JSON envelope (ADR D2-style forward-compat):
   `--only-failing`, `--no-fail`).
 - `view.*` is the **shapeable display** — filtered, sorted, truncated.
 - `delta.*`, `diagnostics.*` — additive optional, omitted when not in use.
-- Every public struct in `domain/` carries `#[non_exhaustive]`.
+- **`#[non_exhaustive]` policy**: every public *enum* in
+  `scrap-core::domain` carries it (consumer pattern-match concern);
+  result *structs* (`Finding`, `Report`, `Summary`, etc.) do not —
+  they evolve via constructors (`Foo::new`, `Foo::try_new`,
+  `Foo::default`) and serde versioning. Rationale lives in the
+  envelope ADR's `#[non_exhaustive] discipline` section.
 - `Option<T>` fields use `#[serde(skip_serializing_if = "Option::is_none")]`.
 
 ## Commands
@@ -93,17 +103,19 @@ Shared target directory once configured under `.cargo/config.toml`
 
 ## v0.x → v1.0 Transition
 
-When the triple-crate workspace is live and mokumo has been consuming
-through one full release cycle without regression:
+The workspace already has the right shape: `scrap-core` (lib),
+`scrap4rs` (lib + bin), with `scrap4ts` (lib + bin) joining at v0.6+
+when its parser adapter is ready. v1.0 is therefore *publish*, not
+*restructure*:
 
-1. Extract `crates/scrap-core/` from `crates/scrap4rs/` (move
-   `domain/`, `ports/`, `core/`).
-2. Add `crates/scrap4ts/` (Rust crate using `oxc` to parse
-   TypeScript).
-3. Land `release.yml` mirroring crap4rs (tri-platform tarballs,
-   ordered `cargo publish` core → 4rs → 4ts, GH Release).
-4. Add `[package.metadata.binstall]` to `crates/scrap4rs/Cargo.toml`.
-5. Mokumo migrates from action-ref consumption to
+1. Land `release.yml` mirroring crap4rs (tri-platform tarballs,
+   ordered `cargo publish` `scrap-core` → `scrap4rs` → `scrap4ts`,
+   GH Release).
+2. Add `[package.metadata.binstall]` to `crates/scrap4rs/Cargo.toml`
+   and `crates/scrap4ts/Cargo.toml`.
+3. `scrap4ts` distributes to npm via `napi-rs` — `npm install -D
+   @scrap-rs/scrap4ts` pulls a per-platform native binary.
+4. Mokumo migrates from action-ref consumption to
    `bins: scrap4rs@1.0.0` + composite action `@v1.0.0`. Composite
    action drops the build step (binary on PATH).
 

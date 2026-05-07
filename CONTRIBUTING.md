@@ -31,9 +31,10 @@ See [`lefthook.yml`](lefthook.yml) for what each hook runs.
 | Supply chain | `cargo deny check` |
 | Doc lint | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --locked` |
 | Quick verify | `lefthook run pre-push` |
+| Run binary | `cargo run -p scrap4rs -- <args>` (workspace-root `cargo run` is ambiguous once a second binary lands; default to `-p` from the start) |
 
-`#![warn(clippy::pedantic, clippy::cargo)]` lives at the crate root
-(`crates/scrap4rs/src/lib.rs`), so `clippy -D warnings` enforces
+`#![warn(clippy::pedantic, clippy::cargo)]` lives at the crate root of
+each workspace member (`scrap-core`, `scrap4rs`), so `clippy -D warnings` enforces
 pedantic and cargo lints automatically — no extra flag needed.
 
 CI runs the same chain on every PR. See `.github/workflows/ci.yml` for
@@ -57,18 +58,29 @@ plus MSRV / cargo-deny / cargo doc / coverage gates).
 Read [`CLAUDE.md`](CLAUDE.md) and [`AGENTS.md`](AGENTS.md) before
 touching code. The hexagonal layering rule is **strict**:
 
-- `domain/` and `ports/` are language-agnostic. No `syn`, no `serde`-on-
-  AST, no I/O. They will extract into `scrap-core` at v1.0.
-- `adapters/` is where Rust-specific code lives — the syn walker,
-  walkdir/ignore source, serde reporters.
-- Never import inward.
+- `scrap-core` (lib) houses `domain/`, `ports/`, `core/`, detectors,
+  language-agnostic adapters (file walker, reporters), and the CLI
+  surface. No AST library deps allowed (`syn`, `swc_*`, `oxc_*`,
+  `tree-sitter*`, `proc-macro2`, `quote`). Enforced structurally
+  (`scrap-core/Cargo.toml` doesn't list them) and via the
+  `ast-purity` CI job (rejects matching `use` lines).
+- `scrap4rs` is the Rust-source adapter (lib + bin) — depends on
+  `scrap-core`, adds `syn` for parsing.
+- `scrap4ts` (planned, v0.6+) is the TypeScript-source adapter — depends
+  on `scrap-core`, adds `swc`/`oxc` for parsing, distributes to npm
+  via `napi-rs`.
+- Never import inward. The dep graph runs `scrap-core ← scrap4rs`
+  (and `scrap-core ← scrap4ts` once it lands).
 
 ## Detector Authoring Checklist
 
 When adding a new smell:
 
-1. Add the variant to `domain::SmellCategory` (`#[non_exhaustive]`
-   enum) and the penalty/severity entries to `domain::policy`.
+1. Add the variant to `scrap_core::domain::SmellCategory`
+   (`#[non_exhaustive]` enum — see
+   [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md)
+   for the enums-yes-structs-no rule) and the penalty/severity
+   entries to `scrap_core::domain::policy`.
 2. Add a property invariant covering the score-formula effect.
 3. Add positive fixtures under
    `crates/scrap4rs/tests/fixtures/true_positives/<smell>/` — these

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/scrap4rs"]
+members = ["crates/scrap-core", "crates/scrap4rs"]
 resolver = "2"
 
 [workspace.package]
@@ -10,5 +10,17 @@ homepage = "https://github.com/breezy-bays-labs/scrap-rs"
 authors = ["Christopher Bays <cmbays@breezybayslabs.com>"]
 rust-version = "1.85"
 
+# Centralized dep versions. Front-loaded so detector PRs (P13–P17),
+# port-trait PRs (#5), and the eventual scrap4ts adapter all consume
+# shared deps via `{ workspace = true }` rather than drifting per-crate
+# version pins. New shared deps land here; per-crate Cargo.toml lists
+# the dep without pinning a version.
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+insta = { version = "1", features = ["json"] }
+proptest = "1"
+
 # Workspace-wide lint config lands as detectors come online.
-# scrap-core and scrap4ts join this list at v1.0 (see ops kickstart plan §3).
+# scrap4ts joins this workspace when its parser adapter ships
+# (v0.6+ era — see ops kickstart plan §3 and adr-hexagonal-layout).
