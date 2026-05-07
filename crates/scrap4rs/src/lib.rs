@@ -7,7 +7,11 @@
 //!
 //! For consumer convenience the `scrap_core` modules are re-exported
 //! here, so downstream code that wants the full analyzer surface can
-//! depend on `scrap4rs` alone.
+//! depend on `scrap4rs` alone. This makes `scrap4rs`'s public API a
+//! strict superset of `scrap_core`'s — every module added to
+//! `scrap_core` becomes immediately public on `scrap4rs`. Re-exported
+//! types are identical (no newtype wrap): `scrap4rs::domain::Finding`
+//! and `scrap_core::domain::Finding` are the same type.
 
 #![warn(missing_docs)]
 #![warn(clippy::pedantic, clippy::cargo)]

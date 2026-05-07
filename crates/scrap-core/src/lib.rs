@@ -13,9 +13,10 @@
 //! Per [`adr-hexagonal-layout`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-hexagonal-layout.md),
 //! this crate must never depend on an AST library. `syn`, `swc_*`,
 //! `oxc_*`, `tree-sitter*`, `proc-macro2`, and `quote` are banned
-//! transitively from this crate's dep graph; that ban is the
-//! structural mechanism that makes `scrap-core` shareable across
-//! adapters without a domain rewrite at v1.0.
+//! from this crate's source. The ban is enforced structurally
+//! (`Cargo.toml` does not list any AST library, so a wrong `use`
+//! line cannot resolve) and via a source-level `ast-purity` CI grep
+//! plus the matching `lefthook` pre-push hook.
 //!
 //! Module roster:
 //! - [`domain`] — types: `Smell`, `SmellCategory`, `Finding`, `Report`, `Span`, `TestIdentity`, etc.

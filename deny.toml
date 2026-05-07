@@ -65,10 +65,17 @@ deny = []
 #    Cargo.toml edit, which is visible in PR diff and structurally
 #    forbids the corresponding `use` line.
 # 2. **Source-level grep** — the `ast-purity` CI job in
-#    `.github/workflows/ci.yml` rejects any `use syn|use swc|use
-#    oxc|use tree_sitter|use proc_macro2|use quote` line inside
-#    `crates/scrap-core/src/`. Catches the case where an AST lib is
-#    added as a dep AND imported in the same PR.
+#    `.github/workflows/ci.yml` rejects any `use|extern crate` line
+#    referencing `syn`/`quote`/`proc_macro2?`/`tree_sitter`/`swc`/`oxc`
+#    inside `crates/scrap-core/src/`. Catches the case where an AST
+#    lib is added as a dep AND imported in the same PR.
+#
+# Operator backstop: `cargo tree -p scrap-core --invert syn` should
+# show only proc-macro chains (lines marked `(proc-macro)` like
+# `serde_derive`, `thiserror-impl`). Any non-proc-macro path from
+# `syn` back to `scrap-core` is a real AST-library leak the two
+# mechanisms above missed; the operator-side check exists for the
+# rare case that happens.
 
 [sources]
 unknown-registry = "deny"

@@ -28,10 +28,10 @@ path = "src/lib.rs"
 [dependencies]
 # Domain (de)serialization. No `serde-on-AST`: serde lives in
 # `domain/` only because wire shapes need to round-trip identically
-# across adapter binaries.
-serde = { version = "1", features = ["derive"] }
+# across adapter binaries. Shared version via `[workspace.dependencies]`.
+serde = { workspace = true }
 
 [dev-dependencies]
-insta = { version = "1", features = ["json"] }
-proptest = "1"
-serde_json = "1"
+insta = { workspace = true }
+proptest = { workspace = true }
+serde_json = { workspace = true }

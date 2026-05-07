@@ -31,9 +31,10 @@ See [`lefthook.yml`](lefthook.yml) for what each hook runs.
 | Supply chain | `cargo deny check` |
 | Doc lint | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --locked` |
 | Quick verify | `lefthook run pre-push` |
+| Run binary | `cargo run -p scrap4rs -- <args>` (workspace-root `cargo run` is ambiguous once a second binary lands; default to `-p` from the start) |
 
-`#![warn(clippy::pedantic, clippy::cargo)]` lives at the crate root
-(`crates/scrap4rs/src/lib.rs`), so `clippy -D warnings` enforces
+`#![warn(clippy::pedantic, clippy::cargo)]` lives at the crate root of
+each workspace member (`scrap-core`, `scrap4rs`), so `clippy -D warnings` enforces
 pedantic and cargo lints automatically — no extra flag needed.
 
 CI runs the same chain on every PR. See `.github/workflows/ci.yml` for
