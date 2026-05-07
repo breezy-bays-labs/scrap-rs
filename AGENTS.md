@@ -10,36 +10,43 @@ should read this before touching code.
   tarballs, no `cargo install` path until v1.0**. Tags exist for git
   pinning only — internal versions like `v0.1.0` do not trigger any
   workflow.
-- The v1.0 release gate is the triple-crate workspace being live:
-  `crates/scrap-core/` + `crates/scrap4rs/` + `crates/scrap4ts/`. Until
-  then, mokumo is the sole consumer via composite GitHub Action.
+- The v1.0 release gate is publish: workspace already has the right
+  shape (`crates/scrap-core/` + `crates/scrap4rs/`, with
+  `crates/scrap4ts/` joining at v0.6+). Until v1.0, mokumo is the
+  sole consumer via composite GitHub Action.
 
 ## Architecture
 
-Hexagonal (ports & adapters), strict dependency direction:
+Hexagonal (ports & adapters), strict dependency direction enforced by
+Cargo crate boundaries. See
+[`adr-hexagonal-layout`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-hexagonal-layout.md)
+for the full layering invariant.
 
 ```
-domain/ → ports/ → adapters/ → core/ → cli/
+scrap-core (no AST libs)
+    ↑
+scrap4rs (depends on scrap-core; adds syn, proc-macro2, quote)
+    ↑
+scrap4ts (depends on scrap-core; adds swc_ecma_parser or oxc, napi-rs)  [v0.6+]
 ```
 
-| Layer | Purpose | External crates? |
-|-------|---------|-----------------|
-| `domain/` | Smell taxonomy, score, threshold, types | None — pure logic |
-| `ports/` | Trait defs (`SourcePort`, `TestParserPort`, `OutputPort`) | Domain types only |
-| `adapters/` | syn AST walker, walkdir/ignore source, reporters | syn, serde, comfy-table, ignore |
-| `core/` | Wires adapters via ports, exposes `analyze()` | Ports + adapters |
-| `cli/` | clap argument parsing, ExitCode shaping | clap, core |
+| Crate | Purpose | Allowed deps |
+|-------|---------|--------------|
+| `scrap-core` | Domain types, port traits, generic orchestration, detector logic, CLI surface, language-agnostic adapters (file walker, reporters) | `serde` (derive), `serde_json`, `walkdir`, `ignore`, `globset`, `comfy-table`, `clap` (derive), `thiserror` |
+| `scrap4rs` | Rust-source parser adapter + binary | `scrap-core`, `syn`, `proc-macro2`, `quote` |
+| `scrap4ts` | TypeScript-source parser adapter + binary | `scrap-core`, `swc_ecma_parser` *or* `oxc_parser`, `napi-rs` |
 
-**Never import inward.** `domain/` and `ports/` must stay
-language-agnostic — no `syn`, no `walkdir`, no `serde-on-AST`. Designed
-for extraction into `scrap-core` at v1.0; same `crates/` directory, no
-rename.
+**Never import inward.** `scrap-core` must stay free of AST libraries
+(`syn`, `swc_*`, `oxc_*`, `tree-sitter*`, `proc-macro2`, `quote`).
+Enforcement: structural (`scrap-core/Cargo.toml` does not list them)
++ source-level (`ast-purity` CI job rejects matching `use` lines in
+`crates/scrap-core/src/`).
 
 ## Working Rules
 
 - **TDD** — tests before implementation for all domain and adapter code.
-- **Domain purity** — `crates/scrap4rs/src/domain/` must never import
-  external crates or perform I/O.
+- **Domain purity** — `crates/scrap-core/src/domain/` must never import
+  external crates (other than `serde` derive) or perform I/O.
 - **Self-referential test** — once detectors land, scrap4rs must
   analyze its own source as an integration test (the `self-check`
   CI job).

@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 homepage.workspace = true
-description = "Static test smell detector for Rust — finds zero-assertion, tautological, no-op, and surface-only test bodies"
+description = "Static test smell detector for Rust — finds zero-assertion, tautological, no-op, and surface-only test bodies. Rust-source adapter for the scrap-core analyzer."
 keywords = ["scrap", "testing", "quality", "static-analysis", "smell"]
 categories = ["development-tools::testing", "command-line-utilities"]
 readme = "../../README.md"
@@ -25,13 +25,7 @@ name = "scrap4rs"
 path = "src/main.rs"
 
 [dependencies]
-# AST parsing (syn), file walking (walkdir/ignore), CLI (clap), and
-# rendering crates land in subsequent v0.1 sub-issue PRs. Domain types
-# only depend on serde for derive-only (de)serialization — no
-# serde-on-AST in domain per hexagonal layering invariant.
-serde = { version = "1", features = ["derive"] }
-
-[dev-dependencies]
-insta = { version = "1", features = ["json"] }
-proptest = "1"
-serde_json = "1"
+# Language-agnostic core — domain types, port traits, detectors,
+# reporters, CLI surface. scrap4rs adds only the Rust-specific parser
+# adapter (lands with scrap-rs#5 via syn/proc-macro2/quote).
+scrap-core = { path = "../scrap-core", version = "0.1.0" }

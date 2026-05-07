@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/scrap4rs"]
+members = ["crates/scrap-core", "crates/scrap4rs"]
 resolver = "2"
 
 [workspace.package]
@@ -11,4 +11,5 @@ authors = ["Christopher Bays <cmbays@breezybayslabs.com>"]
 rust-version = "1.85"
 
 # Workspace-wide lint config lands as detectors come online.
-# scrap-core and scrap4ts join this list at v1.0 (see ops kickstart plan §3).
+# scrap4ts joins this workspace when its parser adapter ships
+# (v0.6+ era — see ops kickstart plan §3 and adr-hexagonal-layout).

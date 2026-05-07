@@ -25,6 +25,16 @@ pre-push:
     fmt:
       run: cargo fmt --all --check
       timeout: 60s
+    ast-purity:
+      # Mirror the `ast-purity` CI job. Rejects AST-library imports in
+      # scrap-core; per `deny.toml` AST-library policy comment, this is
+      # the source-level backstop for the structural Cargo.toml ban.
+      run: |
+        if grep -rE '^\s*use\s+(syn|swc_|oxc_|tree_sitter|proc_macro2|quote)' crates/scrap-core/src/; then
+          echo "scrap-core must not import AST libraries — see decisions/scrap4rs/adr-hexagonal-layout.md"
+          exit 1
+        fi
+      timeout: 30s
     clippy:
       run: cargo clippy --workspace --all-targets --locked -- -D warnings
       timeout: 300s
