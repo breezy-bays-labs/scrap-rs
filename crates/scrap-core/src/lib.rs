@@ -20,7 +20,8 @@
 //!
 //! Module roster:
 //! - [`domain`] — types: `Smell`, `SmellCategory`, `Finding`, `Report`, `Span`, `TestIdentity`, etc.
-//! - [`ports`] — trait definitions: `SourcePort`, `TestParserPort`, `OutputPort` (planned).
+//! - [`ports`] — trait definitions and per-port error enums:
+//!   `SourcePort`/`SourceError`, `TestParserPort`/`ParseError`.
 //! - [`core`] — generic orchestration over ports (planned).
 //! - [`detectors`] — per-smell detector modules (planned).
 //! - [`adapters`] — language-agnostic adapter implementations: file walker, reporters (planned).
