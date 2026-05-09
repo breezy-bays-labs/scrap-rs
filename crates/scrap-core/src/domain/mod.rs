@@ -11,7 +11,8 @@
 //! adapter binary that links `scrap-core`.
 //!
 //! Module roster (live):
-//! - `types` — `Span`, `FilePath`, `QualifiedName`, `TestIdentity`, `InvertedSpan`
+//! - `types` — `Span`, `FilePath`, `QualifiedName`, `TestIdentity`, `InvertedSpan`, `SourceRoot`
+//! - `parsed` — `ParsedTestFile`, `ParsedTest`, `ParsedAttribute`, `ParsedAssertion`, `ParseDiagnostic`, `ParseDiagnosticKind`
 //! - `classification` — `Severity`, `Actionability`, `Confidence`, `RemediationMode`, `BaselineVerdict`
 //! - `smell` — `SmellCategory`, `Smell`
 //! - `finding` — `Finding`
@@ -24,6 +25,7 @@
 
 pub mod classification;
 pub mod finding;
+pub mod parsed;
 pub mod report;
 pub mod smell;
 pub mod threshold;

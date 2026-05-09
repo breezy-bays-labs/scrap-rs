@@ -14,6 +14,23 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
 
 ### Added
 
+- Hexagonal port traits in `scrap-core`: `SourcePort` (test-file
+  discovery) and `TestParserPort` (source → `ParsedTestFile`), each with
+  a `thiserror`-derived `#[non_exhaustive]` error enum (`SourceError`,
+  `ParseError`). Object-safe (`Box<dyn ...>` works); `Send + Sync` is
+  deliberately absent so parallelism bounds add at the `core::analyze`
+  call site.
+- `domain::parsed` module — language-agnostic structural facts every
+  detector consumes: `ParsedTestFile`, `ParsedTest`, `ParsedAttribute`,
+  `ParsedAssertion`, `ParseDiagnostic`, `ParseDiagnosticKind`. POD types
+  for FFI portability; canonical `::new()` constructors are the
+  documented entry point so detector follow-up PRs can add typed
+  semantic-fact fields additively.
+- `domain::SourceRoot` newtype — type-level boundary marker for the
+  CLI/test entry into source discovery.
+- `Display` impls on `FilePath`, `SourceRoot`, `QualifiedName` so
+  operator-facing error and log strings render the wrapped path/name
+  cleanly.
 - Initial workspace bootstrap: `crates/scrap4rs` skeleton with hexagonal
   module layout (`domain/`, `ports/`, `adapters/`, `core/`, `cli/`).
 - CI workflow with format / clippy / test matrix (Linux + macOS arm64 +

@@ -127,6 +127,12 @@ impl FilePath {
     }
 }
 
+impl std::fmt::Display for FilePath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.display().fmt(f)
+    }
+}
+
 /// Fully qualified Rust path of a test function (e.g.
 /// `foo::bar::tests::it_does_a_thing`).
 ///
@@ -156,6 +162,12 @@ impl QualifiedName {
     }
 }
 
+impl std::fmt::Display for QualifiedName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Identity of a single example (Rust `#[test]` fn) — file + qualified
 /// name + span. Each `Finding` carries exactly one.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -179,6 +191,38 @@ impl TestIdentity {
             qualified_name,
             span,
         }
+    }
+}
+
+/// Root directory under which test discovery operates.
+///
+/// Type-level boundary marker (no path validation): constructed at the
+/// CLI/test boundary so `core::analyze()` cannot accidentally accept a
+/// raw `&Path` from a fixture or argument vector. Carried by reference
+/// into `SourcePort::discover_test_files` and never decomposed inside
+/// `core/` or `ports/`. The adapter is responsible for surfacing
+/// non-existent or non-directory paths as `SourceError::Io`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SourceRoot(PathBuf);
+
+impl SourceRoot {
+    /// Wrap any `PathBuf`-convertible value as a `SourceRoot`.
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self(path.into())
+    }
+
+    /// Borrow the wrapped path. Use when interoperating with std I/O
+    /// at the source-discovery adapter boundary.
+    #[must_use]
+    pub fn as_path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for SourceRoot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.display().fmt(f)
     }
 }
 
@@ -213,6 +257,31 @@ mod tests {
     fn span_try_new_accepts_equal_lines() {
         let span = Span::try_new(7, 7).unwrap();
         assert_eq!(span.line_count(), 1);
+    }
+
+    #[test]
+    fn source_root_is_transparent() {
+        let root = SourceRoot::new("crates/scrap4rs");
+        assert_eq!(
+            serde_json::to_value(&root).unwrap(),
+            serde_json::Value::String("crates/scrap4rs".into()),
+        );
+    }
+
+    #[test]
+    fn source_root_as_path_round_trips() {
+        let root = SourceRoot::new("a/b/c");
+        assert_eq!(root.as_path(), std::path::Path::new("a/b/c"));
+    }
+
+    #[test]
+    fn newtype_display_unwraps_inner() {
+        assert_eq!(FilePath::new("a/b/c.rs").to_string(), "a/b/c.rs");
+        assert_eq!(
+            SourceRoot::new("crates/scrap4rs").to_string(),
+            "crates/scrap4rs"
+        );
+        assert_eq!(QualifiedName::new("foo::bar").to_string(), "foo::bar");
     }
 
     #[test]

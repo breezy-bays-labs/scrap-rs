@@ -30,8 +30,20 @@ path = "src/lib.rs"
 # `domain/` only because wire shapes need to round-trip identically
 # across adapter binaries. Shared version via `[workspace.dependencies]`.
 serde = { workspace = true }
+# Per-port error enums (`SourceError`, `ParseError`) derive `thiserror::Error`
+# so adapter callers get `std::error::Error` with `#[source]` chaining
+# without hand-rolled boilerplate.
+thiserror = { workspace = true }
+# `SourceError::InvalidGlob` carries the underlying `globset::Error` via
+# `#[source]`. Pulled into `scrap-core` because globset is on the allowed
+# dep list (CLAUDE.md) and the error type itself is part of the port surface.
+globset = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
 proptest = { workspace = true }
 serde_json = { workspace = true }
+# Compile-time `assert_obj_safe!` smoke checks for port traits — fails to
+# compile if a future edit introduces a non-object-safe method (e.g. `Self: Sized`,
+# generic methods, `&mut self` requirement on a port trait).
+static_assertions = { workspace = true }
