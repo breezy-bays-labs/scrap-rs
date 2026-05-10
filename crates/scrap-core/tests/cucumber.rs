@@ -1,7 +1,7 @@
 //! Cucumber-rs harness for the file-walker behavioral contract at
 //! `tests/features/file_walker.feature`.
 //!
-//! V8a wires the harness skeleton + the empty-directory scenario only;
+//! V8a wired the harness skeleton + the empty-directory scenario;
 //! V8b adds the remaining 12 scenarios + the Scenario Outline.
 //!
 //! Step matching uses `regex = r"..."` mode rather than Cucumber
@@ -9,27 +9,20 @@
 //! quoted strings that the Expression parser treats as special. The
 //! 2026-03-25 Kit lesson against cucumber 0.21 still applies on 0.23
 //! for any step with embedded `\[...\]` or quoted-string literals.
-//! Trivial Background steps could use plain text; regex throughout
-//! keeps the file uniform.
 
-use cucumber::{World as _, given, then, when};
+use cucumber::{World as _, gherkin, given, then, when};
 use scrap_core::adapters::source::fs::FsWalker;
 use scrap_core::adapters::source::memory::MemorySource;
 use scrap_core::domain::config::AnalysisConfig;
-use scrap_core::domain::source::DiscoveryOutcome;
-use scrap_core::domain::types::SourceRoot;
+use scrap_core::domain::source::{DiscoveryOutcome, SourceDiagnostic, SourceDiagnosticKind};
+use scrap_core::domain::types::{FilePath, SourceRoot};
 use scrap_core::ports::source::{SourceError, SourcePort};
+use std::path::{Path, PathBuf};
+
+// ─── World ──────────────────────────────────────────────────────────
 
 /// Per-scenario state. Cucumber-rs constructs a fresh `World` for each
-/// scenario via `Default`, so step definitions can rely on every field
-/// starting as `None` / empty.
-///
-/// `walker_construction_result` and `memory_source` are V8b-only — V8a
-/// only exercises the empty-directory happy path through `walker` /
-/// `outcome`. The `#[allow(dead_code)]` on the struct prevents the
-/// dead-field lint from blocking V8a; V8b's added scenarios exercise
-/// every field.
-#[allow(dead_code)]
+/// scenario via `Default`; all fields default to `None` / empty.
 #[derive(Debug, cucumber::World, Default)]
 struct World {
     tempdir: Option<tempfile::TempDir>,
@@ -38,6 +31,10 @@ struct World {
     walker_construction_result: Option<Result<FsWalker, SourceError>>,
     outcome: Option<Result<DiscoveryOutcome, SourceError>>,
     memory_source: Option<MemorySource>,
+    /// Tracks the SourceRoot supplied to a discover_test_files call
+    /// when the .feature scenario asserts on `path equal to
+    /// the missing-root FilePath` / `the file-root FilePath`.
+    invoked_root: Option<PathBuf>,
 }
 
 // ─── Background ─────────────────────────────────────────────────────
@@ -47,19 +44,132 @@ fn fresh_world(_w: &mut World) {
     // World::default() already gives empty Option fields; nothing to do.
 }
 
-// ─── Empty-directory scenario steps ─────────────────────────────────
+// ─── Tempdir / fixture builders ─────────────────────────────────────
+
+fn ensure_tempdir(w: &mut World) {
+    if w.tempdir.is_none() {
+        w.tempdir = Some(tempfile::tempdir().expect("tempdir creation"));
+    }
+}
+
+fn tempdir_path(w: &World) -> &Path {
+    w.tempdir.as_ref().expect("tempdir given").path()
+}
+
+fn touch(root: &Path, rel: &str) -> PathBuf {
+    let path = root.join(rel);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(&path, "").unwrap();
+    path
+}
 
 #[given(regex = r"^a temporary directory containing no files$")]
 fn empty_tempdir(w: &mut World) {
-    w.tempdir = Some(tempfile::tempdir().expect("tempdir creation"));
+    ensure_tempdir(w);
+}
+
+#[given(regex = r"^a temporary directory containing exactly `(.+?)`$")]
+fn tempdir_with_one_file(w: &mut World, file: String) {
+    ensure_tempdir(w);
+    touch(tempdir_path(w), &file);
+}
+
+#[given(regex = r"^a temporary directory containing `(.+?)` and `(.+?)`$")]
+fn tempdir_with_two_files(w: &mut World, a: String, b: String) {
+    ensure_tempdir(w);
+    let root = tempdir_path(w).to_path_buf();
+    touch(&root, &a);
+    touch(&root, &b);
+}
+
+#[given(regex = r"^a temporary directory containing `(.+?)`, `(.+?)`, and `(.+?)`$")]
+fn tempdir_with_three_files(w: &mut World, a: String, b: String, c: String) {
+    ensure_tempdir(w);
+    let root = tempdir_path(w).to_path_buf();
+    touch(&root, &a);
+    touch(&root, &b);
+    touch(&root, &c);
 }
 
 #[given(
-    regex = r#"^an `AnalysisConfig` with `extensions = \["rs"\]` and `respect_gitignore = true`$"#
+    regex = r"^a temporary directory containing `(.+?)`, `(.+?)`, and a `\.gitignore` listing `(.+?)`$"
 )]
-fn config_rs_gitignore_true(w: &mut World) {
-    let src = SourceRoot::new(w.tempdir.as_ref().expect("tempdir given").path());
+fn tempdir_with_gitignore(w: &mut World, a: String, b: String, ignored: String) {
+    ensure_tempdir(w);
+    let root = tempdir_path(w).to_path_buf();
+    touch(&root, &a);
+    touch(&root, &b);
+    std::fs::write(root.join(".gitignore"), format!("{ignored}\n")).unwrap();
+}
+
+#[given(regex = r"^a temporary directory with the following structure:$")]
+fn tempdir_with_structure(w: &mut World, step: &gherkin::Step) {
+    ensure_tempdir(w);
+    let root = tempdir_path(w).to_path_buf();
+    let table = step.table.as_ref().expect("data table given");
+    for row in table.rows.iter().skip(1) {
+        let rel = row.first().expect("path cell").trim();
+        if !rel.is_empty() {
+            touch(&root, rel);
+        }
+    }
+}
+
+// ─── AnalysisConfig builders ────────────────────────────────────────
+
+#[given(
+    regex = r#"^an `AnalysisConfig` with `extensions = \["rs"\]` and `respect_gitignore = (true|false)`$"#
+)]
+fn config_rs_gitignore_param(w: &mut World, respect: String) {
+    let src = SourceRoot::new(tempdir_path(w));
+    let respect_bool = respect == "true";
+    w.config = Some(AnalysisConfig::new(
+        src,
+        vec![],
+        vec!["rs".into()],
+        respect_bool,
+    ));
+}
+
+#[given(regex = r#"^an `AnalysisConfig` with `extensions = \["rs"\]`$"#)]
+fn config_rs(w: &mut World) {
+    let src = SourceRoot::new(tempdir_path(w));
     w.config = Some(AnalysisConfig::new(src, vec![], vec!["rs".into()], true));
+}
+
+#[given(regex = r#"^an `AnalysisConfig` with `extensions = \[\]`$"#)]
+fn config_empty_extensions(w: &mut World) {
+    let src = SourceRoot::new(tempdir_path(w));
+    w.config = Some(AnalysisConfig::new(src, vec![], vec![], true));
+}
+
+#[given(
+    regex = r#"^an `AnalysisConfig` with `exclude = \["vendored/\*\*"\]` and `extensions = \["rs"\]`$"#
+)]
+fn config_with_exclude(w: &mut World) {
+    let src = SourceRoot::new(tempdir_path(w));
+    w.config = Some(AnalysisConfig::new(
+        src,
+        vec!["vendored/**".into()],
+        vec!["rs".into()],
+        true,
+    ));
+}
+
+#[given(regex = r#"^an `AnalysisConfig` with `exclude = \["\[unclosed"\]`$"#)]
+fn config_with_invalid_glob(w: &mut World) {
+    // No tempdir needed for the pre-walk-fatal scenario; build a
+    // throwaway SourceRoot just to satisfy AnalysisConfig::new.
+    ensure_tempdir(w);
+    let src = SourceRoot::new(tempdir_path(w));
+    w.config = Some(AnalysisConfig::new(
+        src,
+        vec!["[unclosed".into()],
+        vec!["rs".into()],
+        true,
+    ));
 }
 
 #[given(regex = r"^an `FsWalker` constructed from that config$")]
@@ -68,14 +178,213 @@ fn fswalker_from_config(w: &mut World) {
     w.walker = Some(FsWalker::try_new(config).expect("walker construction"));
 }
 
+#[given(
+    regex = r#"^an `FsWalker` constructed from a valid `AnalysisConfig`(?:| with `extensions = \["rs"\]`)$"#
+)]
+fn fswalker_with_default_config(w: &mut World) {
+    ensure_tempdir(w);
+    let src = SourceRoot::new(tempdir_path(w));
+    let cfg = AnalysisConfig::new(src, vec![], vec!["rs".into()], false);
+    w.config = Some(cfg.clone());
+    w.walker = Some(FsWalker::try_new(cfg).expect("walker construction"));
+}
+
+// ─── Special-purpose root builders ──────────────────────────────────
+
+#[given(regex = r"^a `SourceRoot` pointing at a non-existent path under the test temp directory$")]
+fn source_root_missing(w: &mut World) {
+    ensure_tempdir(w);
+    let missing = tempdir_path(w).join("does/not/exist");
+    w.invoked_root = Some(missing);
+}
+
+#[given(regex = r"^a `SourceRoot` pointing at a regular file under the test temp directory$")]
+fn source_root_is_file(w: &mut World) {
+    ensure_tempdir(w);
+    let file = tempdir_path(w).join("regular_file.rs");
+    std::fs::write(&file, "").unwrap();
+    w.invoked_root = Some(file);
+}
+
+// ─── Permission-denied fixture (chmod scope-guard via World drop) ───
+
+#[cfg(unix)]
+#[given(regex = r"^`denied` has been chmod'd to 0o000$")]
+fn chmod_denied_dir(w: &mut World) {
+    use std::os::unix::fs::PermissionsExt;
+    let denied = tempdir_path(w).join("denied");
+    // chmod the subdir; the WorldDrop hook below restores 0o755 in
+    // World's Drop impl so TempDir cleanup stays stderr-clean.
+    std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o000))
+        .expect("chmod 0o000 on denied/");
+}
+
+// ─── MemorySource builders ──────────────────────────────────────────
+
+fn rows_to_filepaths(table: &gherkin::Table) -> Vec<FilePath> {
+    table
+        .rows
+        .iter()
+        .skip(1)
+        .map(|row| FilePath::new(row.first().expect("path cell").trim()))
+        .collect()
+}
+
+#[given(regex = r"^a `MemorySource` constructed via `MemorySource::with_files` with the files:$")]
+fn memory_source_with_files(w: &mut World, step: &gherkin::Step) {
+    let files = rows_to_filepaths(step.table.as_ref().expect("data table"));
+    w.memory_source = Some(MemorySource::with_files(files));
+}
+
+#[given(regex = r"^a `MemorySource` constructed via `MemorySource::new` with the files:$")]
+fn memory_source_new_files(w: &mut World, step: &gherkin::Step) {
+    // Stash files; diagnostics arrive in the next Given step. Use
+    // ::with_files as a temporary shell — `the diagnostics:` step
+    // rebuilds with ::new once it has both pieces.
+    let files = rows_to_filepaths(step.table.as_ref().expect("data table"));
+    w.memory_source = Some(MemorySource::with_files(files));
+}
+
+fn parse_diagnostic_kind(s: &str) -> SourceDiagnosticKind {
+    match s {
+        "PermissionDenied" => SourceDiagnosticKind::PermissionDenied,
+        "MidwalkIo" => SourceDiagnosticKind::MidwalkIo,
+        "Other" => SourceDiagnosticKind::Other,
+        other => panic!("unrecognized diagnostic kind: {other}"),
+    }
+}
+
+fn rows_to_diagnostics(table: &gherkin::Table) -> Vec<SourceDiagnostic> {
+    table
+        .rows
+        .iter()
+        .skip(1)
+        .map(|row| {
+            let kind = parse_diagnostic_kind(row[0].trim());
+            let path = FilePath::new(row[1].trim());
+            let message = row[2].trim().to_string();
+            SourceDiagnostic::new(path, kind, message)
+        })
+        .collect()
+}
+
+#[given(regex = r"^the diagnostics:$")]
+fn memory_source_diagnostics(w: &mut World, step: &gherkin::Step) {
+    let diagnostics = rows_to_diagnostics(step.table.as_ref().expect("data table"));
+    let existing = w.memory_source.take().expect("memory source already set");
+    w.memory_source = Some(MemorySource::new(existing.files, diagnostics));
+}
+
+// ─── When ───────────────────────────────────────────────────────────
+
+/// Build the walker on demand from the stored config. Many scenarios
+/// in the .feature go directly from `Given AnalysisConfig` to
+/// `When discover_test_files(root)` without an explicit
+/// `Given an FsWalker constructed from that config` step; this
+/// implicit construction satisfies them.
+fn ensure_walker(w: &mut World) {
+    if w.walker.is_none() {
+        let cfg = w.config.clone().expect("config given");
+        w.walker = Some(FsWalker::try_new(cfg).expect("walker construction"));
+    }
+}
+
 #[when(
     regex = r"^the caller invokes `discover_test_files\(root\)` against the temporary directory$"
 )]
-fn invoke_discover(w: &mut World) {
-    let walker = w.walker.as_ref().expect("walker given");
-    let root = SourceRoot::new(w.tempdir.as_ref().expect("tempdir given").path());
+fn invoke_discover_against_tempdir(w: &mut World) {
+    ensure_walker(w);
+    let walker = w.walker.as_ref().expect("walker");
+    let root = SourceRoot::new(tempdir_path(w));
     w.outcome = Some(walker.discover_test_files(&root));
 }
+
+#[when(regex = r"^the caller invokes `discover_test_files\(root\)`$")]
+fn invoke_discover(w: &mut World) {
+    ensure_walker(w);
+    let walker = w.walker.as_ref().expect("walker");
+    let root = SourceRoot::new(tempdir_path(w));
+    w.outcome = Some(walker.discover_test_files(&root));
+}
+
+#[when(regex = r"^the caller invokes `discover_test_files\(root\)` twice$")]
+fn invoke_discover_twice(w: &mut World) {
+    ensure_walker(w);
+    let walker = w.walker.as_ref().expect("walker");
+    let root = SourceRoot::new(tempdir_path(w));
+    let _ = walker.discover_test_files(&root).expect("first invocation");
+    w.outcome = Some(walker.discover_test_files(&root));
+}
+
+#[when(regex = r"^the caller constructs `FsWalker::try_new\(config\)`$")]
+fn caller_constructs_walker(w: &mut World) {
+    let cfg = w.config.clone().expect("config given");
+    let result = FsWalker::try_new(cfg);
+    if let Ok(ref walker) = result {
+        w.walker = Some(walker.clone());
+    }
+    w.walker_construction_result = Some(result);
+}
+
+#[when(regex = r"^the caller invokes `discover_test_files\(missing_root\)`$")]
+fn invoke_discover_missing(w: &mut World) {
+    let walker = w.walker.as_ref().expect("walker given");
+    let root = SourceRoot::new(w.invoked_root.as_ref().expect("invoked_root").clone());
+    w.outcome = Some(walker.discover_test_files(&root));
+}
+
+#[when(regex = r"^the caller invokes `discover_test_files\(file_root\)`$")]
+fn invoke_discover_file_root(w: &mut World) {
+    let walker = w.walker.as_ref().expect("walker given");
+    let root = SourceRoot::new(w.invoked_root.as_ref().expect("invoked_root").clone());
+    w.outcome = Some(walker.discover_test_files(&root));
+}
+
+#[when(regex = r"^the caller invokes `discover_test_files` against any `SourceRoot`$")]
+fn invoke_memory_source(w: &mut World) {
+    let src = w.memory_source.as_ref().expect("memory source given");
+    let root = SourceRoot::new("/any/root");
+    w.outcome = Some(src.discover_test_files(&root));
+}
+
+// ─── Then helpers ───────────────────────────────────────────────────
+
+fn rel_outcome_paths(w: &World) -> Vec<String> {
+    let outcome = w.outcome.as_ref().expect("outcome").as_ref().expect("Ok");
+    let root = tempdir_path(w);
+    outcome
+        .files
+        .iter()
+        .map(|fp| {
+            fp.as_path()
+                .strip_prefix(root)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| fp.as_path().to_string_lossy().into_owned())
+        })
+        .collect()
+}
+
+fn parse_path_table(table: &gherkin::Table) -> Vec<String> {
+    table
+        .rows
+        .iter()
+        .skip(1)
+        .map(|row| row.first().expect("path cell").trim().to_string())
+        .collect()
+}
+
+/// Robust split for the Scenario Outline `;`-delimited cell — trims
+/// whitespace, drops empty pieces from leading/trailing delimiters
+/// (per plan revision 4).
+fn split_semi(s: &str) -> Vec<String> {
+    s.split(';')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+// ─── Then — Ok with files (in order, exact) ─────────────────────────
 
 #[then(regex = r"^the result is `Ok` and `files` is empty$")]
 fn assert_files_empty(w: &mut World) {
@@ -97,6 +406,194 @@ fn assert_diagnostics_empty(w: &mut World) {
     );
 }
 
+#[then(regex = r"^the result is `Ok` and `files` equals \(in order\):$")]
+fn assert_files_equals_in_order(w: &mut World, step: &gherkin::Step) {
+    // Two consumers of this step:
+    // - FsWalker: outcome.files contain absolute paths under tempdir;
+    //   strip the prefix before comparing.
+    // - MemorySource: outcome.files are exactly what the test put in;
+    //   no tempdir prefix, so a plain string comparison works.
+    let expected = parse_path_table(step.table.as_ref().expect("data table"));
+    let actual: Vec<String> = if w.tempdir.is_some() && w.memory_source.is_none() {
+        rel_outcome_paths(w)
+    } else {
+        let outcome = w.outcome.as_ref().expect("outcome").as_ref().expect("Ok");
+        outcome
+            .files
+            .iter()
+            .map(|fp| fp.as_path().to_string_lossy().into_owned())
+            .collect()
+    };
+    assert_eq!(actual, expected);
+}
+
+#[then(regex = r"^the result is `Ok` and `files` contains exactly:$")]
+fn assert_files_contains_exactly(w: &mut World, step: &gherkin::Step) {
+    let expected_raw = parse_path_table(step.table.as_ref().expect("data table"));
+    // Each cell may itself be `;`-delimited (Scenario Outline reuses
+    // the same step body, substituting `keep.rs;skip.rs` etc.).
+    let mut expected: Vec<String> = expected_raw.iter().flat_map(|c| split_semi(c)).collect();
+    let mut actual = rel_outcome_paths(w);
+    expected.sort();
+    actual.sort();
+    assert_eq!(actual, expected);
+}
+
+#[then(regex = r"^both invocations return `Ok` with the exact same `files` \(in order\):$")]
+fn assert_both_invocations_match_files(w: &mut World, step: &gherkin::Step) {
+    let expected = parse_path_table(step.table.as_ref().expect("data table"));
+    let actual = rel_outcome_paths(w);
+    assert_eq!(actual, expected);
+}
+
+#[then(regex = r"^`files` does NOT contain `(.+?)`$")]
+fn assert_files_does_not_contain(w: &mut World, missing: String) {
+    let actual = rel_outcome_paths(w);
+    assert!(
+        !actual.contains(&missing),
+        "expected {missing} absent, but found in {actual:?}",
+    );
+}
+
+// ─── Then — Err(SourceError::InvalidGlob) (V8b scenario 7) ──────────
+
+#[then(regex = r#"^the result is `Err\(SourceError::InvalidGlob\)` with `pattern = "(.+?)"`$"#)]
+fn assert_err_invalid_glob(w: &mut World, expected_pattern: String) {
+    let result = w
+        .walker_construction_result
+        .as_ref()
+        .expect("walker_construction_result");
+    match result {
+        Err(SourceError::InvalidGlob { pattern, .. }) => {
+            assert_eq!(pattern, &expected_pattern);
+        }
+        other => panic!("expected SourceError::InvalidGlob, got {other:?}"),
+    }
+}
+
+#[then(regex = r"^the underlying `source` is a `globset::Error`$")]
+fn assert_underlying_globset(w: &mut World) {
+    use std::error::Error;
+    let result = w
+        .walker_construction_result
+        .as_ref()
+        .expect("walker_construction_result");
+    let err = match result {
+        Err(e) => e,
+        Ok(_) => panic!("expected Err, got Ok"),
+    };
+    let source = err.source().expect("source chain");
+    // Best-effort downcast via type_id — globset::Error is the
+    // documented source of SourceError::InvalidGlob.
+    assert!(
+        source.downcast_ref::<globset::Error>().is_some(),
+        "expected globset::Error, got {source:?}",
+    );
+}
+
+#[then(regex = r"^no walk has begun$")]
+fn assert_no_walk_began(w: &mut World) {
+    assert!(
+        w.outcome.is_none(),
+        "outcome should be None — walk did not run"
+    );
+}
+
+// ─── Then — Err(SourceError::Io) (scenarios 10, 11) ─────────────────
+
+#[then(
+    regex = r"^the result is `Err\(SourceError::Io\)` with `path` equal to the (missing-root|file-root) `FilePath`$"
+)]
+fn assert_err_io_with_path(w: &mut World, _label: String) {
+    let outcome = w.outcome.as_ref().expect("outcome");
+    let invoked = w.invoked_root.as_ref().expect("invoked_root");
+    match outcome {
+        Err(SourceError::Io { path, .. }) => {
+            assert_eq!(path, &FilePath::new(invoked));
+        }
+        other => panic!("expected SourceError::Io, got {other:?}"),
+    }
+}
+
+#[then(regex = r"^the underlying `source` is a `std::io::Error`$")]
+fn assert_underlying_io(w: &mut World) {
+    use std::error::Error;
+    let outcome = w.outcome.as_ref().expect("outcome");
+    let err = match outcome {
+        Err(e) => e,
+        Ok(_) => panic!("expected Err, got Ok"),
+    };
+    let source = err.source().expect("source chain");
+    assert!(
+        source.downcast_ref::<std::io::Error>().is_some(),
+        "expected std::io::Error, got {source:?}",
+    );
+}
+
+// ─── Then — Permission-denied diagnostic (scenario 12) ──────────────
+
+#[then(regex = r"^`diagnostics` contains exactly one `SourceDiagnostic`$")]
+fn assert_one_diagnostic(w: &mut World) {
+    let outcome = w.outcome.as_ref().expect("outcome").as_ref().expect("Ok");
+    assert_eq!(
+        outcome.diagnostics.len(),
+        1,
+        "expected exactly one diagnostic, got {:?}",
+        outcome.diagnostics
+    );
+}
+
+#[then(regex = r"^that diagnostic has `kind = PermissionDenied`$")]
+fn assert_diagnostic_kind_permission_denied(w: &mut World) {
+    let outcome = w.outcome.as_ref().expect("outcome").as_ref().expect("Ok");
+    assert_eq!(
+        outcome.diagnostics[0].kind,
+        SourceDiagnosticKind::PermissionDenied,
+    );
+}
+
+#[then(regex = r"^that diagnostic's `path` includes the `denied` subdirectory$")]
+fn assert_diagnostic_path_contains_denied(w: &mut World) {
+    let outcome = w.outcome.as_ref().expect("outcome").as_ref().expect("Ok");
+    let diag_path = outcome.diagnostics[0].path.as_path().display().to_string();
+    assert!(
+        diag_path.contains("denied"),
+        "expected 'denied' in path, got {diag_path}",
+    );
+}
+
+// ─── Then — MemorySource diagnostics carry-through (scenario 14) ────
+
+#[then(regex = r"^`diagnostics` equals \(in order\):$")]
+fn assert_diagnostics_equal_in_order(w: &mut World, step: &gherkin::Step) {
+    let outcome = w.outcome.as_ref().expect("outcome").as_ref().expect("Ok");
+    let expected = rows_to_diagnostics(step.table.as_ref().expect("data table"));
+    assert_eq!(outcome.diagnostics, expected);
+}
+
+// ─── Cleanup hook — restore chmod 0o755 before TempDir drops ────────
+//
+// World's Drop impl runs BEFORE TempDir's Drop because TempDir is a
+// field of World. cucumber-rs drops the World at end-of-scenario,
+// which triggers our Drop hook to chmod 0o755 on the denied subdir
+// (best-effort — ignore failure if the path doesn't exist or isn't
+// chmod'd) so TempDir's rm -rf doesn't leave stderr noise. Pristine
+// stderr keeps agentic loops from misreading cleanup chatter as a
+// real test failure.
+
+impl Drop for World {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(tmp) = self.tempdir.as_ref() {
+            use std::os::unix::fs::PermissionsExt;
+            let denied = tmp.path().join("denied");
+            if denied.exists() {
+                let _ = std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+    }
+}
+
 // ─── Harness ────────────────────────────────────────────────────────
 
 #[tokio::main(flavor = "current_thread")]
@@ -104,10 +601,8 @@ async fn main() {
     World::cucumber()
         .filter_run_and_exit("tests/features", |_feature, _rule, scenario| {
             // @unix-tagged scenarios run only on Unix; everything else
-            // runs everywhere. Permission-denied scenarios are gated
-            // here per the .feature file's @unix tag. Expressed as
-            // `not-tagged || unix` so clippy doesn't flag the branch
-            // as always-true on Unix builds.
+            // runs everywhere. Expressed as `not-tagged || unix` so
+            // clippy doesn't flag the branch as always-true on Unix.
             !scenario.tags.iter().any(|t| t == "unix") || cfg!(unix)
         })
         .await;
