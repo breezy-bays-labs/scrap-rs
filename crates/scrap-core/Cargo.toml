@@ -53,3 +53,7 @@ serde_json = { workspace = true }
 # compile if a future edit introduces a non-object-safe method (e.g. `Self: Sized`,
 # generic methods, `&mut self` requirement on a port trait).
 static_assertions = { workspace = true }
+# `tempfile::TempDir` powers the FsWalker integration tests in
+# `adapters/source/fs.rs` — each walk scenario builds a self-contained
+# fixture tree under a TempDir that is dropped at end of test.
+tempfile = { workspace = true }

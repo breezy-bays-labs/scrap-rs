@@ -109,7 +109,7 @@ impl Span {
 /// Newtype rather than bare `PathBuf` so adapters can't accidentally pass
 /// an unrelated path through the domain layer; every Location carries a
 /// `FilePath` constructed at the source-discovery boundary.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct FilePath(PathBuf);
 

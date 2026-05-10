@@ -24,6 +24,7 @@ thiserror = "2"
 globset = "0.4"
 ignore = "0.4"
 static_assertions = "1"
+tempfile = "3"
 
 # Workspace-wide lint config lands as detectors come online.
 # scrap4ts joins this workspace when its parser adapter ships
