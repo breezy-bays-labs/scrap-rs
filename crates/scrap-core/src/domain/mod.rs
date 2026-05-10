@@ -13,6 +13,8 @@
 //! Module roster (live):
 //! - `types` — `Span`, `FilePath`, `QualifiedName`, `TestIdentity`, `InvertedSpan`, `SourceRoot`
 //! - `parsed` — `ParsedTestFile`, `ParsedTest`, `ParsedAttribute`, `ParsedAssertion`, `ParseDiagnostic`, `ParseDiagnosticKind`
+//! - `source` — `DiscoveryOutcome`, `SourceDiagnostic`, `SourceDiagnosticKind`
+//! - `config` — `AnalysisConfig`
 //! - `classification` — `Severity`, `Actionability`, `Confidence`, `RemediationMode`, `BaselineVerdict`
 //! - `smell` — `SmellCategory`, `Smell`
 //! - `finding` — `Finding`
@@ -24,9 +26,11 @@
 //! - `score` — saturating-curve helpers (v0.3+ per kickstart plan §3)
 
 pub mod classification;
+pub mod config;
 pub mod finding;
 pub mod parsed;
 pub mod report;
 pub mod smell;
+pub mod source;
 pub mod threshold;
 pub mod types;
