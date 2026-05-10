@@ -96,7 +96,19 @@ jobs:
       # legitimately inflate uncovered lines, but catches the agentic-
       # dev failure mode where a future PR adds 200 lines of code and
       # 30 lines of test. Promote to 90% once detector coverage settles.
-      - run: cargo llvm-cov nextest --workspace --locked --fail-under-lines 85 --lcov --output-path lcov.info
+      #
+      # Two-step coverage run (mirrors the test-job split): nextest
+      # excluding the cucumber binary (harness = false trips its
+      # --list enumeration) accumulates coverage with --no-report,
+      # then the cucumber binary is run via `cargo test --test cucumber`
+      # also with --no-report, then `report` finalizes the merged lcov.
+      # Without this split, nextest fails on cucumber's binary with
+      # exit 2 and we lose all coverage.
+      - run: |
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov --no-report nextest --workspace --locked -E 'not binary(cucumber)'
+          cargo llvm-cov --no-report test -p scrap-core --test cucumber --locked
+          cargo llvm-cov report --lcov --output-path lcov.info --fail-under-lines 85
       - uses: actions/upload-artifact@v4
         with:
           name: lcov
@@ -104,12 +116,12 @@ jobs:
           retention-days: 7
 
   msrv:
-    name: MSRV (1.85)
+    name: MSRV (1.88)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.85
+      - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: scrap-rs-msrv

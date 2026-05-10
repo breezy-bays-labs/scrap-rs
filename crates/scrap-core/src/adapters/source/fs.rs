@@ -124,14 +124,12 @@ impl SourcePort for FsWalker {
             .require_git(false)
             .overrides(self.override_matcher.clone());
 
-        // Pre-lower the configured extension set; the per-entry check
-        // is a case-insensitive bare-extension match (E2 from shaping).
-        let allowed_extensions: Vec<String> = self
-            .config
-            .extensions
-            .iter()
-            .map(|e| e.to_ascii_lowercase())
-            .collect();
+        // Per-entry extension matching uses `eq_ignore_ascii_case`
+        // against the configured extensions verbatim (E2 from shaping).
+        // This avoids both a Vec<String> pre-allocation and a
+        // per-entry `to_ascii_lowercase()` heap allocation; the
+        // case-insensitive comparison happens in-place.
+        let allowed_extensions: &[String] = &self.config.extensions;
 
         let mut files: Vec<FilePath> = Vec::new();
         let mut diagnostics: Vec<SourceDiagnostic> = Vec::new();
@@ -139,11 +137,14 @@ impl SourcePort for FsWalker {
         for entry in builder.build() {
             match entry {
                 Ok(entry) => {
-                    let entry_path = entry.path();
                     // Skip the root entry the walker yields first.
-                    if entry_path == path {
+                    // `entry.depth() == 0` is the documented `ignore`
+                    // crate predicate for the walk root and avoids a
+                    // path-component comparison per entry.
+                    if entry.depth() == 0 {
                         continue;
                     }
+                    let entry_path = entry.path();
                     let Some(ft) = entry.file_type() else {
                         // Walker couldn't determine the file type
                         // (typically a stat failure on a dangling
@@ -176,12 +177,10 @@ impl SourcePort for FsWalker {
                         files.push(relative_filepath(entry_path, path));
                         continue;
                     }
-                    let entry_ext = entry_path
-                        .extension()
-                        .and_then(std::ffi::OsStr::to_str)
-                        .map(str::to_ascii_lowercase);
-                    if let Some(ext) = entry_ext
-                        && allowed_extensions.iter().any(|allowed| allowed == &ext)
+                    if let Some(ext) = entry_path.extension().and_then(std::ffi::OsStr::to_str)
+                        && allowed_extensions
+                            .iter()
+                            .any(|allowed| allowed.eq_ignore_ascii_case(ext))
                     {
                         files.push(relative_filepath(entry_path, path));
                     }
