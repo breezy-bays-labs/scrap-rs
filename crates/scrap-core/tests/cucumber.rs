@@ -532,7 +532,7 @@ fn assert_diagnostic_path_contains_denied(w: &mut World) {
     );
 }
 
-// ─── Then — Symlink diagnostic (C2) ─────────────────────────────────
+// ─── Then — Symlink diagnostic ──────────────────────────────────────
 
 #[then(regex = r"^that diagnostic has `kind = Other`$")]
 fn assert_diagnostic_kind_other(w: &mut World) {

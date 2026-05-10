@@ -110,6 +110,14 @@ impl Span {
 /// ([`crate::adapters::source::memory::MemorySource`]) emit the paths
 /// the test author supplies verbatim.
 ///
+/// **Documented exception**: when an `FsWalker` mid-walk diagnostic
+/// attributes itself to a path outside the walked tree (e.g. a
+/// `~/.config/git/ignore` parse failure when `git_global(true)` is
+/// honouring the global gitignore), the diagnostic carries the raw
+/// absolute path. The relative-shape convention applies to the
+/// happy-path entries inside [`crate::domain::source::DiscoveryOutcome::files`];
+/// diagnostic attribution prefers fidelity over relativisation.
+///
 /// Newtype rather than bare `PathBuf` so adapters can't accidentally pass
 /// an unrelated path through the domain layer; every Location carries a
 /// `FilePath` constructed at the source-discovery boundary.

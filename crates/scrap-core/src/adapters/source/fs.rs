@@ -206,10 +206,20 @@ impl SourcePort for FsWalker {
 }
 
 /// Strip `walked_root` from `entry_path` and wrap the result as a
-/// `FilePath`. Falls back to the raw path if the strip fails (paths
-/// outside the walked tree shouldn't occur in practice — the walker
-/// only yields entries under its base — but the fallback prevents a
-/// surprise panic if canonicalisation diverges).
+/// `FilePath`.
+///
+/// Two callers, two fallback semantics:
+/// - File-collection path (`SourcePort::discover_test_files` walk loop):
+///   the walker only yields entries under its base, so `strip_prefix`
+///   is expected to succeed. The fallback prevents a surprise panic
+///   if canonicalisation ever diverges.
+/// - Diagnostic-attribution path (`classify_walk_error`): the
+///   `WithPath` wrapper can carry paths from outside the walked tree
+///   (e.g. `~/.config/git/ignore` when `git_global(true)` parses a
+///   broken global gitignore). The fallback emits the raw absolute
+///   path verbatim — a deliberate signal that the diagnostic
+///   originated outside the project tree. `FilePath` documents this
+///   exception to its "relative-when-emitted-by-FsWalker" convention.
 fn relative_filepath(entry_path: &Path, walked_root: &Path) -> FilePath {
     entry_path
         .strip_prefix(walked_root)
@@ -343,7 +353,7 @@ mod tests {
             .collect()
     }
 
-    // ─── try_new tests (V4) ──────────────────────────────────────────
+    // ─── try_new tests ───────────────────────────────────────────────
 
     #[test]
     fn try_new_with_no_excludes_returns_ok() {
