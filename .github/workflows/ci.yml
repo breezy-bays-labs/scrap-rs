@@ -68,7 +68,16 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest@0.9
-      - run: cargo nextest run --workspace --all-targets --locked
+      # cucumber-rs `harness = false` binaries don't implement libtest's
+      # `--list --format terse` interface that nextest uses to enumerate
+      # tests, so they fail with exit 2 on enumeration. Mirror the
+      # lefthook pre-push split (lefthook.yml): run nextest over
+      # everything except the cucumber binary, then run the cucumber
+      # binary directly via `cargo test --test cucumber`. Same gates,
+      # clean separation. If `nextest` ever grows a per-binary
+      # `runs-as-itself` flag, this can collapse back into one command.
+      - run: cargo nextest run --workspace --all-targets --locked -E 'not binary(cucumber)'
+      - run: cargo test -p scrap-core --test cucumber --locked
 
   coverage:
     name: Coverage
