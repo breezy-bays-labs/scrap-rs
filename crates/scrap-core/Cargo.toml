@@ -57,3 +57,15 @@ static_assertions = { workspace = true }
 # `adapters/source/fs.rs` — each walk scenario builds a self-contained
 # fixture tree under a TempDir that is dropped at end of test.
 tempfile = { workspace = true }
+# `cucumber` executes the .feature behavioral contract for the file
+# walker. The harness lives at `tests/cucumber.rs` (declared with
+# `harness = false` below so cucumber-rs owns the test runner end to
+# end); scenarios live at `tests/features/file_walker.feature`.
+cucumber = { workspace = true }
+# `tokio` is the async runtime for the cucumber harness only — not
+# used by the library itself.
+tokio = { workspace = true }
+
+[[test]]
+name = "cucumber"
+harness = false
