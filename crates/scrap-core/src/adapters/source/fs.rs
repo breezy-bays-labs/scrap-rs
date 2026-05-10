@@ -2,7 +2,7 @@
 
 use crate::domain::config::AnalysisConfig;
 use crate::domain::source::{DiscoveryOutcome, SourceDiagnostic, SourceDiagnosticKind};
-use crate::domain::types::{FilePath, SourceRoot};
+use crate::domain::types::FilePath;
 use crate::ports::source::{SourceError, SourcePort};
 use ignore::overrides::{Override, OverrideBuilder};
 use std::path::Path;
@@ -12,19 +12,23 @@ use std::path::Path;
 /// Construction (`FsWalker::try_new`) eagerly compiles every user
 /// exclude glob via `globset` and assembles an `ignore::overrides::Override`
 /// matcher. Failures surface as `SourceError::InvalidGlob` (per-pattern
-/// compile error) or `SourceError::Ignore` (the rare
+/// compile error), `SourceError::EmptyExcludePattern` (empty/whitespace
+/// pattern that `globset` would silently accept and rewrite into a
+/// global whitelist), or `SourceError::Ignore` (the rare
 /// `OverrideBuilder::build()` rejection — see the variant docstring).
 ///
-/// `discover_test_files` runs lazily per call: pre-flights the root,
-/// builds an `ignore::WalkBuilder` honouring
+/// `discover_test_files` runs lazily per call: pre-flights the
+/// adapter-configured root, builds an `ignore::WalkBuilder` honouring
 /// `AnalysisConfig::respect_gitignore`, iterates entries, applies a
 /// post-iteration extension filter, sorts the collected paths
-/// byte-wise, and returns a `DiscoveryOutcome` with non-fatal mid-walk
-/// diagnostics attached.
+/// byte-wise, and returns a [`DiscoveryOutcome`] with non-fatal mid-walk
+/// diagnostics attached. Emitted file paths are relative to
+/// `AnalysisConfig::src` so reports and snapshots are stable across
+/// machines.
 #[derive(Debug, Clone)]
 pub struct FsWalker {
     /// Caller-supplied configuration. Stored verbatim — the walker
-    /// re-reads `extensions`, `respect_gitignore`, etc. per call.
+    /// re-reads `extensions`, `respect_gitignore`, `src`, etc. per call.
     config: AnalysisConfig,
     /// Pre-compiled negative-override matcher built from
     /// `config.exclude` at `try_new` time. `Override` is internally
@@ -38,19 +42,29 @@ impl FsWalker {
     ///
     /// # Errors
     ///
-    /// - [`SourceError::InvalidGlob`] when one of the user-supplied
-    ///   exclude patterns fails `globset::Glob::new`. The variant's
-    ///   `pattern` field carries the offending raw pattern.
+    /// - [`SourceError::EmptyExcludePattern`] when an exclude pattern
+    ///   is empty or whitespace-only. `globset` accepts these silently
+    ///   and the override builder rewrites them into a global whitelist
+    ///   — the opposite of caller intent. We reject eagerly.
+    /// - [`SourceError::InvalidGlob`] when an exclude pattern fails
+    ///   `globset::Glob::new`. The variant's `pattern` field carries
+    ///   the offending raw pattern.
     /// - [`SourceError::Ignore`] when `OverrideBuilder::build()`
     ///   rejects the assembled matcher despite each individual
     ///   `.add()` call having succeeded. Forward-compat hatch — see
     ///   the variant docstring.
     pub fn try_new(config: AnalysisConfig) -> Result<Self, SourceError> {
-        // Validate each user exclude pattern via globset first so we
-        // can surface the offending raw pattern as
-        // SourceError::InvalidGlob (the OverrideBuilder swallows the
-        // pattern text in its own error message).
+        // Validate each user exclude pattern. Empty/whitespace-only
+        // patterns must be rejected eagerly: globset::Glob::new("")
+        // succeeds and OverrideBuilder::add("!") rewrites the result
+        // into a "**/" whitelist that nullifies ALL exclude semantics
+        // — silent data deletion the caller didn't ask for.
         for pattern in &config.exclude {
+            if pattern.trim().is_empty() {
+                return Err(SourceError::EmptyExcludePattern {
+                    pattern: pattern.clone(),
+                });
+            }
             globset::Glob::new(pattern).map_err(|source| SourceError::InvalidGlob {
                 pattern: pattern.clone(),
                 source,
@@ -79,8 +93,8 @@ impl FsWalker {
 }
 
 impl SourcePort for FsWalker {
-    fn discover_test_files(&self, root: &SourceRoot) -> Result<DiscoveryOutcome, SourceError> {
-        let path = root.as_path();
+    fn discover_test_files(&self) -> Result<DiscoveryOutcome, SourceError> {
+        let path = self.config.src.as_path();
 
         // Pre-flight: surface missing/non-directory roots as fatal
         // SourceError::Io. The walk itself does NOT produce a clean
@@ -125,22 +139,51 @@ impl SourcePort for FsWalker {
         for entry in builder.build() {
             match entry {
                 Ok(entry) => {
-                    if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                    let entry_path = entry.path();
+                    // Skip the root entry the walker yields first.
+                    if entry_path == path {
+                        continue;
+                    }
+                    let Some(ft) = entry.file_type() else {
+                        // Walker couldn't determine the file type
+                        // (typically a stat failure on a dangling
+                        // symlink). Surface as MidwalkIo so the silent
+                        // skip is observable.
+                        diagnostics.push(SourceDiagnostic::new(
+                            relative_filepath(entry_path, path),
+                            SourceDiagnosticKind::MidwalkIo,
+                            format!("could not determine file type for {}", entry_path.display()),
+                        ));
+                        continue;
+                    };
+                    if ft.is_symlink() {
+                        // Walker default is follow_links(false); without
+                        // a diagnostic, symlinked source files would be
+                        // silently dropped from discovery (silent-failure
+                        // class). Emit `Other` so the caller sees what
+                        // was skipped.
+                        diagnostics.push(SourceDiagnostic::new(
+                            relative_filepath(entry_path, path),
+                            SourceDiagnosticKind::Other,
+                            format!("symlink not followed: {}", entry_path.display()),
+                        ));
+                        continue;
+                    }
+                    if !ft.is_file() {
                         continue;
                     }
                     if allowed_extensions.is_empty() {
-                        files.push(FilePath::new(entry.into_path()));
+                        files.push(relative_filepath(entry_path, path));
                         continue;
                     }
-                    let entry_ext = entry
-                        .path()
+                    let entry_ext = entry_path
                         .extension()
                         .and_then(std::ffi::OsStr::to_str)
                         .map(str::to_ascii_lowercase);
                     if let Some(ext) = entry_ext
                         && allowed_extensions.iter().any(|allowed| allowed == &ext)
                     {
-                        files.push(FilePath::new(entry.into_path()));
+                        files.push(relative_filepath(entry_path, path));
                     }
                 }
                 Err(err) => diagnostics.push(classify_walk_error(&err, path)),
@@ -148,16 +191,29 @@ impl SourcePort for FsWalker {
         }
 
         // Post-collect byte-wise sort on the underlying OsStr (E1 from
-        // shaping). NOT `files.sort()` — PathBuf's natural Ord is
+        // shaping). NOT `files.sort()` — `PathBuf`'s natural Ord is
         // component-wise (sorts `a/b.rs` before `a.rs` because the
         // first components compare `"a"` < `"a.rs"`). We need byte-wise
         // comparison of the full path string so the .feature data
         // table's `a.rs` before `a/b.rs` ordering holds (`.` byte 0x2E
-        // < `/` byte 0x2F).
+        // < `/` byte 0x2F). FilePath deliberately does not derive Ord;
+        // the explicit sort_by below is the only canonical iteration
+        // order.
         files.sort_by(|a, b| a.as_path().as_os_str().cmp(b.as_path().as_os_str()));
 
         Ok(DiscoveryOutcome::new(files, diagnostics))
     }
+}
+
+/// Strip `walked_root` from `entry_path` and wrap the result as a
+/// `FilePath`. Falls back to the raw path if the strip fails (paths
+/// outside the walked tree shouldn't occur in practice — the walker
+/// only yields entries under its base — but the fallback prevents a
+/// surprise panic if canonicalisation diverges).
+fn relative_filepath(entry_path: &Path, walked_root: &Path) -> FilePath {
+    entry_path
+        .strip_prefix(walked_root)
+        .map_or_else(|_| FilePath::new(entry_path), FilePath::new)
 }
 
 /// Classify a non-fatal mid-walk `ignore::Error` into a
@@ -166,11 +222,20 @@ impl SourcePort for FsWalker {
 /// `WithPath` also supplies path attribution. Errors that lack a
 /// `WithPath` wrapper fall back to `fallback_root` (typically the walk
 /// root). Branch coverage is unit-tested below against
-/// hand-constructed `ignore::Error` values.
+/// hand-constructed `ignore::Error` values (per shaping A7b).
+///
+/// `Partial(Vec<Error>)` is intentionally NOT peeled: it surfaces only
+/// when an ignore file partially loads, the inner `Vec` is rarely
+/// non-empty in practice, and recursing would force the `path`
+/// attribution to choose between conflicting inner wrappers. The
+/// `Other` classification + `to_string()` message preserves the diag
+/// signal without committing the adapter to a peel rule that would
+/// shift across `ignore` minor versions.
 fn classify_walk_error(err: &ignore::Error, fallback_root: &Path) -> SourceDiagnostic {
-    let attributed = walk_error_attributed_path(err).unwrap_or(fallback_root);
+    let attributed_path = walk_error_attributed_path(err).unwrap_or(fallback_root);
+    let attributed = relative_filepath(attributed_path, fallback_root);
     let kind = walk_error_kind(err);
-    SourceDiagnostic::new(FilePath::new(attributed), kind, err.to_string())
+    SourceDiagnostic::new(attributed, kind, err.to_string())
 }
 
 /// Peel `ignore::Error` wrappers to find the first `WithPath`-supplied
@@ -270,17 +335,11 @@ mod tests {
         path
     }
 
-    fn rel_paths(outcome: &DiscoveryOutcome, root: &Path) -> Vec<String> {
+    fn paths(outcome: &DiscoveryOutcome) -> Vec<String> {
         outcome
             .files
             .iter()
-            .map(|fp| {
-                fp.as_path()
-                    .strip_prefix(root)
-                    .unwrap()
-                    .to_string_lossy()
-                    .into_owned()
-            })
+            .map(|fp| fp.as_path().to_string_lossy().into_owned())
             .collect()
     }
 
@@ -309,15 +368,37 @@ mod tests {
         }
     }
 
+    #[test]
+    fn try_new_with_empty_exclude_pattern_returns_empty_exclude_error() {
+        let walker = FsWalker::try_new(cfg(vec![String::new()]));
+        match walker {
+            Err(SourceError::EmptyExcludePattern { pattern }) => {
+                assert_eq!(pattern, "");
+            }
+            other => panic!("expected SourceError::EmptyExcludePattern, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn try_new_with_whitespace_exclude_pattern_returns_empty_exclude_error() {
+        let walker = FsWalker::try_new(cfg(vec!["   ".into()]));
+        match walker {
+            Err(SourceError::EmptyExcludePattern { pattern }) => {
+                assert_eq!(pattern, "   ");
+            }
+            other => panic!("expected SourceError::EmptyExcludePattern, got {other:?}"),
+        }
+    }
+
     // ─── Pre-flight failure tests ───────────────────────────────────
 
     #[test]
     fn missing_root_returns_io_error() {
         let tmp = tempfile::tempdir().unwrap();
         let missing = tmp.path().join("does/not/exist");
-        let cfg = cfg_for(tmp.path(), vec![], vec!["rs".into()], false);
+        let cfg = cfg_for(&missing, vec![], vec!["rs".into()], false);
         let walker = FsWalker::try_new(cfg).unwrap();
-        let outcome = walker.discover_test_files(&SourceRoot::new(&missing));
+        let outcome = walker.discover_test_files();
         match outcome {
             Err(SourceError::Io { path, .. }) => {
                 assert_eq!(path, FilePath::new(&missing));
@@ -331,9 +412,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let file = tmp.path().join("f.rs");
         fs::write(&file, "").unwrap();
-        let cfg = cfg_for(tmp.path(), vec![], vec!["rs".into()], false);
+        let cfg = cfg_for(&file, vec![], vec!["rs".into()], false);
         let walker = FsWalker::try_new(cfg).unwrap();
-        let outcome = walker.discover_test_files(&SourceRoot::new(&file));
+        let outcome = walker.discover_test_files();
         match outcome {
             Err(SourceError::Io { path, .. }) => {
                 assert_eq!(path, FilePath::new(&file));
@@ -349,9 +430,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = cfg_for(tmp.path(), vec![], vec!["rs".into()], true);
         let walker = FsWalker::try_new(cfg).unwrap();
-        let outcome = walker
-            .discover_test_files(&SourceRoot::new(tmp.path()))
-            .unwrap();
+        let outcome = walker.discover_test_files().unwrap();
         assert!(outcome.files.is_empty(), "{:?}", outcome.files);
         assert!(outcome.diagnostics.is_empty(), "{:?}", outcome.diagnostics);
     }
@@ -362,10 +441,8 @@ mod tests {
         touch(tmp.path(), "a.rs");
         let cfg = cfg_for(tmp.path(), vec![], vec!["rs".into()], true);
         let walker = FsWalker::try_new(cfg).unwrap();
-        let outcome = walker
-            .discover_test_files(&SourceRoot::new(tmp.path()))
-            .unwrap();
-        assert_eq!(rel_paths(&outcome, tmp.path()), vec!["a.rs".to_string()]);
+        let outcome = walker.discover_test_files().unwrap();
+        assert_eq!(paths(&outcome), vec!["a.rs".to_string()]);
     }
 
     #[test]
@@ -376,12 +453,8 @@ mod tests {
         }
         let cfg = cfg_for(tmp.path(), vec![], vec!["rs".into()], true);
         let walker = FsWalker::try_new(cfg).unwrap();
-        let outcome_a = walker
-            .discover_test_files(&SourceRoot::new(tmp.path()))
-            .unwrap();
-        let outcome_b = walker
-            .discover_test_files(&SourceRoot::new(tmp.path()))
-            .unwrap();
+        let outcome_a = walker.discover_test_files().unwrap();
+        let outcome_b = walker.discover_test_files().unwrap();
         let expected = vec![
             "a.rs".to_string(),
             "a/b.rs".to_string(),
@@ -389,8 +462,8 @@ mod tests {
             "a/sub/d.rs".to_string(),
             "b.rs".to_string(),
         ];
-        assert_eq!(rel_paths(&outcome_a, tmp.path()), expected);
-        assert_eq!(rel_paths(&outcome_b, tmp.path()), expected);
+        assert_eq!(paths(&outcome_a), expected);
+        assert_eq!(paths(&outcome_b), expected);
     }
 
     // ─── Filter tests ────────────────────────────────────────────────
@@ -403,10 +476,8 @@ mod tests {
         }
         let cfg = cfg_for(tmp.path(), vec![], vec!["rs".into()], true);
         let walker = FsWalker::try_new(cfg).unwrap();
-        let outcome = walker
-            .discover_test_files(&SourceRoot::new(tmp.path()))
-            .unwrap();
-        let mut paths = rel_paths(&outcome, tmp.path());
+        let outcome = walker.discover_test_files().unwrap();
+        let mut paths = paths(&outcome);
         paths.sort();
         assert_eq!(paths, vec!["a.rs".to_string(), "b.RS".to_string()]);
     }
@@ -419,10 +490,8 @@ mod tests {
         }
         let cfg = cfg_for(tmp.path(), vec![], vec![], true);
         let walker = FsWalker::try_new(cfg).unwrap();
-        let outcome = walker
-            .discover_test_files(&SourceRoot::new(tmp.path()))
-            .unwrap();
-        let mut paths = rel_paths(&outcome, tmp.path());
+        let outcome = walker.discover_test_files().unwrap();
+        let mut paths = paths(&outcome);
         paths.sort();
         assert_eq!(
             paths,
@@ -431,19 +500,30 @@ mod tests {
     }
 
     #[test]
-    fn hidden_files_are_skipped_by_default() {
+    fn hidden_files_are_skipped_with_respect_gitignore_true() {
         let tmp = tempfile::tempdir().unwrap();
         touch(tmp.path(), "visible.rs");
         touch(tmp.path(), ".hidden.rs");
         let cfg = cfg_for(tmp.path(), vec![], vec!["rs".into()], true);
         let walker = FsWalker::try_new(cfg).unwrap();
-        let outcome = walker
-            .discover_test_files(&SourceRoot::new(tmp.path()))
-            .unwrap();
-        assert_eq!(
-            rel_paths(&outcome, tmp.path()),
-            vec!["visible.rs".to_string()]
-        );
+        let outcome = walker.discover_test_files().unwrap();
+        assert_eq!(paths(&outcome), vec!["visible.rs".to_string()]);
+    }
+
+    #[test]
+    fn hidden_files_are_also_skipped_with_respect_gitignore_false() {
+        // Pins the contract: hidden-file skipping comes from
+        // WalkBuilder::hidden(true) (always-on default), not from the
+        // gitignore toggle. A future refactor that conflates the two
+        // flags would silently start including dotfiles when callers
+        // disable gitignore — surprising behaviour the suite must catch.
+        let tmp = tempfile::tempdir().unwrap();
+        touch(tmp.path(), "visible.rs");
+        touch(tmp.path(), ".hidden.rs");
+        let cfg = cfg_for(tmp.path(), vec![], vec!["rs".into()], false);
+        let walker = FsWalker::try_new(cfg).unwrap();
+        let outcome = walker.discover_test_files().unwrap();
+        assert_eq!(paths(&outcome), vec!["visible.rs".to_string()]);
     }
 
     // ─── VCS ignore tests ────────────────────────────────────────────
@@ -456,10 +536,8 @@ mod tests {
         fs::write(tmp.path().join(".gitignore"), "skip.rs\n").unwrap();
         let cfg = cfg_for(tmp.path(), vec![], vec!["rs".into()], true);
         let walker = FsWalker::try_new(cfg).unwrap();
-        let outcome = walker
-            .discover_test_files(&SourceRoot::new(tmp.path()))
-            .unwrap();
-        assert_eq!(rel_paths(&outcome, tmp.path()), vec!["keep.rs".to_string()]);
+        let outcome = walker.discover_test_files().unwrap();
+        assert_eq!(paths(&outcome), vec!["keep.rs".to_string()]);
     }
 
     #[test]
@@ -470,10 +548,8 @@ mod tests {
         fs::write(tmp.path().join(".gitignore"), "skip.rs\n").unwrap();
         let cfg = cfg_for(tmp.path(), vec![], vec!["rs".into()], false);
         let walker = FsWalker::try_new(cfg).unwrap();
-        let outcome = walker
-            .discover_test_files(&SourceRoot::new(tmp.path()))
-            .unwrap();
-        let mut paths = rel_paths(&outcome, tmp.path());
+        let outcome = walker.discover_test_files().unwrap();
+        let mut paths = paths(&outcome);
         paths.sort();
         assert_eq!(paths, vec!["keep.rs".to_string(), "skip.rs".to_string()]);
     }
@@ -492,10 +568,35 @@ mod tests {
             true,
         );
         let walker = FsWalker::try_new(cfg).unwrap();
-        let outcome = walker
-            .discover_test_files(&SourceRoot::new(tmp.path()))
-            .unwrap();
-        assert_eq!(rel_paths(&outcome, tmp.path()), vec!["keep.rs".to_string()]);
+        let outcome = walker.discover_test_files().unwrap();
+        assert_eq!(paths(&outcome), vec!["keep.rs".to_string()]);
+    }
+
+    // ─── Symlink handling (skip + diagnostic) ───────────────────────
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_file_is_skipped_with_other_diagnostic() {
+        let tmp = tempfile::tempdir().unwrap();
+        touch(tmp.path(), "real.rs");
+        std::os::unix::fs::symlink(tmp.path().join("real.rs"), tmp.path().join("link.rs")).unwrap();
+        let cfg = cfg_for(tmp.path(), vec![], vec!["rs".into()], false);
+        let walker = FsWalker::try_new(cfg).unwrap();
+        let outcome = walker.discover_test_files().unwrap();
+        assert_eq!(paths(&outcome), vec!["real.rs".to_string()]);
+        assert_eq!(
+            outcome.diagnostics.len(),
+            1,
+            "expected one symlink diagnostic, got {:?}",
+            outcome.diagnostics,
+        );
+        let diag = &outcome.diagnostics[0];
+        assert_eq!(diag.kind, SourceDiagnosticKind::Other);
+        assert!(
+            diag.message.contains("symlink"),
+            "diag message should mention 'symlink', got {:?}",
+            diag.message,
+        );
     }
 
     // ─── Permission-denied (gated #[cfg(unix)]) ─────────────────────
@@ -520,14 +621,9 @@ mod tests {
 
         let cfg = cfg_for(tmp.path(), vec![], vec!["rs".into()], false);
         let walker = FsWalker::try_new(cfg).unwrap();
-        let outcome = walker
-            .discover_test_files(&SourceRoot::new(tmp.path()))
-            .unwrap();
+        let outcome = walker.discover_test_files().unwrap();
 
-        assert_eq!(
-            rel_paths(&outcome, tmp.path()),
-            vec!["accessible/a.rs".to_string()],
-        );
+        assert_eq!(paths(&outcome), vec!["accessible/a.rs".to_string()]);
         assert_eq!(
             outcome.diagnostics.len(),
             1,
@@ -558,6 +654,8 @@ mod tests {
         };
         let diag = classify_walk_error(&err, Path::new("/tmp/fallback"));
         assert_eq!(diag.kind, SourceDiagnosticKind::PermissionDenied);
+        // strip_prefix(/tmp/fallback) fails because the WithPath path
+        // is /tmp/scrap-classify/a — we expect the raw fallback shape.
         assert_eq!(diag.path, FilePath::new("/tmp/scrap-classify/a"));
     }
 
@@ -597,12 +695,32 @@ mod tests {
         };
         let diag = classify_walk_error(&err, Path::new("/tmp/fallback"));
         assert_eq!(diag.kind, SourceDiagnosticKind::Other);
-        assert_eq!(diag.path, FilePath::new("/tmp/fallback"));
+        // No WithPath attribution → falls back to walk root → the
+        // strip_prefix succeeds with an empty trailing path.
+        assert_eq!(diag.path, FilePath::new(""));
     }
 
     #[test]
-    fn classify_partial_returns_other() {
+    fn classify_partial_empty_returns_other() {
         let err = ignore::Error::Partial(vec![]);
+        let diag = classify_walk_error(&err, Path::new("/tmp/fallback"));
+        assert_eq!(diag.kind, SourceDiagnosticKind::Other);
+    }
+
+    #[test]
+    fn classify_partial_with_inner_permission_denied_still_returns_other() {
+        // Pin the deliberate non-peel: inner `WithPath{Io(PermissionDenied)}`
+        // does NOT bubble up through Partial. The classifier collapses
+        // the multi-error case to `Other` so the adapter doesn't have
+        // to choose between conflicting inner attributions; callers
+        // read the `message` field for the verbose ignore::Error
+        // formatting if they need the gory detail.
+        let inner_io = io(std::io::ErrorKind::PermissionDenied, "denied");
+        let inner_with_path = ignore::Error::WithPath {
+            path: PathBuf::from("/tmp/scrap-classify/inner"),
+            err: Box::new(inner_io),
+        };
+        let err = ignore::Error::Partial(vec![inner_with_path]);
         let diag = classify_walk_error(&err, Path::new("/tmp/fallback"));
         assert_eq!(diag.kind, SourceDiagnosticKind::Other);
     }
@@ -638,6 +756,9 @@ mod tests {
             child: PathBuf::from("/tmp/a/b"),
         };
         let diag = classify_walk_error(&err, Path::new("/tmp/fallback"));
-        assert_eq!(diag.path, FilePath::new("/tmp/fallback"));
+        // Falls back to walk root → strip_prefix(walk_root) on itself
+        // yields an empty path. Callers read `message` for the verbose
+        // form when path attribution is empty.
+        assert_eq!(diag.path, FilePath::new(""));
     }
 }

@@ -1,17 +1,16 @@
 //! `MemorySource` — in-memory `SourcePort` impl for unit and integration tests.
 
 use crate::domain::source::{DiscoveryOutcome, SourceDiagnostic};
-use crate::domain::types::{FilePath, SourceRoot};
+use crate::domain::types::FilePath;
 use crate::ports::source::{SourceError, SourcePort};
 
 /// In-memory `SourcePort` implementation for unit and integration tests.
 ///
-/// **This adapter ignores the `root` parameter passed to
-/// [`SourcePort::discover_test_files`]; the configured files are
-/// returned regardless of which root is requested.** If your test needs
-/// root-sensitive behavior, construct a separate `MemorySource` per
-/// root, or use [`crate::adapters::source::fs::FsWalker`] with
-/// `tempfile`.
+/// Returns a fixed `(files, diagnostics)` pair without touching disk.
+/// Useful when a test needs to exercise downstream code paths
+/// (`core::analyze`, reporters, detectors) without depending on the
+/// filesystem; pair with [`crate::adapters::source::fs::FsWalker`] +
+/// `tempfile` when you need real on-disk discovery.
 ///
 /// Constructors:
 /// - [`MemorySource::new`] — canonical (D10): files + diagnostics.
@@ -19,10 +18,8 @@ use crate::ports::source::{SourceError, SourcePort};
 ///   diagnostics-empty case.
 #[derive(Debug, Clone)]
 pub struct MemorySource {
-    /// Files returned from every `discover_test_files` call.
-    pub files: Vec<FilePath>,
-    /// Diagnostics surfaced through every `DiscoveryOutcome`.
-    pub diagnostics: Vec<SourceDiagnostic>,
+    files: Vec<FilePath>,
+    diagnostics: Vec<SourceDiagnostic>,
 }
 
 impl MemorySource {
@@ -38,10 +35,26 @@ impl MemorySource {
     pub fn with_files(files: Vec<FilePath>) -> Self {
         Self::new(files, Vec::new())
     }
+
+    /// Borrow the configured files. Useful when a test needs to read
+    /// back what it stashed; production code should call
+    /// [`SourcePort::discover_test_files`].
+    #[must_use]
+    pub fn files(&self) -> &[FilePath] {
+        &self.files
+    }
+
+    /// Borrow the configured diagnostics. Useful when a test needs to
+    /// read back what it stashed; production code should call
+    /// [`SourcePort::discover_test_files`].
+    #[must_use]
+    pub fn diagnostics(&self) -> &[SourceDiagnostic] {
+        &self.diagnostics
+    }
 }
 
 impl SourcePort for MemorySource {
-    fn discover_test_files(&self, _root: &SourceRoot) -> Result<DiscoveryOutcome, SourceError> {
+    fn discover_test_files(&self) -> Result<DiscoveryOutcome, SourceError> {
         Ok(DiscoveryOutcome::new(
             self.files.clone(),
             self.diagnostics.clone(),
@@ -60,23 +73,17 @@ mod tests {
     #[test]
     fn with_files_constructs_with_empty_diagnostics() {
         let src = MemorySource::with_files(vec![FilePath::new("a.rs")]);
-        assert_eq!(src.files, vec![FilePath::new("a.rs")]);
-        assert!(src.diagnostics.is_empty());
+        assert_eq!(src.files(), &[FilePath::new("a.rs")]);
+        assert!(src.diagnostics().is_empty());
     }
 
     #[test]
-    fn discover_test_files_returns_configured_files_regardless_of_root() {
+    fn discover_test_files_returns_configured_files() {
         let files = vec![FilePath::new("x.rs"), FilePath::new("y.rs")];
         let src = MemorySource::with_files(files.clone());
-        let outcome_a = src
-            .discover_test_files(&SourceRoot::new("/some/root"))
-            .unwrap();
-        let outcome_b = src
-            .discover_test_files(&SourceRoot::new("/totally/different"))
-            .unwrap();
-        assert_eq!(outcome_a, outcome_b);
-        assert_eq!(outcome_a.files, files);
-        assert!(outcome_a.diagnostics.is_empty());
+        let outcome = src.discover_test_files().unwrap();
+        assert_eq!(outcome.files, files);
+        assert!(outcome.diagnostics.is_empty());
     }
 
     #[test]
@@ -88,7 +95,7 @@ mod tests {
             "could not read entry",
         )];
         let src = MemorySource::new(files.clone(), diagnostics.clone());
-        let outcome = src.discover_test_files(&SourceRoot::new("any")).unwrap();
+        let outcome = src.discover_test_files().unwrap();
         assert_eq!(outcome.files, files);
         assert_eq!(outcome.diagnostics, diagnostics);
     }

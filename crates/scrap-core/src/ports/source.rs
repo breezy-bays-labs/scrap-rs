@@ -22,29 +22,31 @@
 //! at the adapter level.
 
 use crate::domain::source::DiscoveryOutcome;
-use crate::domain::types::{FilePath, SourceRoot};
+use crate::domain::types::FilePath;
 
-/// Discover the candidate test files under a `SourceRoot`.
+/// Discover the candidate test files under the adapter-configured source root.
 ///
-/// Implementations enumerate the workspace and return a
-/// [`DiscoveryOutcome`] that bundles the matching files with any
-/// non-fatal mid-walk diagnostics (permission-denied subdirectories,
-/// recoverable I/O failures the walker skipped past). I/O failures
-/// that abort the walk surface as `Err(SourceError::Io)` instead.
+/// Implementations enumerate the workspace (rooted at adapter-internal
+/// state — `FsWalker` reads `AnalysisConfig::src`; `MemorySource` returns
+/// its fixed file list) and return a [`DiscoveryOutcome`] that bundles
+/// the matching files with any non-fatal mid-walk diagnostics
+/// (permission-denied subdirectories, skipped symlinks, recoverable
+/// I/O failures the walker skipped past). I/O failures that abort the
+/// walk surface as `Err(SourceError::Io)` instead.
 ///
 /// Filtering by include/exclude globs and respect for VCS ignore files
 /// (`.gitignore`, etc.) lives in the adapter — the trait surface is
 /// intentionally minimal.
 pub trait SourcePort {
-    /// Walk `root` and return the test-file candidates plus any
-    /// non-fatal diagnostics the walker collected.
+    /// Discover the test-file candidates plus any non-fatal diagnostics
+    /// the walker collected.
     ///
     /// # Errors
     ///
     /// Returns [`SourceError`] when the filesystem walk fails fatally
     /// (missing root, root-is-file, mid-walk I/O the adapter chose not
     /// to skip past) or a configured glob is invalid.
-    fn discover_test_files(&self, root: &SourceRoot) -> Result<DiscoveryOutcome, SourceError>;
+    fn discover_test_files(&self) -> Result<DiscoveryOutcome, SourceError>;
 }
 
 /// Errors produced by [`SourcePort`] implementations.
@@ -64,7 +66,7 @@ pub enum SourceError {
         #[source]
         source: std::io::Error,
     },
-    /// A configured include/exclude glob failed to compile. `pattern`
+    /// A configured exclude glob failed to compile. `pattern`
     /// is the raw user-supplied pattern; `source` is the `globset`
     /// compile error.
     #[error("invalid glob pattern: {pattern}")]
@@ -74,6 +76,19 @@ pub enum SourceError {
         /// Underlying globset parse error.
         #[source]
         source: globset::Error,
+    },
+    /// A configured exclude glob was empty or whitespace-only. `globset`
+    /// silently accepts these and `OverrideBuilder::add("!")` rewrites
+    /// them into a global whitelist (`**/`) — the opposite of the
+    /// caller's intent. The adapter rejects them eagerly at
+    /// `try_new` time so the silent data-deletion class of bug
+    /// (config typo, env-var-empty-string interpolation, malformed
+    /// TOML cell) surfaces as a fatal error instead.
+    #[error("empty or whitespace-only exclude pattern")]
+    EmptyExcludePattern {
+        /// The original pattern as supplied by the caller (preserved
+        /// for diagnostic purposes — typically `""` or `"   "`).
+        pattern: String,
     },
     /// `OverrideBuilder::build()` rejected the assembled override
     /// matcher despite each individual `.add()` call having succeeded.
