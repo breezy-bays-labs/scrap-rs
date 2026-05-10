@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/breezy-bays-labs/scrap-rs"
 homepage = "https://github.com/breezy-bays-labs/scrap-rs"
 authors = ["Christopher Bays <cmbays@breezybayslabs.com>"]
-rust-version = "1.85"
+rust-version = "1.88"
 
 # Centralized dep versions. Front-loaded so detector PRs (P13–P17),
 # port-trait PRs (#5), and the eventual scrap4ts adapter all consume
@@ -22,7 +22,20 @@ insta = { version = "1", features = ["json"] }
 proptest = "1"
 thiserror = "2"
 globset = "0.4"
+ignore = "0.4"
 static_assertions = "1"
+tempfile = "3"
+# `cucumber` runs the .feature behavioral contract at
+# `crates/scrap-core/tests/features/file_walker.feature`. Pin lifted
+# from earlier 0.21 ceiling now that workspace MSRV is 1.88.
+cucumber = "0.23"
+# `tokio` powers the cucumber harness's async runtime
+# (cucumber 0.23 exposes only async run_and_exit). Used solely
+# inside `crates/scrap-core/tests/cucumber.rs` via
+# `#[tokio::main(flavor = "current_thread")]` — no parking_lot
+# inside step defs, so the 2026-04-26 cucumber+parking_lot
+# deadlock vector does not apply.
+tokio = { version = "1", features = ["macros", "rt"] }
 
 # Workspace-wide lint config lands as detectors come online.
 # scrap4ts joins this workspace when its parser adapter ships

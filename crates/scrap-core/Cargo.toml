@@ -38,6 +38,12 @@ thiserror = { workspace = true }
 # `#[source]`. Pulled into `scrap-core` because globset is on the allowed
 # dep list (CLAUDE.md) and the error type itself is part of the port surface.
 globset = { workspace = true }
+# `ignore` powers the `FsWalker` adapter (`adapters/source/fs.rs`):
+# `WalkBuilder` for tree traversal, `OverrideBuilder` for user-glob
+# negative matchers. `SourceError::Ignore` carries the underlying
+# `ignore::Error` via `#[source]` for `OverrideBuilder::build()` setup
+# failures (rare; forward-compat hatch).
+ignore = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
@@ -47,3 +53,19 @@ serde_json = { workspace = true }
 # compile if a future edit introduces a non-object-safe method (e.g. `Self: Sized`,
 # generic methods, `&mut self` requirement on a port trait).
 static_assertions = { workspace = true }
+# `tempfile::TempDir` powers the FsWalker integration tests in
+# `adapters/source/fs.rs` — each walk scenario builds a self-contained
+# fixture tree under a TempDir that is dropped at end of test.
+tempfile = { workspace = true }
+# `cucumber` executes the .feature behavioral contract for the file
+# walker. The harness lives at `tests/cucumber.rs` (declared with
+# `harness = false` below so cucumber-rs owns the test runner end to
+# end); scenarios live at `tests/features/file_walker.feature`.
+cucumber = { workspace = true }
+# `tokio` is the async runtime for the cucumber harness only — not
+# used by the library itself.
+tokio = { workspace = true }
+
+[[test]]
+name = "cucumber"
+harness = false

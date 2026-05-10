@@ -104,11 +104,32 @@ impl Span {
     }
 }
 
-/// Filesystem path of a Rust source file, relative to the analyzed root.
+/// Filesystem path of a source file. By adapter convention the
+/// concrete shape is **relative to the source root** when emitted by
+/// [`crate::adapters::source::fs::FsWalker`]; in-memory adapters
+/// ([`crate::adapters::source::memory::MemorySource`]) emit the paths
+/// the test author supplies verbatim.
+///
+/// **Documented exception**: when an `FsWalker` mid-walk diagnostic
+/// attributes itself to a path outside the walked tree (e.g. a
+/// `~/.config/git/ignore` parse failure when `git_global(true)` is
+/// honouring the global gitignore), the diagnostic carries the raw
+/// absolute path. The relative-shape convention applies to the
+/// happy-path entries inside [`crate::domain::source::DiscoveryOutcome::files`];
+/// diagnostic attribution prefers fidelity over relativisation.
 ///
 /// Newtype rather than bare `PathBuf` so adapters can't accidentally pass
 /// an unrelated path through the domain layer; every Location carries a
 /// `FilePath` constructed at the source-discovery boundary.
+///
+/// Deliberately does NOT derive `PartialOrd` / `Ord`. The natural
+/// `PathBuf` ordering is component-wise (`a/b.rs` precedes `a.rs`
+/// because the first component compares `"a" < "a.rs"`), which clashes
+/// with the byte-wise ordering [`crate::adapters::source::fs::FsWalker`]
+/// uses for its post-collect sort. If a future call site needs ordering,
+/// it must choose explicitly between component-wise (sort the inner
+/// `PathBuf`) and byte-wise (sort on `as_path().as_os_str()`) and
+/// document the choice.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct FilePath(PathBuf);

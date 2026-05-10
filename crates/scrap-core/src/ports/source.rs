@@ -1,32 +1,52 @@
 //! `SourcePort` — language-agnostic test-file discovery.
 //!
-//! The default implementation is the `FsWalker` adapter (lands in a
-//! dedicated sub-issue), backed by `walkdir` + `ignore` for tree
-//! traversal and `globset` for include/exclude pattern matching. A
-//! future `MemorySource` adapter for tests will return a fixed file
-//! list without touching disk.
+//! Two adapter implementations live in `crate::adapters::source`:
+//!
+//! - [`crate::adapters::source::fs::FsWalker`] — disk-backed walker
+//!   built on `ignore::WalkBuilder` + `globset`. Honours
+//!   `.gitignore` / `.ignore` / `.git/info/exclude` per
+//!   [`crate::domain::config::AnalysisConfig::respect_gitignore`];
+//!   user-supplied negative globs compile through `OverrideBuilder`
+//!   at construction time.
+//! - [`crate::adapters::source::memory::MemorySource`] — test-only
+//!   adapter that returns a fixed `(files, diagnostics)` pair without
+//!   touching disk.
 //!
 //! Object-safe (`&self`); usable as `Box<dyn SourcePort>`. No
 //! `Send + Sync` bound on the trait itself — those add at the
-//! `core::analyze<S, P>` call site if/when rayon parallelism arrives.
+//! `core::analyze<S, P>` call site if/when rayon parallelism arrives
+//! (per [`adr-port-surface-and-domain-conventions`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-port-surface-and-domain-conventions.md)
+//! D11). Both shipped adapters happen to be `Send + Sync` as an
+//! emergent property; smoke tests in `tests/source_walker.rs` pin both
+//! the deliberate-absence at the trait level and the emergent presence
+//! at the adapter level.
 
-use crate::domain::types::{FilePath, SourceRoot};
+use crate::domain::source::DiscoveryOutcome;
+use crate::domain::types::FilePath;
 
-/// Discover the candidate test files under a `SourceRoot`.
+/// Discover the candidate test files under the adapter-configured source root.
 ///
-/// Implementations enumerate the workspace and return absolute or
-/// root-relative `FilePath`s for every file the parser should attempt.
+/// Implementations enumerate the workspace (rooted at adapter-internal
+/// state — `FsWalker` reads `AnalysisConfig::src`; `MemorySource` returns
+/// its fixed file list) and return a [`DiscoveryOutcome`] that bundles
+/// the matching files with any non-fatal mid-walk diagnostics
+/// (permission-denied subdirectories, skipped symlinks, recoverable
+/// I/O failures the walker skipped past). I/O failures that abort the
+/// walk surface as `Err(SourceError::Io)` instead.
+///
 /// Filtering by include/exclude globs and respect for VCS ignore files
 /// (`.gitignore`, etc.) lives in the adapter — the trait surface is
 /// intentionally minimal.
 pub trait SourcePort {
-    /// Walk `root` and return the test-file candidates.
+    /// Discover the test-file candidates plus any non-fatal diagnostics
+    /// the walker collected.
     ///
     /// # Errors
     ///
-    /// Returns [`SourceError`] when the filesystem walk fails or a
-    /// configured glob is invalid.
-    fn discover_test_files(&self, root: &SourceRoot) -> Result<Vec<FilePath>, SourceError>;
+    /// Returns [`SourceError`] when the filesystem walk fails fatally
+    /// (missing root, root-is-file, mid-walk I/O the adapter chose not
+    /// to skip past) or a configured glob is invalid.
+    fn discover_test_files(&self) -> Result<DiscoveryOutcome, SourceError>;
 }
 
 /// Errors produced by [`SourcePort`] implementations.
@@ -46,7 +66,7 @@ pub enum SourceError {
         #[source]
         source: std::io::Error,
     },
-    /// A configured include/exclude glob failed to compile. `pattern`
+    /// A configured exclude glob failed to compile. `pattern`
     /// is the raw user-supplied pattern; `source` is the `globset`
     /// compile error.
     #[error("invalid glob pattern: {pattern}")]
@@ -56,6 +76,32 @@ pub enum SourceError {
         /// Underlying globset parse error.
         #[source]
         source: globset::Error,
+    },
+    /// A configured exclude glob was empty or whitespace-only. `globset`
+    /// silently accepts these and `OverrideBuilder::add("!")` rewrites
+    /// them into a global whitelist (`**/`) — the opposite of the
+    /// caller's intent. The adapter rejects them eagerly at
+    /// `try_new` time so the silent data-deletion class of bug
+    /// (config typo, env-var-empty-string interpolation, malformed
+    /// TOML cell) surfaces as a fatal error instead.
+    #[error("empty or whitespace-only exclude pattern")]
+    EmptyExcludePattern {
+        /// The original pattern as supplied by the caller (preserved
+        /// for diagnostic purposes — typically `""` or `"   "`).
+        pattern: String,
+    },
+    /// `OverrideBuilder::build()` rejected the assembled override
+    /// matcher despite each individual `.add()` call having succeeded.
+    /// **NOT** fired by `WalkBuilder::build()` (which is infallible,
+    /// returning `Walk` directly). This variant is a forward-compat
+    /// hatch: it is exceedingly rare in practice but keeps the surface
+    /// honest if `ignore`'s `OverrideBuilder` grows new validation in a
+    /// minor bump.
+    #[error("ignore override builder rejected the assembled matcher")]
+    Ignore {
+        /// Underlying `ignore` crate error from `OverrideBuilder::build`.
+        #[source]
+        source: ignore::Error,
     },
 }
 
@@ -90,6 +136,24 @@ mod error_smoke {
             source: glob_err,
         };
         assert!(err.to_string().contains("[unclosed"));
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn ignore_variant_displays_message_and_preserves_source() {
+        // `ignore::Error` is a public enum; constructing the `Glob`
+        // variant directly keeps this smoke independent of the
+        // `OverrideBuilder.build()` failure mode (which is rare and
+        // not stably reproducible across `ignore` minor versions).
+        let ignore_err = ignore::Error::Glob {
+            glob: Some("[unclosed".into()),
+            err: "missing ']'".into(),
+        };
+        let err = SourceError::Ignore { source: ignore_err };
+        assert!(
+            err.to_string().contains("override"),
+            "Display should mention `override`; got: {err}",
+        );
         assert!(err.source().is_some());
     }
 }
