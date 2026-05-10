@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/breezy-bays-labs/scrap-rs"
 homepage = "https://github.com/breezy-bays-labs/scrap-rs"
 authors = ["Christopher Bays <cmbays@breezybayslabs.com>"]
-rust-version = "1.85"
+rust-version = "1.88"
 
 # Centralized dep versions. Front-loaded so detector PRs (P13–P17),
 # port-trait PRs (#5), and the eventual scrap4ts adapter all consume
@@ -22,6 +22,7 @@ insta = { version = "1", features = ["json"] }
 proptest = "1"
 thiserror = "2"
 globset = "0.4"
+ignore = "0.4"
 static_assertions = "1"
 
 # Workspace-wide lint config lands as detectors come online.

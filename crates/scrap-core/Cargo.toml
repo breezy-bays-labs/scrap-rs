@@ -38,6 +38,12 @@ thiserror = { workspace = true }
 # `#[source]`. Pulled into `scrap-core` because globset is on the allowed
 # dep list (CLAUDE.md) and the error type itself is part of the port surface.
 globset = { workspace = true }
+# `ignore` powers the `FsWalker` adapter (`adapters/source/fs.rs`):
+# `WalkBuilder` for tree traversal, `OverrideBuilder` for user-glob
+# negative matchers. `SourceError::Ignore` carries the underlying
+# `ignore::Error` via `#[source]` for `OverrideBuilder::build()` setup
+# failures (rare; forward-compat hatch).
+ignore = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
