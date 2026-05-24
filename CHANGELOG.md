@@ -82,6 +82,33 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
   `crates/scrap-core/src/domain/types.rs`. Mirrors the `ast-purity`
   shape; the column-deferral exclusion is tracked by scrap-rs#17
   (SARIF reporter — the column-aware consumer).
+- Property tests at `crates/scrap4rs/tests/parser_props.rs`
+  (scrap-rs#12 S3.1) — three invariants pinned over a hand-rolled
+  `valid_test_source_strategy` (256 cases each per `PROPTEST_CASES`):
+  - `proptest_no_panic_on_parse_file_able_source` — for any strategy
+    output, the parser returns `Ok(_)` and never panics.
+  - `proptest_idempotent_reparse` — parsing the same source twice
+    yields equal `ParsedTestFile` values. Pins determinism for
+    snapshot tests, baseline diffs (v0.4+), and reproducible CI.
+  - `proptest_span_monotonicity` — every `ParsedTest::identity.span`
+    and every `ParsedAssertion::span` obeys `start_line <= end_line`.
+    Catches the A9 bug class where span construction could trip the
+    `Span::new` debug_assert.
+- 2 S3.1 error-recovery fixtures + 2 snapshots:
+  `tests/fixtures/error_recovery/unclosed_brace.rs` and
+  `tests/fixtures/error_recovery/malformed_attribute.rs`. Both
+  surface `ParseError::Syntax { message, span: Some(_) }`;
+  `insta::assert_debug_snapshot!` pins the Err shape (the
+  `Serialize` derive lives in domain wire types, not on
+  `ParseError`). The third planned synthetic-span fixture
+  (`start_line == 0` sentinel) is covered via a unit test in
+  `parser/mod.rs::tests::parse_error_from_syn_error_call_site_emits_localised_span`
+  because proc-macro2 under `span-locations` doesn't emit
+  `start_line == 0` from real source — the defensive branch in
+  `parse_error_from_syn_error` is forward-compat guard, exercised
+  by the unit test rather than a fixture.
+- Coverage gate via `./scripts/coverage-parser.sh` — 98.36% workspace,
+  97-100% on `crates/scrap4rs/src/parser/` (well over the 85% gate).
 - `BodyVisitor::visit_expr_await` (scrap-rs#12 S2.4) — recognises the
   cucumber `.await` chain. `.await` desugars to `syn::Expr::Await`
   (NOT a method call, despite syntactic appearance); the override

@@ -242,6 +242,40 @@ mod tests {
     }
 
     #[test]
+    fn parse_error_from_syn_error_call_site_emits_localised_span() {
+        // `proc_macro2::Span::call_site()` is what `syn::Error::new`
+        // wraps when constructed without an upstream source span.
+        // With the `span-locations` proc-macro2 feature enabled (the
+        // workspace pin), call_site reports `start.line == 1`, so the
+        // mapping in `parse_error_from_syn_error` produces a
+        // `Span::new(1, 1)` rather than `None`. The `start_line == 0`
+        // defensive branch is reserved for hypothetical proc-macro2
+        // evolutions that might emit synthetic sentinel spans; it's
+        // unreachable from real code under the current feature flag
+        // but kept as a guard against future trips of `Span::new`'s
+        // debug_assert.
+        let synthetic_err = syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "synthetic error wrapping call_site span",
+        );
+        let parse_err = parse_error_from_syn_error(&synthetic_err);
+        match &parse_err {
+            ParseError::Syntax { span, message } => {
+                assert!(
+                    !message.is_empty(),
+                    "synthetic-span err must still carry a message",
+                );
+                // call_site reports line 1, which IS valid — the
+                // mapping produces Some(Span { 1, 1 }).
+                let span = span.expect("call_site has line 1 → Some(_)");
+                assert_eq!(span.start_line, 1);
+                assert_eq!(span.end_line, 1);
+            }
+            _ => panic!("expected ParseError::Syntax, got {parse_err:?}"),
+        }
+    }
+
+    #[test]
     fn parse_nested_mod_test_composes_qualified_name() {
         // S2.1 verifies the path-stack walking: a fn discovered at
         // depth-2 module nesting gets a `qualified_name` joined

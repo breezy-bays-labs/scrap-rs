@@ -120,3 +120,43 @@ fn snapshot_should_panic_shell() {
     let file = parse_fixture("tests/fixtures/runner_shells/should_panic_shell.rs");
     insta::assert_yaml_snapshot!(file);
 }
+
+// ─── S3.1 snapshots: error-recovery fixtures ─────────────────────────
+//
+// These fixtures are syntactically invalid Rust — they exist to
+// exercise the `parse_error_from_syn_error` branches that an
+// always-well-formed corpus would never hit. The parser must surface
+// `Err(ParseError::Syntax { .. })`; we snapshot the Err shape via
+// `insta::assert_yaml_snapshot!` to pin both the message and the
+// localised span. Synthetic-span coverage (start_line == 0 sentinel)
+// is exercised via a unit test in `parser/mod.rs::tests` because
+// proc-macro2 won't emit synthetic spans from a real source file.
+
+/// Helper — parse a fixture KNOWN to be invalid Rust; returns the
+/// `Err` shape for snapshotting. Panics if the parser returns `Ok`
+/// (which would mean the fixture is no longer invalid, signalling a
+/// fixture bug or a parser regression).
+fn parse_invalid_fixture(rel: &str) -> scrap_core::ports::parser::ParseError {
+    let abs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
+    let source = std::fs::read_to_string(&abs)
+        .unwrap_or_else(|e| panic!("read fixture {}: {e}", abs.display()));
+    SynTestParser::new()
+        .parse_test_source(&source, &scrap_core::domain::types::FilePath::new(rel))
+        .expect_err("error-recovery fixture must surface ParseError::Syntax")
+}
+
+#[test]
+fn snapshot_error_recovery_unclosed_brace() {
+    let err = parse_invalid_fixture("tests/fixtures/error_recovery/unclosed_brace.rs");
+    // `assert_debug_snapshot` instead of `assert_yaml_snapshot` —
+    // `ParseError` does NOT derive `Serialize` (it's a thiserror
+    // enum, not a wire type). The Debug projection pins both the
+    // message and the localised span shape.
+    insta::assert_debug_snapshot!(err);
+}
+
+#[test]
+fn snapshot_error_recovery_malformed_attribute() {
+    let err = parse_invalid_fixture("tests/fixtures/error_recovery/malformed_attribute.rs");
+    insta::assert_debug_snapshot!(err);
+}
