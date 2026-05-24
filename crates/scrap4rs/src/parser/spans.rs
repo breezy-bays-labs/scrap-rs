@@ -8,6 +8,7 @@
 //! (`syn::Block`-specific helper for `ParsedTest::body_line_count`).
 
 use scrap_core::domain::types::Span;
+use syn::Block;
 use syn::spanned::Spanned;
 
 /// Saturating cast from `proc_macro2::LineColumn::line` (`usize`) to
@@ -60,6 +61,26 @@ pub(crate) fn span_from_spanned<T: Spanned>(node: &T) -> Span {
     }
 }
 
+/// Body line count for a test fn — counts interior lines INCLUDING
+/// both braces.
+///
+/// Formula: `close_line.saturating_sub(open_line)`.
+///
+/// Examples:
+/// - Single-line body `{ assert!(true); }` (open and close both on
+///   line 5) returns `0`.
+/// - 3-line body block (open on line 5, close on line 8) returns `3`.
+///
+/// Saturating `u32::saturating_sub` defends against pathological
+/// inverted spans. Per scrap-rs#12 S2.1 plan revision item 14, the
+/// docstring pins to the formula (the earlier "N-1 for N-line bodies"
+/// phrasing was misleading and has been discarded).
+pub(crate) fn compute_body_line_count(block: &Block) -> u32 {
+    let open = line_to_u32(block.brace_token.span.open().start().line);
+    let close = line_to_u32(block.brace_token.span.close().start().line);
+    close.saturating_sub(open)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,5 +117,40 @@ mod tests {
             span.end_line,
             span.start_line,
         );
+    }
+
+    fn parse_first_fn_block(source: &str) -> Block {
+        let file: syn::File = syn::parse_str(source).expect("parses");
+        for item in file.items {
+            if let syn::Item::Fn(f) = item {
+                return *f.block;
+            }
+        }
+        panic!("source contains no fn item");
+    }
+
+    #[test]
+    fn compute_body_line_count_single_line_body_is_zero() {
+        // `{ assert!(true); }` on one line — open brace and close
+        // brace on the same line; formula `close - open == 0`.
+        let block = parse_first_fn_block("#[test] fn it() { assert!(true); }");
+        assert_eq!(compute_body_line_count(&block), 0);
+    }
+
+    #[test]
+    fn compute_body_line_count_three_interior_lines_is_three() {
+        // `fn it() {\n  let x = 1;\n  assert_eq!(x, 1);\n}` —
+        // open brace on line 1, close brace on line 4; formula
+        // `close - open == 3`. Matches the cucumber scenario's
+        // expectation pinned at parser.feature:127.
+        let source = "fn it() {\n    let x = 1;\n    assert_eq!(x, 1);\n}";
+        let block = parse_first_fn_block(source);
+        assert_eq!(compute_body_line_count(&block), 3);
+    }
+
+    #[test]
+    fn compute_body_line_count_empty_body_one_line_is_zero() {
+        let block = parse_first_fn_block("fn it() {}");
+        assert_eq!(compute_body_line_count(&block), 0);
     }
 }

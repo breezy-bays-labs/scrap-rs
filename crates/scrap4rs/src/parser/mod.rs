@@ -10,14 +10,18 @@
 //! for the layering invariant. `scrap-core` stays AST-pure; the
 //! `ast-purity` CI grep enforces.
 
+mod attributes;
 mod spans;
 mod visitor;
 
-use scrap_core::domain::parsed::ParsedTestFile;
-use scrap_core::domain::types::{FilePath, Span};
+use scrap_core::domain::parsed::{ParsedTest, ParsedTestFile};
+use scrap_core::domain::types::{FilePath, QualifiedName, Span, TestIdentity};
 use scrap_core::ports::parser::{ParseError, TestParserPort};
 use syn::visit::Visit;
+use syn::{Ident, ItemFn};
 
+use self::attributes::{extract_attributes, extract_opt_outs};
+use self::spans::{compute_body_line_count, span_from_spanned};
 use self::visitor::TestVisitor;
 
 /// Zero-sized parser adapter implementing
@@ -93,6 +97,82 @@ fn parse_error_from_syn_error(err: &syn::Error) -> ParseError {
     ParseError::Syntax { message, span }
 }
 
+/// Compose a fully-qualified `QualifiedName` from a module-path stack
+/// and a fn ident.
+///
+/// Path joined with `"::"`. Empty stack (free fn at file root)
+/// returns just the fn name; stack `["auth", "login_tests"]` + fn
+/// `it_logs_in` returns `"auth::login_tests::it_logs_in"`.
+///
+/// Hand-rolled join (no `quote!`) — consistent with the
+/// `compose_macro_path_string` discipline (no whitespace injection).
+pub(crate) fn compose_qualified_name(path_stack: &[String], fn_ident: &Ident) -> QualifiedName {
+    let leaf = fn_ident.to_string();
+    let qualified = if path_stack.is_empty() {
+        leaf
+    } else {
+        let mut joined = path_stack.join("::");
+        joined.push_str("::");
+        joined.push_str(&leaf);
+        joined
+    };
+    QualifiedName::new(qualified)
+}
+
+/// Project one `syn::ItemFn` (already confirmed `is_test_fn` true) into
+/// the domain `ParsedTest` shape.
+///
+/// Drives the helpers from `attributes` + `spans` + (S2.2+)
+/// `body::BodyVisitor`. The body-walker integration is currently a
+/// TODO(S2.2) stub returning empty `(assertions, implicit_sources)`;
+/// S2.2 swaps in the real `BodyVisitor::drive(&item.block)` call.
+/// S2.4 additionally wires in `N24
+/// implicit_sources_from_attributes` for the `#[should_panic]` →
+/// `AssertionSource::ShouldPanic` attribute path.
+pub(crate) fn extract_parsed_test(
+    item: &ItemFn,
+    path_stack: &[String],
+    file_path: &FilePath,
+) -> ParsedTest {
+    let attributes = extract_attributes(item);
+    let opt_outs = extract_opt_outs(item);
+    let body_line_count = compute_body_line_count(&item.block);
+    let qualified_name = compose_qualified_name(path_stack, &item.sig.ident);
+    let identity_span = span_from_spanned(item);
+
+    // TODO(S2.2): swap stub for `BodyVisitor::new()` drive over
+    // `&item.block`. S2.2 returns `Vec<ParsedAssertion>`; S2.3 +
+    // S2.4 extend with `Vec<AssertionSource>` from the body walker.
+    let (assertions, body_implicit_sources) = body_visit_stub();
+
+    // TODO(S2.4): also merge `implicit_sources_from_attributes(item)`
+    // (the `#[should_panic]` attribute path) into the final
+    // `implicit_assertion_sources` vec via Vec::extend.
+    let implicit_assertion_sources = body_implicit_sources;
+
+    ParsedTest::new(
+        TestIdentity::new(file_path.clone(), qualified_name, identity_span),
+        attributes,
+        assertions,
+        body_line_count,
+        implicit_assertion_sources,
+        opt_outs,
+    )
+}
+
+/// TODO(S2.2) — body-walker integration stub. S2.2 replaces this with
+/// a `BodyVisitor` drive over `&item.block`; the return tuple becomes
+/// `(body.assertions, body.implicit_assertion_sources)`. S1.1
+/// shipped the empty walker; S2.1 ships the orchestrator with stubbed
+/// body integration; S2.2 lights up the assertion side; S2.3 + S2.4
+/// light up the implicit-source side.
+fn body_visit_stub() -> (
+    Vec<scrap_core::domain::parsed::ParsedAssertion>,
+    Vec<scrap_core::domain::assertion_sources::AssertionSource>,
+) {
+    (Vec::new(), Vec::new())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,23 +217,45 @@ mod tests {
     }
 
     #[test]
-    fn parse_well_formed_source_with_no_tests_returns_empty_inventory() {
-        // S1.1 ships empty Visit overrides, so even a source with
-        // `#[test] fn it() {}` projects to zero ParsedTests. S2.1
-        // flips this expectation when it implements visit_item_fn.
+    fn parse_bare_test_fn_yields_one_parsed_test() {
+        // S2.1 flip from the S1.1 baseline: with `visit_item_fn`
+        // wired, a bare `#[test]` fn projects to one `ParsedTest`.
+        // Body-walker stubs still keep `assertions` /
+        // `implicit_assertion_sources` empty (S2.2 + S2.3 + S2.4
+        // light those up).
         let parser = SynTestParser::new();
         let source = "#[test] fn it() {}";
         let file = parser
             .parse_test_source(source, &FilePath::new("placeholder.rs"))
             .expect("well-formed source parses");
 
-        // At S1.1, the walker is still empty — no tests recovered.
-        // This expectation flips to `== 1` when S2.1 lands the
-        // visit_item_fn override.
+        assert_eq!(file.tests.len(), 1, "one #[test] fn → one ParsedTest");
+        let parsed = &file.tests[0];
+        assert_eq!(parsed.identity.qualified_name.as_str(), "it");
+        assert_eq!(parsed.attributes.len(), 1);
+        assert_eq!(parsed.attributes[0].name, "test");
+        assert_eq!(parsed.attributes[0].raw, None);
+        // Body integration is S2.2+ stubbed: empty until then.
+        assert!(parsed.assertions.is_empty());
+        assert!(parsed.implicit_assertion_sources.is_empty());
+        assert!(parsed.opt_outs.is_empty());
+    }
+
+    #[test]
+    fn parse_nested_mod_test_composes_qualified_name() {
+        // S2.1 verifies the path-stack walking: a fn discovered at
+        // depth-2 module nesting gets a `qualified_name` joined
+        // with `::`.
+        let parser = SynTestParser::new();
+        let source = "mod auth { mod login_tests { #[test] fn it_logs_in() {} } }";
+        let file = parser
+            .parse_test_source(source, &FilePath::new("nested.rs"))
+            .expect("well-formed source parses");
+
+        assert_eq!(file.tests.len(), 1);
         assert_eq!(
-            file.tests.len(),
-            0,
-            "S1.1 ships empty Visit overrides — Wave 2 flips this to 1"
+            file.tests[0].identity.qualified_name.as_str(),
+            "auth::login_tests::it_logs_in"
         );
     }
 }

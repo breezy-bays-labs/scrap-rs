@@ -82,6 +82,40 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
   `crates/scrap-core/src/domain/types.rs`. Mirrors the `ast-purity`
   shape; the column-deferral exclusion is tracked by scrap-rs#17
   (SARIF reporter — the column-aware consumer).
+- `scrap4rs::parser` top-level walker (scrap-rs#12 S2.1) — wires
+  `visit_item_mod` (path-stack push/recurse/pop) and `visit_item_fn`
+  (is_test_fn check + extract_parsed_test orchestration); recovers
+  module-qualified test names like `auth::login_tests::it_logs_in`.
+  Body inspection (assertions + implicit sources) stays stubbed via
+  `TODO(S2.2)` markers; lights up incrementally across S2.2 → S2.4.
+- `scrap4rs::parser::attributes` module — `is_test_fn`,
+  `extract_attributes` (with leaf-segment v0.1 whitelist:
+  `test`/`rstest`/`should_panic`/`ignore`), `parsed_attribute_from_syn`
+  (leaf-segment naming + `Meta::List`/`NameValue` raw-text projection
+  via `quote::ToTokens`), `extract_opt_outs` + `match_opt_out_key`
+  (the `#[allow(scrap::*)]` → `BTreeSet<OptOut>` projection).
+- `scrap4rs::parser::spans::compute_body_line_count` — formula
+  `close.line - open.line` (matches the documented v0.1 semantic;
+  pinned in S2.1's docstring to discard the misleading "N-1 for
+  N-line bodies" phrasing from the breadboard draft).
+- `crates/scrap4rs/tests/fixtures/` — three S2.1 fixtures: `nested_mods.rs`
+  (depth-2 mod nesting), `attribute_variants.rs` (all 7 v0.1 attribute
+  variants), `opt_outs/allows.rs` (all 3 OptOut variants + multi-key
+  allow + non-scrap allow exclusion).
+- `crates/scrap4rs/tests/parser_snapshots.rs` — insta snapshot harness;
+  3 per-fixture YAML snapshots committed under
+  `crates/scrap4rs/tests/snapshots/`. First-creation seeded via
+  `INSTA_UPDATE=auto` per the Reusable Reference snapshot discipline;
+  Wave 2 sessions S2.2-S2.4 use `cargo insta review` interactively.
+- `scrap4rs` workspace dep: `quote = "1"` — provides the `ToTokens`
+  trait needed by `parsed_attribute_from_syn` to project
+  `Meta::NameValue` expressions to verbatim source-byte strings. The
+  `quote!(...)` macro is NOT used; path stringification stays
+  hand-rolled. (S1.1 plan-revision item 7 was over-aggressive about
+  dropping this; restored here in S2.1.)
+- `workspace` dep update: `insta` features extended to include `yaml`
+  (was `json` only) — `parser_snapshots.rs` uses YAML snapshots for
+  compact, diff-friendly per-field output.
 - `scrap4rs::parser` module (scrap-rs#12 S1.1) — syn-based parser
   skeleton implementing `TestParserPort`. `SynTestParser::new()`
   zero-sized adapter; `parse_test_source` opens
@@ -201,6 +235,20 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
   refuses the ambiguous `--test cucumber` invocation. The new
   pre-push runs `cargo test -p scrap-core --test cucumber` and
   `cargo test -p scrap4rs --test cucumber` sequentially.
+- `crates/scrap-core/tests/cucumber.rs` and
+  `crates/scrap4rs/tests/cucumber.rs` per-file `#![allow(...)]` blocks
+  for the pedantic cucumber-step-fn nits now carry an inline
+  `tracked: scrap-rs#50` reference per `~/.claude/rules/exclusions.md`.
+  scrap-rs#50 owns the eventual lift (changing cucumber step-fn
+  `String` params to `&str`, rewriting `match { _ => panic!() }`
+  blocks as `let-else`).
+- `parser.feature` — `@wip` tags removed from 4 scenarios as S2.1
+  unlocks them: the attribute-variants outline, nested-mods,
+  opt-out projection, and body_line_count. 3 wip scenarios remain
+  (explicit assertions + implicit-source outline + the bare-#[test]
+  scenario, which needs S2.2's "has 0 explicit assertions" step and
+  S2.3's "has 0 implicit assertion sources" step before it goes
+  green). scrap4rs cucumber: 9/9 scenarios pass (was 2/2 at S1.1).
 - **Breaking** (scrap-rs#12, pre-v1.0 — no external consumers):
   `ParsedAssertion::kind: String` renamed to `ParsedAssertion::name: String`
   to align with `ParsedAttribute::name` and disambiguate from

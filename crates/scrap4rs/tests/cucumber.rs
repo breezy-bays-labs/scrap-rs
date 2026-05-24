@@ -18,6 +18,19 @@
 //! and backticks that the Expression parser would treat as special
 //! tokens.
 
+// Cucumber-rs step functions naturally take `String` params (the
+// regex capture API yields owned data) and use `match { _ => panic!() }`
+// blocks on `#[non_exhaustive]` enums where `let-else` would also
+// suffice. Suppress the pedantic nits at file level for parity with
+// the scrap-core file-walker harness (`crates/scrap-core/tests/cucumber.rs`),
+// which uses the same allowlist + tracking edge.
+//
+// tracked: scrap-rs#50 — lift after parser PR; surfaced when workspace
+// [lints] extended clippy::pedantic to integration tests. Same
+// follow-up cleanup that owns the scrap-core/tests/cucumber.rs lift.
+#![allow(clippy::needless_pass_by_value)]
+#![allow(clippy::manual_let_else)]
+
 use cucumber::{World as _, given, then, when};
 use scrap_core::domain::parsed::ParsedTestFile;
 use scrap_core::domain::types::FilePath;
@@ -117,6 +130,96 @@ fn then_parsing_fails_with_syntax(w: &mut World) {
         // only Syntax, so any other variant signals a bug.
         other => panic!("expected ParseError::Syntax, got {other:?}"),
     }
+}
+
+// ─── Per-test inspection helpers (S2.1+ scenarios) ──────────────────
+
+/// Find the `ParsedTest` whose `qualified_name` matches `name`.
+/// Panics with a list of available names if not found, so cucumber
+/// failure messages stay actionable.
+fn find_test<'a>(
+    file: &'a scrap_core::domain::parsed::ParsedTestFile,
+    name: &str,
+) -> &'a scrap_core::domain::parsed::ParsedTest {
+    file.tests
+        .iter()
+        .find(|t| t.identity.qualified_name.as_str() == name)
+        .unwrap_or_else(|| {
+            let available: Vec<&str> = file
+                .tests
+                .iter()
+                .map(|t| t.identity.qualified_name.as_str())
+                .collect();
+            panic!("no test named {name:?}; have {available:?}")
+        })
+}
+
+/// Wrapper for the success path that unwraps `w.result` into the
+/// parsed file, with an actionable panic on Err.
+fn assert_ok(w: &World) -> &scrap_core::domain::parsed::ParsedTestFile {
+    w.result
+        .as_ref()
+        .expect("When step recorded a result")
+        .as_ref()
+        .expect("parsing succeeded (Then 'parsing succeeds' is implicit prerequisite)")
+}
+
+#[then(regex = r#"^test "([^"]+)" exists$"#)]
+fn then_test_exists(w: &mut World, name: String) {
+    let _ = find_test(assert_ok(w), &name);
+}
+
+#[then(regex = r#"^test "([^"]+)" has the attribute "([^"]+)"$"#)]
+fn then_test_has_attribute(w: &mut World, test_name: String, attr_name: String) {
+    let test = find_test(assert_ok(w), &test_name);
+    let names: Vec<&str> = test.attributes.iter().map(|a| a.name.as_str()).collect();
+    // Leaf-segment convention (pinned in S0.1): tokio::test → "test",
+    // so the scenario's `#[tokio::test]` row expects "test" not
+    // "tokio::test". But the Examples table in parser.feature uses
+    // the full path string ("tokio::test") because that's what's
+    // immediately readable. We accept either: leaf match OR full path
+    // match against the user-provided attr.
+    let attr_leaf = attr_name.rsplit("::").next().unwrap_or(&attr_name);
+    assert!(
+        names.contains(&attr_leaf),
+        "test {test_name:?} attributes {names:?} missing {attr_name:?} \
+         (leaf segment {attr_leaf:?})",
+    );
+}
+
+#[then(regex = r#"^test "([^"]+)" has body_line_count (\d+)$"#)]
+fn then_test_has_body_line_count(w: &mut World, name: String, expected: u32) {
+    let test = find_test(assert_ok(w), &name);
+    assert_eq!(
+        test.body_line_count, expected,
+        "test {name:?} body_line_count mismatch",
+    );
+}
+
+#[then(regex = r#"^test "([^"]+)" has the opt-out (\w+)$"#)]
+fn then_test_has_opt_out(w: &mut World, test_name: String, opt_out_name: String) {
+    let test = find_test(assert_ok(w), &test_name);
+    let opt_out = match opt_out_name.as_str() {
+        "NoAsserts" => scrap_core::domain::opt_outs::OptOut::NoAsserts,
+        "Tautology" => scrap_core::domain::opt_outs::OptOut::Tautology,
+        "NoOp" => scrap_core::domain::opt_outs::OptOut::NoOp,
+        _ => panic!("unknown OptOut variant in scenario: {opt_out_name:?}"),
+    };
+    assert!(
+        test.opt_outs.contains(&opt_out),
+        "test {test_name:?} opt_outs {:?} missing {opt_out:?}",
+        test.opt_outs,
+    );
+}
+
+#[then(regex = r#"^test "([^"]+)" has (\d+) opt-outs?$"#)]
+fn then_test_has_n_opt_outs(w: &mut World, name: String, expected: usize) {
+    let test = find_test(assert_ok(w), &name);
+    assert_eq!(
+        test.opt_outs.len(),
+        expected,
+        "test {name:?} opt-out count mismatch"
+    );
 }
 
 // ─── Main ─────────────────────────────────────────────────────────

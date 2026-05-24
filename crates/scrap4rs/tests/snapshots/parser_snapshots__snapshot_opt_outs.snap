@@ -1,0 +1,78 @@
+---
+source: crates/scrap4rs/tests/parser_snapshots.rs
+assertion_line: 49
+expression: file
+---
+path: tests/fixtures/opt_outs/allows.rs
+tests:
+  - identity:
+      file_path: tests/fixtures/opt_outs/allows.rs
+      qualified_name: allows_no_asserts
+      span:
+        start_line: 13
+        end_line: 15
+    attributes:
+      - name: test
+        raw: ~
+    assertions: []
+    body_line_count: 0
+    implicit_assertion_sources: []
+    opt_outs:
+      - no_asserts
+  - identity:
+      file_path: tests/fixtures/opt_outs/allows.rs
+      qualified_name: allows_tautology
+      span:
+        start_line: 17
+        end_line: 19
+    attributes:
+      - name: test
+        raw: ~
+    assertions: []
+    body_line_count: 0
+    implicit_assertion_sources: []
+    opt_outs:
+      - tautology
+  - identity:
+      file_path: tests/fixtures/opt_outs/allows.rs
+      qualified_name: allows_no_op
+      span:
+        start_line: 21
+        end_line: 23
+    attributes:
+      - name: test
+        raw: ~
+    assertions: []
+    body_line_count: 0
+    implicit_assertion_sources: []
+    opt_outs:
+      - no_op
+  - identity:
+      file_path: tests/fixtures/opt_outs/allows.rs
+      qualified_name: allows_two_keys
+      span:
+        start_line: 27
+        end_line: 29
+    attributes:
+      - name: test
+        raw: ~
+    assertions: []
+    body_line_count: 0
+    implicit_assertion_sources: []
+    opt_outs:
+      - tautology
+      - no_op
+  - identity:
+      file_path: tests/fixtures/opt_outs/allows.rs
+      qualified_name: no_opt_outs
+      span:
+        start_line: 34
+        end_line: 36
+    attributes:
+      - name: test
+        raw: ~
+    assertions: []
+    body_line_count: 0
+    implicit_assertion_sources: []
+    opt_outs: []
+diagnostics: []

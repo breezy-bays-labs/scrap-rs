@@ -18,7 +18,7 @@ rust-version = "1.93"
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-insta = { version = "1", features = ["json"] }
+insta = { version = "1", features = ["json", "yaml"] }
 proptest = "1"
 thiserror = "2"
 globset = "0.4"
@@ -52,6 +52,14 @@ syn = { version = "2", features = ["full", "parsing", "visit", "extra-traits"] }
 # collapses to 0 and downstream snapshots become garbage.
 # scrap4ts will inherit the same feature when it joins (v0.6+).
 proc-macro2 = { version = "1", features = ["span-locations"] }
+# `quote` provides the `ToTokens` trait used by `parser/attributes.rs`
+# (`parsed_attribute_from_syn` projects `Meta::NameValue` via
+# `value.to_token_stream().to_string()` for the `raw` field's
+# verbatim source-byte fidelity). The `quote!(...)` macro is NOT
+# used — path stringification stays hand-rolled (no whitespace
+# injection). scrap-rs#12 S1.1 plan revision item 7 was
+# over-aggressive about dropping this; restored here in S2.1.
+quote = "1"
 
 # ─── Workspace lints (item 20 — lifted from per-crate #![warn(...)]) ───
 #

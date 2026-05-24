@@ -62,7 +62,6 @@ Feature: scrap4rs syn-based test parser — TestParserPort contract
     And test "it" has 0 implicit assertion sources
     And test "it" has the attribute "test"
 
-  @wip @wave2-s2-1
   Scenario Outline: Test attributes are projected as parsed-attribute facts
     When I parse the source:
       """
@@ -79,7 +78,6 @@ Feature: scrap4rs syn-based test parser — TestParserPort contract
       | should_panic |
       | ignore       |
 
-  @wip @wave2-s2-1
   Scenario: Nested-mod tests get fully-qualified names
     When I parse the source:
       """
@@ -125,7 +123,6 @@ Feature: scrap4rs syn-based test parser — TestParserPort contract
       | tests/fixtures/runner_shells/pretty_assertions_shell.rs  | PrettyAssertions |
       | tests/fixtures/runner_shells/should_panic_shell.rs       | ShouldPanic      |
 
-  @wip @wave2-s2-1
   Scenario: Opt-out attributes are projected as test opt-outs
     When I parse the source:
       """
@@ -136,7 +133,6 @@ Feature: scrap4rs syn-based test parser — TestParserPort contract
     Then test "it" has the opt-out NoAsserts
     And test "it" has 1 opt-out
 
-  @wip @wave2-s2-1
   Scenario: body_line_count reflects the inner-block line span
     When I parse the source:
       """

@@ -38,6 +38,12 @@ syn = { workspace = true }
 # `span-locations` feature on the workspace pin is required for line
 # extraction in `parser/spans.rs::span_from_spanned`.
 proc-macro2 = { workspace = true }
+# `quote` exposes the `ToTokens` trait used in
+# `parser/attributes.rs::parsed_attribute_from_syn` to project
+# `Meta::NameValue` expressions to verbatim source-byte strings.
+# The `quote!(...)` macro is NOT used; path stringification is
+# hand-rolled.
+quote = { workspace = true }
 
 [dev-dependencies]
 # `insta` snapshots — per-fixture `ParsedTestFile` shape assertions

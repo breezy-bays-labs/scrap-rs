@@ -1,0 +1,107 @@
+---
+source: crates/scrap4rs/tests/parser_snapshots.rs
+assertion_line: 43
+expression: file
+---
+path: tests/fixtures/attribute_variants.rs
+tests:
+  - identity:
+      file_path: tests/fixtures/attribute_variants.rs
+      qualified_name: bare_test
+      span:
+        start_line: 17
+        end_line: 18
+    attributes:
+      - name: test
+        raw: ~
+    assertions: []
+    body_line_count: 0
+    implicit_assertion_sources: []
+    opt_outs: []
+  - identity:
+      file_path: tests/fixtures/attribute_variants.rs
+      qualified_name: tokio_test
+      span:
+        start_line: 20
+        end_line: 21
+    attributes:
+      - name: test
+        raw: ~
+    assertions: []
+    body_line_count: 0
+    implicit_assertion_sources: []
+    opt_outs: []
+  - identity:
+      file_path: tests/fixtures/attribute_variants.rs
+      qualified_name: rstest_test
+      span:
+        start_line: 23
+        end_line: 24
+    attributes:
+      - name: rstest
+        raw: ~
+    assertions: []
+    body_line_count: 0
+    implicit_assertion_sources: []
+    opt_outs: []
+  - identity:
+      file_path: tests/fixtures/attribute_variants.rs
+      qualified_name: should_panic_test
+      span:
+        start_line: 26
+        end_line: 28
+    attributes:
+      - name: test
+        raw: ~
+      - name: should_panic
+        raw: ~
+    assertions: []
+    body_line_count: 0
+    implicit_assertion_sources: []
+    opt_outs: []
+  - identity:
+      file_path: tests/fixtures/attribute_variants.rs
+      qualified_name: bare_ignore
+      span:
+        start_line: 30
+        end_line: 32
+    attributes:
+      - name: test
+        raw: ~
+      - name: ignore
+        raw: ~
+    assertions: []
+    body_line_count: 0
+    implicit_assertion_sources: []
+    opt_outs: []
+  - identity:
+      file_path: tests/fixtures/attribute_variants.rs
+      qualified_name: ignore_with_reason
+      span:
+        start_line: 34
+        end_line: 36
+    attributes:
+      - name: test
+        raw: ~
+      - name: ignore
+        raw: "\"flaky\""
+    assertions: []
+    body_line_count: 0
+    implicit_assertion_sources: []
+    opt_outs: []
+  - identity:
+      file_path: tests/fixtures/attribute_variants.rs
+      qualified_name: ignore_with_list
+      span:
+        start_line: 38
+        end_line: 40
+    attributes:
+      - name: test
+        raw: ~
+      - name: ignore
+        raw: slow
+    assertions: []
+    body_line_count: 0
+    implicit_assertion_sources: []
+    opt_outs: []
+diagnostics: []

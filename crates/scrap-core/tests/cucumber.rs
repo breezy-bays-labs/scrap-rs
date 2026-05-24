@@ -19,6 +19,9 @@
 // `match { _ => panic!() }` blocks as `let-else`) lands as a focused
 // follow-up chore commit so this PR stays the parser PR, not the
 // file-walker-harness-cleanup PR.
+//
+// tracked: scrap-rs#50 — lift after parser PR; surfaced when workspace
+// [lints] extended clippy::pedantic to integration tests.
 #![allow(clippy::needless_pass_by_value)]
 #![allow(clippy::manual_let_else)]
 #![allow(clippy::needless_raw_string_hashes)]

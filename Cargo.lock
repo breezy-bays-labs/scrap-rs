@@ -964,6 +964,7 @@ dependencies = [
  "insta",
  "proc-macro2",
  "proptest",
+ "quote",
  "scrap-core",
  "static_assertions",
  "syn",

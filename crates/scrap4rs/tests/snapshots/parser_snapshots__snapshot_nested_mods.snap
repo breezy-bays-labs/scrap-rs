@@ -1,0 +1,21 @@
+---
+source: crates/scrap4rs/tests/parser_snapshots.rs
+assertion_line: 37
+expression: file
+---
+path: tests/fixtures/nested_mods.rs
+tests:
+  - identity:
+      file_path: tests/fixtures/nested_mods.rs
+      qualified_name: "auth::login_tests::it_logs_in"
+      span:
+        start_line: 13
+        end_line: 14
+    attributes:
+      - name: test
+        raw: ~
+    assertions: []
+    body_line_count: 0
+    implicit_assertion_sources: []
+    opt_outs: []
+diagnostics: []
