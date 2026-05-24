@@ -82,6 +82,41 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
   `crates/scrap-core/src/domain/types.rs`. Mirrors the `ast-purity`
   shape; the column-deferral exclusion is tracked by scrap-rs#17
   (SARIF reporter — the column-aware consumer).
+- `scrap4rs::parser` module (scrap-rs#12 S1.1) — syn-based parser
+  skeleton implementing `TestParserPort`. `SynTestParser::new()`
+  zero-sized adapter; `parse_test_source` opens
+  `syn::parse_file`, drives an empty `TestVisitor<'ast>` (Wave 2
+  fills in the overrides), drains to `ParsedTestFile`. Two failure
+  paths: malformed source returns `ParseError::Syntax` with a
+  localised `Span` when proc-macro2 surfaces one; otherwise
+  `span: None`. All `syn` types confined to
+  `crates/scrap4rs/src/parser/` per adr-hexagonal-layout.
+- `scrap4rs` workspace deps: `syn = "2"` (features `parsing`,
+  `full`, `visit`, `extra-traits`), `proc-macro2 = "1"` (feature
+  `span-locations` — REQUIRED; without it `Span::start()` /
+  `Span::end()` return line 0 for every node).
+- `crates/scrap4rs/tests/cucumber.rs` — cucumber-rs 0.23 harness
+  mirroring the file-walker pattern (`harness = false`, async
+  tokio current-thread runtime, `World::cucumber()
+  .filter_run_and_exit("tests/features", ...)`). Two `When`
+  matchers per the impl-plan Reusable Reference:
+  `I parse the source: <docstring>` (S1.1) and
+  `I parse the fixture <path>` (S2.3 — added when fixtures land).
+  S1.1 supports scenarios 1-2 (empty source / malformed source);
+  scenarios 3-9 are tagged `@wip` and skipped until each Wave 2
+  session removes the tag.
+- `crates/scrap4rs/tests/parser_surface.rs` — compile-time
+  invariant smoke tests via `static_assertions`: `TestParserPort`
+  is obj-safe, `dyn TestParserPort` is NOT `Send + Sync`,
+  `SynTestParser` IS `Send + Sync` (Send/Sync symmetry mirroring
+  `crates/scrap-core/tests/source_walker.rs:21-24`).
+- `scripts/coverage-parser.sh` — single execution path for
+  coverage. Chains `cargo llvm-cov clean` →
+  `--no-report nextest --workspace -E 'not binary(cucumber)'` →
+  `--no-report test -p scrap-core --test cucumber` →
+  `--no-report test -p scrap4rs --test cucumber` →
+  `report --fail-under-lines 85`. Mirrors CI step-for-step;
+  future detector PRs inherit the pattern.
 - `domain::source` module — POD types for source discovery:
   `DiscoveryOutcome` (files + non-fatal mid-walk diagnostics),
   `SourceDiagnostic` (path + kind + message), `SourceDiagnosticKind`
@@ -151,6 +186,21 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
 
 ### Changed
 
+- Workspace lint policy lifted from per-crate
+  `#![warn(clippy::pedantic, clippy::cargo)]` headers in
+  `crates/{scrap-core,scrap4rs}/src/lib.rs` to
+  `[workspace.lints.clippy]` in the root `Cargo.toml` (scrap-rs#12
+  S1.1). Each crate's `Cargo.toml` opts in via `[lints]
+  workspace = true`. The `[workspace.lints.rust]` block is reserved
+  empty so future rust-lint policy lifts have a home. scrap4ts
+  inherits the workspace lints cleanly at v0.6+ join.
+- `lefthook.yml` pre-push `test:` command split per-crate cucumber
+  invocations (scrap-rs#12 S1.1). The prior `cargo test --test
+  cucumber` form was unambiguous when scrap-core was the only crate
+  shipping a cucumber binary; once scrap4rs also ships one, cargo
+  refuses the ambiguous `--test cucumber` invocation. The new
+  pre-push runs `cargo test -p scrap-core --test cucumber` and
+  `cargo test -p scrap4rs --test cucumber` sequentially.
 - **Breaking** (scrap-rs#12, pre-v1.0 — no external consumers):
   `ParsedAssertion::kind: String` renamed to `ParsedAssertion::name: String`
   to align with `ParsedAttribute::name` and disambiguate from

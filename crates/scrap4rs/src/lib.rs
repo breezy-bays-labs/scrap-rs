@@ -14,9 +14,10 @@
 //! and `scrap_core::domain::Finding` are the same type.
 
 #![warn(missing_docs)]
-#![warn(clippy::pedantic, clippy::cargo)]
 
 pub use scrap_core::{adapters, cli, core, detectors, domain, ports};
+
+pub mod parser;
 
 #[cfg(test)]
 mod tests {

@@ -36,7 +36,35 @@ cucumber = "0.23"
 # inside step defs, so the 2026-04-26 cucumber+parking_lot
 # deadlock vector does not apply.
 tokio = { version = "1", features = ["macros", "rt"] }
+# `syn` powers the Rust-source parser adapter in scrap4rs (lands
+# with scrap-rs#12). Confined to `crates/scrap4rs/` per
+# adr-hexagonal-layout; `scrap-core` stays AST-pure (ast-purity CI
+# grep enforces). Features: `parsing` + `full` (parse_file + item
+# / expr / stmt grammar coverage), `visit` (the Visit<'ast> trait
+# the walker implements), `extra-traits` (Debug derives for syn
+# types — helpful in tests and debugging).
+syn = { version = "2", features = ["full", "parsing", "visit", "extra-traits"] }
+# `proc-macro2` is a transitive dep of `syn`; pinned explicitly here
+# with the `span-locations` feature, which is REQUIRED for the
+# parser's span extraction. `proc_macro2::Span::start()` / `Span::end()`
+# return a meaningful `LineColumn` only under
+# `#[cfg(span_locations)]`; without this feature, every span line
+# collapses to 0 and downstream snapshots become garbage.
+# scrap4ts will inherit the same feature when it joins (v0.6+).
+proc-macro2 = { version = "1", features = ["span-locations"] }
 
-# Workspace-wide lint config lands as detectors come online.
-# scrap4ts joins this workspace when its parser adapter ships
-# (v0.6+ era — see ops kickstart plan §3 and adr-hexagonal-layout).
+# ─── Workspace lints (item 20 — lifted from per-crate #![warn(...)]) ───
+#
+# Lifted at scrap-rs#12 S1.1 so scrap-core and scrap4rs share a single
+# lint policy block and scrap4ts inherits cleanly at v0.6+ join. Each
+# crate's `Cargo.toml` adds `[lints] workspace = true` and the
+# previously-per-crate `#![warn(clippy::pedantic, clippy::cargo)]`
+# headers come out of `crates/*/src/lib.rs`.
+[workspace.lints.rust]
+# Reserved — kept as an empty namespace so scrap4ts inherits at join.
+# Future rust-lint policy lifts land here (e.g. `unsafe_code = "forbid"`
+# once the policy is workspace-wide rather than crate-by-crate).
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }

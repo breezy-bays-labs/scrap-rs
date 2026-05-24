@@ -6,6 +6,23 @@
 //! quoted strings that the Expression parser treats as special-syntax
 //! tokens; regex mode sidesteps that for every step in this harness.
 
+// TODO(scrap-rs#12 S1.1 follow-up): the workspace lints lift in S1.1
+// (`[workspace.lints.clippy]` block in root Cargo.toml replacing the
+// per-crate `#![warn(clippy::pedantic, clippy::cargo)]` headers)
+// surfaced 17 pre-existing pedantic nits in this file
+// (needless_pass_by_value × 14, manual_let_else × 2,
+// needless_raw_string_hashes × 1). They were latent under the
+// per-crate setup because lib-root `#![warn(...)]` doesn't propagate
+// to integration tests; the workspace `[lints]` block does. The
+// suppressions below keep S1.1 scoped — the cleanup (changing
+// cucumber step-fn `String` params to `&str`, rewriting
+// `match { _ => panic!() }` blocks as `let-else`) lands as a focused
+// follow-up chore commit so this PR stays the parser PR, not the
+// file-walker-harness-cleanup PR.
+#![allow(clippy::needless_pass_by_value)]
+#![allow(clippy::manual_let_else)]
+#![allow(clippy::needless_raw_string_hashes)]
+
 use cucumber::{World as _, gherkin, given, then, when};
 use scrap_core::adapters::source::fs::FsWalker;
 use scrap_core::adapters::source::memory::MemorySource;

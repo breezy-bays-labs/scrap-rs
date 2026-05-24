@@ -43,16 +43,23 @@ pre-push:
       run: cargo clippy --workspace --all-targets --locked -- -D warnings
       timeout: 300s
     test:
-      # Two-step run: nextest covers the lib + standard integration
-      # binaries, but skips the cucumber harness because cucumber-rs
+      # Three-step run: nextest covers the lib + standard integration
+      # binaries, but skips the cucumber harnesses because cucumber-rs
       # 0.23 (`harness = false`) doesn't implement libtest's `--list
       # --format terse` interface that nextest uses to enumerate
-      # tests. The cucumber binary runs separately via `cargo test
-      # --test cucumber`, where tests/cucumber.rs's `main()` owns the
-      # runner end-to-end.
+      # tests. Each crate's cucumber binary runs separately via
+      # `cargo test -p <crate> --test cucumber`, where
+      # tests/cucumber.rs's `main()` owns the runner end-to-end.
+      #
+      # Per-crate `-p` is REQUIRED: once both scrap-core AND scrap4rs
+      # ship a `tests/cucumber.rs`, cargo refuses the ambiguous
+      # `--test cucumber` invocation across two crates. (S1.1 of
+      # scrap-rs#12: this split lands at the same commit as scrap4rs's
+      # cucumber harness.)
       run: |
         cargo nextest run --workspace --all-targets --locked -E 'not binary(cucumber)' && \
-          cargo test --test cucumber --locked
+          cargo test -p scrap-core --test cucumber --locked && \
+          cargo test -p scrap4rs --test cucumber --locked
       timeout: 300s
     deny:
       run: cargo deny check

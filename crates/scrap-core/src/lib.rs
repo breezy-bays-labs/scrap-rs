@@ -28,7 +28,6 @@
 //! - [`cli`] — CLI surface: clap derive struct, `AnalysisConfig`, `ExitCode`, generic run loop.
 
 #![warn(missing_docs)]
-#![warn(clippy::pedantic, clippy::cargo)]
 
 pub mod adapters;
 pub mod cli;

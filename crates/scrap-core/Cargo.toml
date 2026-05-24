@@ -69,3 +69,10 @@ tokio = { workspace = true }
 [[test]]
 name = "cucumber"
 harness = false
+
+[lints]
+# Inherits clippy::pedantic + clippy::cargo from the workspace
+# `[workspace.lints.clippy]` block — lifted from the per-crate
+# `#![warn(...)]` headers at scrap-rs#12 S1.1 so scrap4ts can inherit
+# cleanly at v0.6+ join.
+workspace = true
