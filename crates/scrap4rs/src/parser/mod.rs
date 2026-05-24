@@ -22,7 +22,7 @@ use scrap_core::ports::parser::{ParseError, TestParserPort};
 use syn::visit::Visit;
 use syn::{Ident, ItemFn};
 
-use self::attributes::{extract_attributes, extract_opt_outs};
+use self::attributes::{extract_attributes, extract_opt_outs, implicit_sources_from_attributes};
 use self::body::BodyVisitor;
 use self::spans::{compute_body_line_count, span_from_spanned};
 use self::visitor::TestVisitor;
@@ -143,21 +143,25 @@ pub(crate) fn extract_parsed_test(
     let qualified_name = compose_qualified_name(path_stack, &item.sig.ident);
     let identity_span = span_from_spanned(item);
 
-    // S2.2 + S2.3: drive the BodyVisitor over the test fn's block to
-    // recover explicit assertions AND macro-form implicit-assertion
-    // sources (proptest, kani, insta, pretty_assertions, *_proptest).
-    // S2.4 extends BodyVisitor with `visit_expr_await` (cucumber
-    // chain) + `visit_expr_call` (function-call sources) overrides
-    // and adds the `implicit_sources_from_attributes` merge for
-    // `#[should_panic]` → `AssertionSource::ShouldPanic`.
+    // S2.2-S2.4: drive the BodyVisitor over the test fn's block to
+    // recover explicit assertions + body-walker implicit sources
+    // (proptest, kani, insta, pretty_assertions, *_proptest via
+    // visit_macro; cucumber chain via visit_expr_await; quickcheck /
+    // trybuild via visit_expr_call). S2.4 also merges N24
+    // (implicit_sources_from_attributes) for `#[should_panic]` →
+    // `AssertionSource::ShouldPanic` — the only attribute-sourced
+    // variant at v0.1.
     let mut body_visitor = BodyVisitor::new();
     body_visitor.drive(&item.block);
     let assertions = body_visitor.assertions;
 
-    // TODO(S2.4): merge `implicit_sources_from_attributes(item)`
-    // (the `#[should_panic]` attribute-path projection) into this
-    // vec via Vec::extend before passing to ParsedTest::new.
-    let implicit_assertion_sources = body_visitor.implicit_assertion_sources;
+    // Merge body-walker sources with attribute-sourced sources.
+    // Order: body emission first (parser's natural walk order),
+    // attribute sources appended. Vec.push preserves order for
+    // debugging; deduplication NOT required (variant set is small,
+    // domain spec stores Vec not BTreeSet).
+    let mut implicit_assertion_sources = body_visitor.implicit_assertion_sources;
+    implicit_assertion_sources.extend(implicit_sources_from_attributes(item));
 
     ParsedTest::new(
         TestIdentity::new(file_path.clone(), qualified_name, identity_span),

@@ -82,6 +82,52 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
   `crates/scrap-core/src/domain/types.rs`. Mirrors the `ast-purity`
   shape; the column-deferral exclusion is tracked by scrap-rs#17
   (SARIF reporter — the column-aware consumer).
+- `BodyVisitor::visit_expr_await` (scrap-rs#12 S2.4) — recognises the
+  cucumber `.await` chain. `.await` desugars to `syn::Expr::Await`
+  (NOT a method call, despite syntactic appearance); the override
+  walks `ExprAwait::base` for the two canonical shapes
+  (`World::cucumber().run(...).await` and
+  `cucumber::Cucumber::run(...).await`) via `is_cucumber_chain` and
+  fabricates the synthetic `"cucumber::run"` key for recognise().
+  DOES recurse via `visit::visit_expr_await` (unlike `visit_macro`'s
+  v0.1 no-recurse boundary) — `.await` chains can nest and
+  recursion catches every cucumber chain in the body.
+- `BodyVisitor::visit_expr_call` (scrap-rs#12 S2.4) — recognises
+  function-call implicit sources (e.g. `quickcheck::quickcheck(prop)`,
+  `trybuild::TestCases::new()`). For `Expr::Call` whose `.func` is
+  `Expr::Path`, hand-rolls the path string via the existing
+  `compose_macro_path_string` and passes it through recognise().
+  DOES recurse via `visit::visit_expr_call`.
+- `is_cucumber_chain` (scrap-rs#12 S2.4) — predicate that walks an
+  `&Expr` (an `.await` receiver) looking for `World::cucumber()`
+  method-call shape or any `cucumber::*` path-call shape. Pinned by
+  4 unit tests (2 positive, 2 negative).
+- `attributes::implicit_sources_from_attributes` (scrap-rs#12 S2.4 /
+  N24) — attribute-channel implicit-source recognition. At v0.1, the
+  only attribute-sourced variant is `AssertionSource::ShouldPanic`
+  (from `#[should_panic]`); the function is shaped for additive
+  v0.3+ extension. Called by `extract_parsed_test` alongside
+  `extract_attributes`/`extract_opt_outs`; result merges into the
+  body-walker's implicit-source vec before `ParsedTest::new`.
+- 4 S2.4 fixtures + 4 snapshots under
+  `crates/scrap4rs/tests/fixtures/runner_shells/`:
+  `quickcheck_shell.rs` (→ `Quickcheck` via fn-call), `cucumber_shell.rs`
+  (→ `Cucumber` via .await chain), `trybuild_shell.rs` (→ `Trybuild`
+  via fn-call), `should_panic_shell.rs` (→ `ShouldPanic` via N24
+  attribute path). S2.1's `attribute_variants.rs` snapshot
+  regenerated as expected (its `should_panic_test` fn now correctly
+  shows `implicit_assertion_sources: [should_panic]`).
+- `.github/workflows/ci.yml` — extends both the `test` job (line 79
+  area) and the `coverage` job (lines 116-120 area) with explicit
+  `cargo test -p scrap4rs --test cucumber --locked` invocations
+  (deferred from S1.1 per item 11 Option A; now landing because all
+  parser.feature scenarios are green — CI logs stay clean). Per the
+  Reusable Reference workflow-edit verification rule, both edits
+  verified via `git diff` before commit.
+- All 9 implicit-source Scenario Outline rows pass — `@wip` tag
+  removed from the outline scenario. scrap4rs cucumber: 19/19
+  scenarios pass (was 11/11 at S2.3). Walking-skeleton parser fully
+  recognises every v0.1 AssertionSource variant.
 - `BodyVisitor::implicit_assertion_sources` (scrap-rs#12 S2.3) — macro-form
   implicit-assertion source recognition via the
   `scrap_core::domain::assertion_sources::recognise()` contract. The

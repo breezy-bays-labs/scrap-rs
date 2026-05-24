@@ -112,6 +112,95 @@ impl<'ast> Visit<'ast> for BodyVisitor {
         // doc-comment block above for the rationale (wrapped/custom
         // macros are out of scope at v0.1; v0.3+ surface follow-up).
     }
+
+    /// S2.4 — cucumber `.await` chain recognition.
+    ///
+    /// `.await` desugars to `syn::Expr::Await(ExprAwait)` with its own
+    /// dedicated Visit method — it is NOT a method call. This override
+    /// checks if `node.base` is a cucumber chain (e.g.
+    /// `World::cucumber().run(...)`) and, if so, fabricates the
+    /// synthetic `"cucumber::run"` key for `recognise()`.
+    ///
+    /// **DOES** call `visit::visit_expr_await(self, node)` (unlike
+    /// `visit_macro` where v0.1 forbids recursion) — `.await` chains
+    /// can nest (`outer().await.inner().await`) and recursion finds
+    /// every cucumber chain in the body.
+    fn visit_expr_await(&mut self, node: &'ast syn::ExprAwait) {
+        if is_cucumber_chain(&node.base)
+            && let Some(src) = recognise("cucumber::run")
+        {
+            self.implicit_assertion_sources.push(src);
+        }
+        syn::visit::visit_expr_await(self, node);
+    }
+
+    /// S2.4 — function-call implicit-source recognition.
+    ///
+    /// For `Expr::Call` whose `.func` is `Expr::Path` (e.g.
+    /// `quickcheck::quickcheck(prop)`, `trybuild::TestCases::new()`),
+    /// stringify the path and pass it through `recognise()`. The
+    /// hand-rolled join via `compose_macro_path_string` reuses the
+    /// same whitespace-free convention.
+    ///
+    /// **DOES** call `visit::visit_expr_call(self, call)` — function
+    /// calls can nest (`outer(inner_implicit_call())`) and recursion
+    /// finds every implicit source in the body.
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(expr_path) = call.func.as_ref() {
+            let path_str = compose_macro_path_string(&expr_path.path);
+            if let Some(src) = recognise(&path_str) {
+                self.implicit_assertion_sources.push(src);
+            }
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+}
+
+/// S2.4 — detect whether an `&Expr` (the receiver of an `.await`) is
+/// a cucumber chain we should project as `AssertionSource::Cucumber`.
+///
+/// Two canonical shapes recognised:
+/// 1. `World::cucumber().run("tests").await` — the AST is
+///    `Expr::Await { base: MethodCall(method: "run", receiver:
+///    Call(World::cucumber)) }`. We descend into the `MethodCall`'s
+///    receiver and match the Call whose func path's last segment is
+///    `"cucumber"`.
+/// 2. `cucumber::Cucumber::run(...).await` — the AST is
+///    `Expr::Await { base: Call(func: cucumber::Cucumber::run) }`.
+///    We match the Call whose func path contains a segment named
+///    `"cucumber"` (anywhere in the path; this catches the namespace
+///    form).
+///
+/// Pinned by unit tests below:
+/// - Positive: `World::cucumber().run("tests/features")` (form 1),
+///   `cucumber::Cucumber::run(...)` (form 2).
+/// - Negative: `futures::future::ready(())`,
+///   `World::cucumber()` (chain head, no `.run().await` terminal),
+///   `tokio::time::sleep(...)`.
+fn is_cucumber_chain(base: &syn::Expr) -> bool {
+    match base {
+        syn::Expr::MethodCall(mc) => {
+            // Form 1 chain: this MethodCall's receiver is the
+            // `World::cucumber()` Call. Descend.
+            is_cucumber_chain(&mc.receiver)
+        }
+        syn::Expr::Call(call) => {
+            // Match if the Call's func path is `World::cucumber`
+            // (form 1 chain root) OR contains a segment named
+            // `cucumber` anywhere (form 2: `cucumber::Cucumber::run`).
+            if let syn::Expr::Path(expr_path) = call.func.as_ref() {
+                return expr_path
+                    .path
+                    .segments
+                    .iter()
+                    .any(|s| s.ident == "cucumber");
+            }
+            false
+        }
+        // Other Expr variants don't extend a chain in ways that
+        // matter for cucumber recognition.
+        _ => false,
+    }
 }
 
 /// Convert a macro's `tokens` to `Option<String>` for `raw_args`.
@@ -322,5 +411,94 @@ mod tests {
         visitor.drive(&item.block);
         assert!(visitor.assertions.is_empty());
         assert!(visitor.implicit_assertion_sources.is_empty());
+    }
+
+    // ─── S2.4: visit_expr_await / visit_expr_call / is_cucumber_chain ──
+
+    fn parse_expr(source: &str) -> syn::Expr {
+        syn::parse_str(source).expect("expr parses")
+    }
+
+    #[test]
+    fn is_cucumber_chain_positive_world_cucumber_run() {
+        // The AST `World::cucumber().run("x")` has the chain shape:
+        // MethodCall(method: run, receiver: Call(World::cucumber)).
+        // After the parent `.await` strips itself off, `is_cucumber_chain`
+        // sees the MethodCall and descends into the receiver Call.
+        let expr = parse_expr("World::cucumber().run(\"x\")");
+        assert!(is_cucumber_chain(&expr));
+    }
+
+    #[test]
+    fn is_cucumber_chain_positive_cucumber_cucumber_run() {
+        // `cucumber::Cucumber::run(...)` is a single Call to a path
+        // containing `cucumber` segments. The path-segment match
+        // catches it.
+        let expr = parse_expr("cucumber::Cucumber::run(world)");
+        assert!(is_cucumber_chain(&expr));
+    }
+
+    #[test]
+    fn is_cucumber_chain_negative_non_cucumber_await_receiver() {
+        let expr = parse_expr("futures::future::ready(())");
+        assert!(!is_cucumber_chain(&expr));
+    }
+
+    #[test]
+    fn is_cucumber_chain_negative_tokio_sleep() {
+        let expr = parse_expr("tokio::time::sleep(d)");
+        assert!(!is_cucumber_chain(&expr));
+    }
+
+    #[test]
+    fn body_visitor_recognises_cucumber_await_chain() {
+        // The full integration: a test body whose body invokes the
+        // canonical cucumber chain. `visit_expr_await` fires;
+        // `is_cucumber_chain` matches; recognise("cucumber::run")
+        // returns `Cucumber`.
+        let item =
+            parse_test_fn("async fn it() { World::cucumber().run(\"tests/features\").await; }");
+        let mut visitor = BodyVisitor::new();
+        visitor.drive(&item.block);
+        assert_eq!(
+            visitor.implicit_assertion_sources,
+            vec![AssertionSource::Cucumber]
+        );
+    }
+
+    #[test]
+    fn body_visitor_does_not_fire_on_non_cucumber_await() {
+        let item = parse_test_fn(
+            "async fn it() { tokio::time::sleep(std::time::Duration::from_secs(0)).await; }",
+        );
+        let mut visitor = BodyVisitor::new();
+        visitor.drive(&item.block);
+        assert!(visitor.implicit_assertion_sources.is_empty());
+    }
+
+    #[test]
+    fn body_visitor_recognises_quickcheck_function_call() {
+        // `quickcheck::quickcheck(prop)` — Expr::Call with func path
+        // matching the exact-key rule in recognise().
+        let item = parse_test_fn("fn it() { quickcheck::quickcheck(prop); }");
+        let mut visitor = BodyVisitor::new();
+        visitor.drive(&item.block);
+        assert_eq!(
+            visitor.implicit_assertion_sources,
+            vec![AssertionSource::Quickcheck]
+        );
+    }
+
+    #[test]
+    fn body_visitor_recognises_trybuild_function_call() {
+        // `trybuild::TestCases::new()` — Expr::Call with path
+        // matching the `trybuild::TestCases::*` prefix rule.
+        let item = parse_test_fn("fn it() { trybuild::TestCases::new(); }");
+        let mut visitor = BodyVisitor::new();
+        visitor.drive(&item.block);
+        assert_eq!(
+            visitor.implicit_assertion_sources,
+            vec![AssertionSource::Trybuild]
+        );
     }
 }

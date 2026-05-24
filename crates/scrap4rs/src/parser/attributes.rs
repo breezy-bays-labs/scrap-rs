@@ -11,6 +11,7 @@
 //! `#[should_panic]` → `AssertionSource::ShouldPanic` projection.
 
 use proc_macro2::TokenStream;
+use scrap_core::domain::assertion_sources::AssertionSource;
 use scrap_core::domain::opt_outs::OptOut;
 use scrap_core::domain::parsed::ParsedAttribute;
 use std::collections::BTreeSet;
@@ -162,6 +163,27 @@ pub(crate) fn extract_opt_outs(item: &ItemFn) -> BTreeSet<OptOut> {
     }
 
     opt_outs
+}
+
+/// S2.4 — N24 — implicit-assertion sources sourced from the fn's
+/// attribute list (not its body).
+///
+/// At v0.1 the only attribute-sourced `AssertionSource` is `ShouldPanic`
+/// (from `#[should_panic]` on the test fn). The function is shaped
+/// for additive extension: if v0.3+ adds a new attribute-sourced
+/// variant (e.g. a hypothetical `#[no_fail]`), it lands here.
+///
+/// Called by `extract_parsed_test` alongside `extract_attributes` and
+/// `extract_opt_outs`; the result merges into the body-walker's S4
+/// collection before `ParsedTest::new`.
+pub(crate) fn implicit_sources_from_attributes(item: &ItemFn) -> Vec<AssertionSource> {
+    let mut sources = Vec::new();
+    for attr in &item.attrs {
+        if attr.path().is_ident("should_panic") {
+            sources.push(AssertionSource::ShouldPanic);
+        }
+    }
+    sources
 }
 
 /// Match a composed `scrap::*` path string against the v0.1 `OptOut`
@@ -363,5 +385,28 @@ mod tests {
         assert_eq!(match_opt_out_key("clippy::pedantic"), None);
         assert_eq!(match_opt_out_key("scrap::not_a_real_key"), None);
         assert_eq!(match_opt_out_key(""), None);
+    }
+
+    // ─── implicit_sources_from_attributes (S2.4 / N24) ───
+
+    #[test]
+    fn implicit_sources_from_attributes_recognises_should_panic() {
+        let item = parse_first_fn("#[test] #[should_panic] fn it() {}");
+        let sources = implicit_sources_from_attributes(&item);
+        assert_eq!(sources, vec![AssertionSource::ShouldPanic]);
+    }
+
+    #[test]
+    fn implicit_sources_from_attributes_ignores_other_attributes() {
+        let item = parse_first_fn("#[test] #[allow(dead_code)] #[ignore] fn it() {}");
+        let sources = implicit_sources_from_attributes(&item);
+        assert!(sources.is_empty());
+    }
+
+    #[test]
+    fn implicit_sources_from_attributes_empty_when_no_attrs() {
+        let item = parse_first_fn("fn it() {}");
+        let sources = implicit_sources_from_attributes(&item);
+        assert!(sources.is_empty());
     }
 }

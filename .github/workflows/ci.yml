@@ -93,6 +93,13 @@ jobs:
       # `runs-as-itself` flag, this can collapse back into one command.
       - run: cargo nextest run --workspace --all-targets --locked -E 'not binary(cucumber)'
       - run: cargo test -p scrap-core --test cucumber --locked
+      # scrap4rs ships its own cucumber harness for the parser BDD
+      # contract (`crates/scrap4rs/tests/features/parser.feature`).
+      # Per-crate `-p` is REQUIRED — once both crates ship a
+      # `tests/cucumber.rs`, cargo refuses the ambiguous bare
+      # `--test cucumber` invocation. (scrap-rs#12 S2.4: this line
+      # lands once all parser.feature scenarios are green.)
+      - run: cargo test -p scrap4rs --test cucumber --locked
 
   coverage:
     name: Coverage
@@ -134,6 +141,7 @@ jobs:
           cargo llvm-cov clean --workspace
           cargo llvm-cov --no-report nextest --workspace --locked -E 'not binary(cucumber)'
           cargo llvm-cov --no-report test -p scrap-core --test cucumber --locked
+          cargo llvm-cov --no-report test -p scrap4rs --test cucumber --locked
           cargo llvm-cov report --lcov --output-path lcov.info --fail-under-lines 85
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -219,7 +227,9 @@ jobs:
     # tracked: scrap-rs#17 — promote/extend Span to include columns when
     # the SARIF reporter PR lands (per ~/.claude/rules/exclusions.md).
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Reject column fields on Span
         # Static pattern, no untrusted-input interpolation. Targets the
         # Span type's home file directly (not a recursive grep) since

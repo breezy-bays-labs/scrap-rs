@@ -105,7 +105,6 @@ Feature: scrap4rs syn-based test parser — TestParserPort contract
     And test "it" assertion 1 has name "assert_eq"
     And test "it" has 0 implicit assertion sources
 
-  @wip @wave2-s2-3-and-s2-4
   Scenario Outline: Implicit-assertion sources are recognized from runner shells
     When I parse the fixture <fixture>
     Then test "it" has the implicit assertion source <variant>

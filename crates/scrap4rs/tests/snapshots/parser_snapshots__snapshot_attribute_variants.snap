@@ -57,7 +57,8 @@ tests:
         raw: ~
     assertions: []
     body_line_count: 0
-    implicit_assertion_sources: []
+    implicit_assertion_sources:
+      - should_panic
     opt_outs: []
   - identity:
       file_path: tests/fixtures/attribute_variants.rs

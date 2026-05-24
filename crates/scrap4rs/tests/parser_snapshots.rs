@@ -94,3 +94,29 @@ fn snapshot_proptest_macro_suffix() {
     let file = parse_fixture("tests/fixtures/runner_shells/proptest_macro_suffix.rs");
     insta::assert_yaml_snapshot!(file);
 }
+
+// ─── S2.4 snapshots: non-macro implicit sources + should_panic ──────
+
+#[test]
+fn snapshot_quickcheck_shell() {
+    let file = parse_fixture("tests/fixtures/runner_shells/quickcheck_shell.rs");
+    insta::assert_yaml_snapshot!(file);
+}
+
+#[test]
+fn snapshot_cucumber_shell() {
+    let file = parse_fixture("tests/fixtures/runner_shells/cucumber_shell.rs");
+    insta::assert_yaml_snapshot!(file);
+}
+
+#[test]
+fn snapshot_trybuild_shell() {
+    let file = parse_fixture("tests/fixtures/runner_shells/trybuild_shell.rs");
+    insta::assert_yaml_snapshot!(file);
+}
+
+#[test]
+fn snapshot_should_panic_shell() {
+    let file = parse_fixture("tests/fixtures/runner_shells/should_panic_shell.rs");
+    insta::assert_yaml_snapshot!(file);
+}
