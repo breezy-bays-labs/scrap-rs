@@ -15,6 +15,7 @@
 //! `recognise()`. S2.4 adds `visit_expr_await` (cucumber chain) +
 //! `visit_expr_call` (function-call implicit sources).
 
+use scrap_core::domain::assertion_sources::{AssertionSource, recognise};
 use scrap_core::domain::parsed::ParsedAssertion;
 use syn::Block;
 use syn::visit::Visit;
@@ -42,12 +43,21 @@ pub(crate) struct BodyVisitor {
     /// Explicit assertions found in the body. S2.2 populates via
     /// `visit_macro`.
     pub(crate) assertions: Vec<ParsedAssertion>,
+    /// Implicit-assertion sources found in the body. S2.3 populates
+    /// via `visit_macro` (macro-form sources: proptest, kani, insta,
+    /// `pretty_assertions`, `*_proptest` suffix). S2.4 will extend with
+    /// `visit_expr_await` (cucumber chain) and `visit_expr_call`
+    /// (function-call sources). Emission order is preserved (`Vec`,
+    /// not `BTreeSet`) — useful for debugging which body construct
+    /// triggered recognition.
+    pub(crate) implicit_assertion_sources: Vec<AssertionSource>,
 }
 
 impl BodyVisitor {
     pub(crate) fn new() -> Self {
         Self {
             assertions: Vec::new(),
+            implicit_assertion_sources: Vec::new(),
         }
     }
 
@@ -78,7 +88,7 @@ impl<'ast> Visit<'ast> for BodyVisitor {
         // against the v0.1 set. The leaf (rightmost segment) is what
         // makes `pretty_assertions::assert_eq` match `"assert_eq"`
         // here while ALSO being recognised as an implicit
-        // `PrettyAssertions` source by S2.3's recognise() branch.
+        // `PrettyAssertions` source by the S2.3 branch below.
         if let Some(leaf) = path.rsplit("::").next()
             && ASSERTION_MACRO_NAMES.contains(&leaf)
         {
@@ -88,10 +98,19 @@ impl<'ast> Visit<'ast> for BodyVisitor {
                 .push(ParsedAssertion::new(leaf, raw_args, span));
         }
 
-        // S2.3 will extend this fn with the implicit-source
-        // `recognise(&path)` branch after the assertion-name match
-        // block. No visit::visit_macro recursion — see v0.1 boundary
-        // note above.
+        // S2.3 — implicit-assertion sources via the recognise()
+        // contract (proptest!, kani::*, insta::assert_*!,
+        // pretty_assertions::*, *_proptest suffix). Do NOT
+        // short-circuit on the explicit-assertion branch above — a
+        // macro can be BOTH (e.g. `pretty_assertions::assert_eq`
+        // produces both a ParsedAssertion AND an AssertionSource).
+        if let Some(src) = recognise(&path) {
+            self.implicit_assertion_sources.push(src);
+        }
+
+        // v0.1 boundary: NO visit::visit_macro recursion. See the
+        // doc-comment block above for the rationale (wrapped/custom
+        // macros are out of scope at v0.1; v0.3+ surface follow-up).
     }
 }
 
@@ -222,5 +241,86 @@ mod tests {
         visitor.drive(&item.block);
         assert_eq!(visitor.assertions[0].name, "panic");
         assert_eq!(visitor.assertions[0].raw_args, None);
+    }
+
+    // ─── S2.3: implicit-source recognition ──────────────────────────
+
+    #[test]
+    fn body_visitor_recognises_proptest_macro() {
+        let item = parse_test_fn("fn t() { proptest! { |(x in any::<u32>())| { let _ = x; } } }");
+        let mut visitor = BodyVisitor::new();
+        visitor.drive(&item.block);
+        assert_eq!(
+            visitor.implicit_assertion_sources,
+            vec![AssertionSource::Proptest]
+        );
+        // proptest! is not in the explicit set; assertions stays empty.
+        assert!(visitor.assertions.is_empty());
+    }
+
+    #[test]
+    fn body_visitor_recognises_kani_macro() {
+        let item = parse_test_fn("fn t() { let x: u32 = kani::any!(); }");
+        let mut visitor = BodyVisitor::new();
+        visitor.drive(&item.block);
+        assert_eq!(
+            visitor.implicit_assertion_sources,
+            vec![AssertionSource::Kani]
+        );
+    }
+
+    #[test]
+    fn body_visitor_recognises_insta_assert_snapshot() {
+        let item = parse_test_fn("fn t() { insta::assert_snapshot!(\"rendered\"); }");
+        let mut visitor = BodyVisitor::new();
+        visitor.drive(&item.block);
+        assert_eq!(
+            visitor.implicit_assertion_sources,
+            vec![AssertionSource::Insta]
+        );
+    }
+
+    #[test]
+    fn body_visitor_recognises_pretty_assertions_as_both() {
+        // The load-bearing dual-recognition case: `pretty_assertions::assert_eq`
+        // matches the leaf-segment explicit assertion branch (→
+        // ParsedAssertion("assert_eq")) AND the recognise() prefix
+        // branch (→ AssertionSource::PrettyAssertions). Both must
+        // populate — they're two different facts the detector layer
+        // consumes independently.
+        let item = parse_test_fn("fn t() { pretty_assertions::assert_eq!(1, 1); }");
+        let mut visitor = BodyVisitor::new();
+        visitor.drive(&item.block);
+        assert_eq!(visitor.assertions.len(), 1);
+        assert_eq!(visitor.assertions[0].name, "assert_eq");
+        assert_eq!(
+            visitor.implicit_assertion_sources,
+            vec![AssertionSource::PrettyAssertions]
+        );
+    }
+
+    #[test]
+    fn body_visitor_recognises_suffix_proptest() {
+        // The `*_proptest` suffix rule from recognise() — custom
+        // proptest-derived macros (e.g. `my_proptest!`) project to
+        // `Proptest`.
+        let item = parse_test_fn("fn t() { my_proptest! { x in 0..10 } }");
+        let mut visitor = BodyVisitor::new();
+        visitor.drive(&item.block);
+        assert_eq!(
+            visitor.implicit_assertion_sources,
+            vec![AssertionSource::Proptest]
+        );
+    }
+
+    #[test]
+    fn body_visitor_skips_non_implicit_macros() {
+        // `vec!` and `println!` are neither explicit assertions nor
+        // implicit-source macros. Both vecs stay empty.
+        let item = parse_test_fn("fn t() { let _ = vec![1, 2]; println!(\"hi\"); }");
+        let mut visitor = BodyVisitor::new();
+        visitor.drive(&item.block);
+        assert!(visitor.assertions.is_empty());
+        assert!(visitor.implicit_assertion_sources.is_empty());
     }
 }

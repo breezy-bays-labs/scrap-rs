@@ -75,10 +75,20 @@ fn when_i_parse_the_source(w: &mut World, step: &cucumber::gherkin::Step) {
     w.result = Some(parser.parse_test_source(&source, &FilePath::new("scenario.rs")));
 }
 
-// TODO(S2.3): add the `I parse the fixture <path>` matcher when the
-// fixture corpus lands (proptest_shell.rs, quickcheck_shell.rs, etc.).
-// Defining it earlier would panic on missing fixtures across the
-// Scenario Outline rows.
+// S2.3 — the deferred `When I parse the fixture <path>` matcher
+// lands now that the runner-shell fixture corpus exists. Regex
+// captures the path; file is read crate-relative via
+// `CARGO_MANIFEST_DIR`. Per the Reusable Reference convention this
+// is the SECOND and FINAL `When` matcher — Wave 2+ sessions extend
+// the .feature rows, not the matcher surface.
+#[when(regex = r"^I parse the fixture (.+)$")]
+fn when_i_parse_the_fixture(w: &mut World, fixture_path: String) {
+    let parser = w.parser.as_ref().expect("Given step seeds the parser");
+    let abs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(fixture_path.trim());
+    let source = std::fs::read_to_string(&abs)
+        .unwrap_or_else(|e| panic!("read fixture {}: {e}", abs.display()));
+    w.result = Some(parser.parse_test_source(&source, &FilePath::new(abs)));
+}
 
 // ─── Then (scenario 1 only — Wave 2 extends) ────────────────────────
 
@@ -261,6 +271,28 @@ fn then_test_has_n_implicit_assertion_sources(w: &mut World, name: String, expec
         test.implicit_assertion_sources.len(),
         expected,
         "test {name:?} implicit_assertion_sources count mismatch",
+    );
+}
+
+#[then(regex = r#"^test "([^"]+)" has the implicit assertion source (\w+)$"#)]
+fn then_test_has_implicit_assertion_source(w: &mut World, test_name: String, variant_name: String) {
+    use scrap_core::domain::assertion_sources::AssertionSource;
+    let test = find_test(assert_ok(w), &test_name);
+    let expected = match variant_name.as_str() {
+        "Proptest" => AssertionSource::Proptest,
+        "Quickcheck" => AssertionSource::Quickcheck,
+        "Kani" => AssertionSource::Kani,
+        "Cucumber" => AssertionSource::Cucumber,
+        "Trybuild" => AssertionSource::Trybuild,
+        "Insta" => AssertionSource::Insta,
+        "PrettyAssertions" => AssertionSource::PrettyAssertions,
+        "ShouldPanic" => AssertionSource::ShouldPanic,
+        _ => panic!("unknown AssertionSource variant in scenario: {variant_name:?}"),
+    };
+    assert!(
+        test.implicit_assertion_sources.contains(&expected),
+        "test {test_name:?} implicit sources {:?} missing {expected:?}",
+        test.implicit_assertion_sources,
     );
 }
 

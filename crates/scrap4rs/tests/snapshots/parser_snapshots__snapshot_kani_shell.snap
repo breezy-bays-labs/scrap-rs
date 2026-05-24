@@ -1,0 +1,22 @@
+---
+source: crates/scrap4rs/tests/parser_snapshots.rs
+assertion_line: 77
+expression: file
+---
+path: tests/fixtures/runner_shells/kani_shell.rs
+tests:
+  - identity:
+      file_path: tests/fixtures/runner_shells/kani_shell.rs
+      qualified_name: it
+      span:
+        start_line: 8
+        end_line: 12
+    attributes:
+      - name: test
+        raw: ~
+    assertions: []
+    body_line_count: 3
+    implicit_assertion_sources:
+      - kani
+    opt_outs: []
+diagnostics: []

@@ -62,3 +62,35 @@ fn snapshot_tautological() {
     let file = parse_fixture("tests/fixtures/true_positives/tautological.rs");
     insta::assert_yaml_snapshot!(file);
 }
+
+// ─── S2.3 snapshots: macro-form implicit-assertion sources ──────────
+
+#[test]
+fn snapshot_proptest_shell() {
+    let file = parse_fixture("tests/fixtures/runner_shells/proptest_shell.rs");
+    insta::assert_yaml_snapshot!(file);
+}
+
+#[test]
+fn snapshot_kani_shell() {
+    let file = parse_fixture("tests/fixtures/runner_shells/kani_shell.rs");
+    insta::assert_yaml_snapshot!(file);
+}
+
+#[test]
+fn snapshot_insta_shell() {
+    let file = parse_fixture("tests/fixtures/runner_shells/insta_shell.rs");
+    insta::assert_yaml_snapshot!(file);
+}
+
+#[test]
+fn snapshot_pretty_assertions_shell() {
+    let file = parse_fixture("tests/fixtures/runner_shells/pretty_assertions_shell.rs");
+    insta::assert_yaml_snapshot!(file);
+}
+
+#[test]
+fn snapshot_proptest_macro_suffix() {
+    let file = parse_fixture("tests/fixtures/runner_shells/proptest_macro_suffix.rs");
+    insta::assert_yaml_snapshot!(file);
+}

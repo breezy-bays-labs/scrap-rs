@@ -82,7 +82,28 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
   `crates/scrap-core/src/domain/types.rs`. Mirrors the `ast-purity`
   shape; the column-deferral exclusion is tracked by scrap-rs#17
   (SARIF reporter — the column-aware consumer).
-||||||| parent of 6f6afb6 (feat(scrap4rs/parser): body walker — explicit assertion recognition)
+- `BodyVisitor::implicit_assertion_sources` (scrap-rs#12 S2.3) — macro-form
+  implicit-assertion source recognition via the
+  `scrap_core::domain::assertion_sources::recognise()` contract. The
+  `visit_macro` override now runs BOTH the explicit-assertion match
+  AND the recognise() lookup; `pretty_assertions::assert_eq` is the
+  dual-recognition case (one `ParsedAssertion("assert_eq")` AND one
+  `AssertionSource::PrettyAssertions`). v0.1 boundary preserved: no
+  token-stream recursion (per plan revision item 22).
+- 5 S2.3 fixtures + 5 snapshots under
+  `crates/scrap4rs/tests/fixtures/runner_shells/`:
+  `proptest_shell.rs` (→ `Proptest`), `kani_shell.rs` (→ `Kani`),
+  `insta_shell.rs` (→ `Insta`), `pretty_assertions_shell.rs`
+  (→ `PrettyAssertions` + dual `ParsedAssertion`),
+  `proptest_macro_suffix.rs` (→ `Proptest` via `*_proptest` suffix
+  rule). All prior snapshots reviewed; none regenerated.
+- Cucumber `When I parse the fixture <path>` matcher landed —
+  deferred from S1.1 per the Reusable Reference convention; now
+  active with the S2.3 fixture corpus. New
+  `has the implicit assertion source X` Then matcher decodes
+  `AssertionSource` variant names. The implicit-source Scenario
+  Outline remains `@wip` until S2.4 lands the remaining 3 variants
+  (Quickcheck / Cucumber / Trybuild / ShouldPanic).
 - `scrap4rs::parser::body::BodyVisitor` (scrap-rs#12 S2.2) — per-test
   body walker via `syn::visit::Visit`. S2.2 ships `visit_macro` with
   the explicit-assertion-macro side: leaf-segment match against the

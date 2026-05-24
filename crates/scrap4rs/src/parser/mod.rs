@@ -143,22 +143,21 @@ pub(crate) fn extract_parsed_test(
     let qualified_name = compose_qualified_name(path_stack, &item.sig.ident);
     let identity_span = span_from_spanned(item);
 
-    // S2.2: drive the BodyVisitor over the test fn's block to recover
-    // explicit assertions. S2.3 will extend BodyVisitor with the
-    // implicit-source macro path; S2.4 adds the visit_expr_await
-    // (cucumber chain) + visit_expr_call (function-call implicit
-    // sources) overrides and the implicit_sources_from_attributes
-    // attribute-path merge.
+    // S2.2 + S2.3: drive the BodyVisitor over the test fn's block to
+    // recover explicit assertions AND macro-form implicit-assertion
+    // sources (proptest, kani, insta, pretty_assertions, *_proptest).
+    // S2.4 extends BodyVisitor with `visit_expr_await` (cucumber
+    // chain) + `visit_expr_call` (function-call sources) overrides
+    // and adds the `implicit_sources_from_attributes` merge for
+    // `#[should_panic]` → `AssertionSource::ShouldPanic`.
     let mut body_visitor = BodyVisitor::new();
     body_visitor.drive(&item.block);
     let assertions = body_visitor.assertions;
 
-    // TODO(S2.3 + S2.4): merge body-walker implicit sources (S2.3)
-    // AND `implicit_sources_from_attributes(item)` (S2.4's
-    // attribute-path projection for `#[should_panic]` →
-    // `AssertionSource::ShouldPanic`) into the final
-    // `implicit_assertion_sources` vec via Vec::extend.
-    let implicit_assertion_sources = Vec::new();
+    // TODO(S2.4): merge `implicit_sources_from_attributes(item)`
+    // (the `#[should_panic]` attribute-path projection) into this
+    // vec via Vec::extend before passing to ParsedTest::new.
+    let implicit_assertion_sources = body_visitor.implicit_assertion_sources;
 
     ParsedTest::new(
         TestIdentity::new(file_path.clone(), qualified_name, identity_span),
