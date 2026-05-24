@@ -49,6 +49,39 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
   to v1.0 release-workflow work per `CLAUDE.md > v0.x → v1.0
   Transition`. Follow-up: scrap-rs#51 (extract `setup-rust` composite
   action — mirror crap4rs pattern).
+- `domain::opt_outs::OptOut` (scrap-rs#12) — `#[non_exhaustive]`
+  enum carrying the v0.1 per-test detector-suppression markers
+  (`NoAsserts`, `Tautology`, `NoOp`), projected from
+  `#[allow(scrap::*)]` attributes on the test fn. Derives `Ord` so
+  `ParsedTest::opt_outs` is a `BTreeSet<OptOut>` (deterministic
+  serialization order).
+- `domain::assertion_sources::AssertionSource` (scrap-rs#12 — folds
+  in scrap-rs#4) — `#[non_exhaustive]` enum naming the implicit-
+  assertion sources the parser recognises (`Proptest`, `Quickcheck`,
+  `Kani`, `Cucumber`, `Trybuild`, `Insta`, `PrettyAssertions`,
+  `ShouldPanic`). The detectors (lands at scrap-rs#19/#30) read
+  `ParsedTest::implicit_assertion_sources` and skip emission when
+  non-empty — critical false-positive guard for mokumo CI integration.
+- `domain::assertion_sources::recognise(&str) -> Option<AssertionSource>` —
+  pure string-keyed lookup with first-match-wins precedence
+  (exact-key → prefix → suffix). The parser composes the path string
+  at the adapter boundary and passes a `&str`; the function has zero
+  AST-library dependencies and stays inside `scrap-core`'s
+  ast-purity envelope.
+- `ParsedTest` gained `implicit_assertion_sources: Vec<AssertionSource>`
+  and `opt_outs: BTreeSet<OptOut>` fields (scrap-rs#12). The canonical
+  `ParsedTest::new(...)` constructor extends additively from 4 → 6
+  args; D10 / Semantic Facts pattern.
+- `ParsedAssertion` gained `raw_args: Option<String>` field (scrap-rs#12)
+  carrying the verbatim macro-arg text for detector-side tautology
+  classification. Conditional wire-key via
+  `#[serde(skip_serializing_if = "Option::is_none")]` per envelope rules.
+- New `span-purity` CI job — structural enforcement of the v0.1
+  "no `Span` columns" decision; rejects `start_col` / `end_col` /
+  `start_column` / `end_column` / `column:` fields in
+  `crates/scrap-core/src/domain/types.rs`. Mirrors the `ast-purity`
+  shape; the column-deferral exclusion is tracked by scrap-rs#17
+  (SARIF reporter — the column-aware consumer).
 - `domain::source` module — POD types for source discovery:
   `DiscoveryOutcome` (files + non-fatal mid-walk diagnostics),
   `SourceDiagnostic` (path + kind + message), `SourceDiagnosticKind`
@@ -118,6 +151,15 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
 
 ### Changed
 
+- **Breaking** (scrap-rs#12, pre-v1.0 — no external consumers):
+  `ParsedAssertion::kind: String` renamed to `ParsedAssertion::name: String`
+  to align with `ParsedAttribute::name` and disambiguate from
+  `ParseDiagnosticKind`. The canonical `ParsedAssertion::new(...)`
+  constructor signature changes from `(kind, span)` → `(name, raw_args, span)`.
+  No `schema_version` bump per
+  [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md)
+  — `ParsedAssertion` is not part of the truthful-gate wire envelope
+  (see `crates/scrap-core/tests/wire_envelope_snapshot.rs`).
 - **Breaking**: `SourcePort::discover_test_files` signature changed
   from `fn(&self, root: &SourceRoot) -> Result<Vec<FilePath>, SourceError>`
   to `fn(&self) -> Result<DiscoveryOutcome, SourceError>`. The

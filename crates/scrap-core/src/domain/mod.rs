@@ -20,14 +20,17 @@
 //! - `finding` — `Finding`
 //! - `report` — `Report`, `FileReport`, `Summary`, `Distribution`
 //! - `threshold` — `ThresholdMode`
+//! - `opt_outs` — `OptOut` enum (lands with scrap-rs#12)
+//! - `assertion_sources` — `AssertionSource` enum + `recognise()` (folds in scrap-rs#4 surface via scrap-rs#12)
 //!
 //! Module roster (planned, not yet implemented):
-//! - `assertion_sources` — implicit-assertion recognition list (lands with scrap-rs#4 / P6)
 //! - `score` — saturating-curve helpers (v0.3+ per kickstart plan §3)
 
+pub mod assertion_sources;
 pub mod classification;
 pub mod config;
 pub mod finding;
+pub mod opt_outs;
 pub mod parsed;
 pub mod report;
 pub mod smell;

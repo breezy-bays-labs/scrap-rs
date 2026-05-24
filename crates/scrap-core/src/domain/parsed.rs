@@ -22,8 +22,11 @@
 //!    count is enough for `large-example`; future detectors receive
 //!    typed fact fields, not the raw `String`.
 
+use crate::domain::assertion_sources::AssertionSource;
+use crate::domain::opt_outs::OptOut;
 use crate::domain::types::{FilePath, Span, TestIdentity};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 /// Adapter output for a single source file — the test-suite-shaped
 /// data every detector consumes.
@@ -76,6 +79,26 @@ pub struct ParsedTest {
     /// brace; the two can differ by 1–N lines depending on signature
     /// formatting. Drives `large-example`.
     pub body_line_count: u32,
+    /// Implicit-assertion sources recognized in the body (proptest,
+    /// quickcheck, cucumber `.await` chain terminal, kani, trybuild,
+    /// insta, `pretty_assertions`) OR on the test fn's attribute list
+    /// (`#[should_panic]`). The adapter populates this via
+    /// [`crate::domain::assertion_sources::recognise`] while walking
+    /// the body, plus a sibling helper for attribute-sourced variants
+    /// (`scrap4rs::parser::attributes::implicit_sources_from_attributes`).
+    ///
+    /// Emission order is the parser's natural body-walk order — useful
+    /// for debugging; `Vec` (not `BTreeSet`) preserves it.
+    ///
+    /// Detectors in `scrap-core::detectors/` (lands at scrap-rs#19/#30)
+    /// read this field; the `zero-assertion` detector skips emission
+    /// when non-empty.
+    pub implicit_assertion_sources: Vec<AssertionSource>,
+    /// Per-test detector suppressions, projected from
+    /// `#[allow(scrap::*)]` attributes on the test fn. `BTreeSet` for
+    /// deterministic serialization order — see
+    /// [`crate::domain::opt_outs::OptOut`].
+    pub opt_outs: BTreeSet<OptOut>,
 }
 
 impl ParsedTest {
@@ -87,12 +110,16 @@ impl ParsedTest {
         attributes: Vec<ParsedAttribute>,
         assertions: Vec<ParsedAssertion>,
         body_line_count: u32,
+        implicit_assertion_sources: Vec<AssertionSource>,
+        opt_outs: BTreeSet<OptOut>,
     ) -> Self {
         Self {
             identity,
             attributes,
             assertions,
             body_line_count,
+            implicit_assertion_sources,
+            opt_outs,
         }
     }
 }
@@ -127,11 +154,32 @@ impl ParsedAttribute {
 /// One assertion call recovered by the parser. Minimal v0.1 shape;
 /// detector PRs add typed semantic-fact fields onto this struct via the
 /// constructor pattern.
+///
+/// **No `schema_version` bump for the v0.1 `kind → name` rename:**
+/// `ParsedAssertion` is NOT part of the truthful-gate wire envelope
+/// (see `crates/scrap-core/tests/wire_envelope_snapshot.rs` —
+/// constructs only `Report` / `Finding` / `Smell` / `Summary` /
+/// `Distribution` / `TestIdentity`). The rename does not propagate
+/// to the gated wire shape; `adr-nested-json-envelope` requires no
+/// bump. Pre-v1.0, this PR has no external consumers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedAssertion {
-    /// Assertion family identifier (e.g. `"assert"`, `"assert_eq"`,
-    /// `"expect"`).
-    pub kind: String,
+    /// **Leaf segment** of the macro path (e.g. `"assert_eq"` for both
+    /// `assert_eq!(...)` and `pretty_assertions::assert_eq!(...)`).
+    /// Consistent with [`ParsedAttribute::name`]; the adapter strips
+    /// the namespace at the boundary so detector logic doesn't have to.
+    pub name: String,
+    /// Verbatim argument text as it appears in source bytes (the
+    /// macro's token-stream contents, e.g. `"1, 1"` for
+    /// `assert_eq!(1, 1)`). `None` for empty macros (`assert!()`);
+    /// `Some("")` would only appear if a macro accepted whitespace-only
+    /// tokens, which the v0.1 set does not.
+    ///
+    /// Detectors use this for tautology detection (`assert_eq!(x, x)`
+    /// vs `assert_eq!(x, 1)`) etc. — the parser does NOT classify;
+    /// it carries the raw text so the detector can.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_args: Option<String>,
     /// Source span of the assertion call.
     pub span: Span,
 }
@@ -141,9 +189,10 @@ impl ParsedAssertion {
     /// (e.g. `is_tautological`, `arguments_identical`) extend this
     /// signature additively.
     #[must_use]
-    pub fn new(kind: impl Into<String>, span: Span) -> Self {
+    pub fn new(name: impl Into<String>, raw_args: Option<String>, span: Span) -> Self {
         Self {
-            kind: kind.into(),
+            name: name.into(),
+            raw_args,
             span,
         }
     }
@@ -215,8 +264,14 @@ mod tests {
                 Span::new(1, 4),
             ),
             vec![ParsedAttribute::new("ignore", Some("\"flaky\"".into()))],
-            vec![ParsedAssertion::new("assert_eq", Span::new(2, 2))],
+            vec![ParsedAssertion::new(
+                "assert_eq",
+                Some("1, 1".into()),
+                Span::new(2, 2),
+            )],
             3,
+            Vec::new(),
+            BTreeSet::new(),
         )
     }
 
@@ -272,7 +327,14 @@ mod tests {
     #[test]
     fn parsed_test_wire_keys() {
         let json = serde_json::to_value(sample_test()).unwrap();
-        for key in ["identity", "attributes", "assertions", "body_line_count"] {
+        for key in [
+            "identity",
+            "attributes",
+            "assertions",
+            "body_line_count",
+            "implicit_assertion_sources",
+            "opt_outs",
+        ] {
             assert!(json.get(key).is_some(), "missing wire key: {key}");
         }
     }
@@ -288,11 +350,34 @@ mod tests {
 
     #[test]
     fn parsed_assertion_wire_keys() {
+        // Always-present keys (raw_args is conditional via
+        // skip_serializing_if; tested separately below).
         let json =
-            serde_json::to_value(ParsedAssertion::new("assert_eq", Span::new(2, 2))).unwrap();
-        for key in ["kind", "span"] {
+            serde_json::to_value(ParsedAssertion::new("assert_eq", None, Span::new(2, 2))).unwrap();
+        for key in ["name", "span"] {
             assert!(json.get(key).is_some(), "missing wire key: {key}");
         }
+        // `raw_args` MUST NOT appear when None — preserves bytewise
+        // round-trip identity with consumers that compiled without
+        // the optional field.
+        assert!(
+            json.get("raw_args").is_none(),
+            "raw_args should be omitted when None (skip_serializing_if)",
+        );
+    }
+
+    #[test]
+    fn parsed_assertion_raw_args_present_when_some() {
+        let json = serde_json::to_value(ParsedAssertion::new(
+            "assert_eq",
+            Some("1, 1".into()),
+            Span::new(2, 2),
+        ))
+        .unwrap();
+        assert_eq!(
+            json.get("raw_args"),
+            Some(&serde_json::Value::String("1, 1".into())),
+        );
     }
 
     #[test]
