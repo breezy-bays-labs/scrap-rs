@@ -48,3 +48,17 @@ fn snapshot_opt_outs() {
     let file = parse_fixture("tests/fixtures/opt_outs/allows.rs");
     insta::assert_yaml_snapshot!(file);
 }
+
+// ─── S2.2 snapshots: explicit-assertion recognition ─────────────────
+
+#[test]
+fn snapshot_zero_assertion() {
+    let file = parse_fixture("tests/fixtures/true_positives/zero_assertion.rs");
+    insta::assert_yaml_snapshot!(file);
+}
+
+#[test]
+fn snapshot_tautological() {
+    let file = parse_fixture("tests/fixtures/true_positives/tautological.rs");
+    insta::assert_yaml_snapshot!(file);
+}

@@ -222,6 +222,48 @@ fn then_test_has_n_opt_outs(w: &mut World, name: String, expected: usize) {
     );
 }
 
+// ─── S2.2 — explicit assertion + implicit-source counts ─────────────
+
+#[then(regex = r#"^test "([^"]+)" has (\d+) explicit assertions?$"#)]
+fn then_test_has_n_explicit_assertions(w: &mut World, name: String, expected: usize) {
+    let test = find_test(assert_ok(w), &name);
+    assert_eq!(
+        test.assertions.len(),
+        expected,
+        "test {name:?} explicit assertion count mismatch",
+    );
+}
+
+#[then(regex = r#"^test "([^"]+)" assertion (\d+) has name "([^"]+)"$"#)]
+fn then_test_assertion_has_name(
+    w: &mut World,
+    test_name: String,
+    index: usize,
+    expected_name: String,
+) {
+    let test = find_test(assert_ok(w), &test_name);
+    let assertion = test.assertions.get(index).unwrap_or_else(|| {
+        panic!(
+            "test {test_name:?} has only {} assertions; index {index} OOB",
+            test.assertions.len()
+        )
+    });
+    assert_eq!(
+        assertion.name, expected_name,
+        "test {test_name:?} assertion {index} name mismatch",
+    );
+}
+
+#[then(regex = r#"^test "([^"]+)" has (\d+) implicit assertion sources?$"#)]
+fn then_test_has_n_implicit_assertion_sources(w: &mut World, name: String, expected: usize) {
+    let test = find_test(assert_ok(w), &name);
+    assert_eq!(
+        test.implicit_assertion_sources.len(),
+        expected,
+        "test {name:?} implicit_assertion_sources count mismatch",
+    );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────
 
 #[tokio::main(flavor = "current_thread")]

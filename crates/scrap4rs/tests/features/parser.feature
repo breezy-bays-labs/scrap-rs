@@ -49,7 +49,6 @@ Feature: scrap4rs syn-based test parser — TestParserPort contract
   # The cucumber harness filters `@wip` out (`not @wip`); CI logs
   # stay clean during Wave 2 instead of showing N failing scenarios.
 
-  @wip @wave2-s2-1
   Scenario: A bare #[test] fn yields one parsed test with zero assertions
     When I parse the source:
       """
@@ -92,7 +91,6 @@ Feature: scrap4rs syn-based test parser — TestParserPort contract
     And the parsed file contains 1 test
     And test "auth::login_tests::it_logs_in" exists
 
-  @wip @wave2-s2-2
   Scenario: Explicit assertion macros populate parsed-assertion entries
     When I parse the source:
       """

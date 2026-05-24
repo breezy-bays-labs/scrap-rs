@@ -10,7 +10,9 @@
 //! for the layering invariant. `scrap-core` stays AST-pure; the
 //! `ast-purity` CI grep enforces.
 
+mod assertions;
 mod attributes;
+mod body;
 mod spans;
 mod visitor;
 
@@ -21,6 +23,7 @@ use syn::visit::Visit;
 use syn::{Ident, ItemFn};
 
 use self::attributes::{extract_attributes, extract_opt_outs};
+use self::body::BodyVisitor;
 use self::spans::{compute_body_line_count, span_from_spanned};
 use self::visitor::TestVisitor;
 
@@ -140,15 +143,22 @@ pub(crate) fn extract_parsed_test(
     let qualified_name = compose_qualified_name(path_stack, &item.sig.ident);
     let identity_span = span_from_spanned(item);
 
-    // TODO(S2.2): swap stub for `BodyVisitor::new()` drive over
-    // `&item.block`. S2.2 returns `Vec<ParsedAssertion>`; S2.3 +
-    // S2.4 extend with `Vec<AssertionSource>` from the body walker.
-    let (assertions, body_implicit_sources) = body_visit_stub();
+    // S2.2: drive the BodyVisitor over the test fn's block to recover
+    // explicit assertions. S2.3 will extend BodyVisitor with the
+    // implicit-source macro path; S2.4 adds the visit_expr_await
+    // (cucumber chain) + visit_expr_call (function-call implicit
+    // sources) overrides and the implicit_sources_from_attributes
+    // attribute-path merge.
+    let mut body_visitor = BodyVisitor::new();
+    body_visitor.drive(&item.block);
+    let assertions = body_visitor.assertions;
 
-    // TODO(S2.4): also merge `implicit_sources_from_attributes(item)`
-    // (the `#[should_panic]` attribute path) into the final
+    // TODO(S2.3 + S2.4): merge body-walker implicit sources (S2.3)
+    // AND `implicit_sources_from_attributes(item)` (S2.4's
+    // attribute-path projection for `#[should_panic]` →
+    // `AssertionSource::ShouldPanic`) into the final
     // `implicit_assertion_sources` vec via Vec::extend.
-    let implicit_assertion_sources = body_implicit_sources;
+    let implicit_assertion_sources = Vec::new();
 
     ParsedTest::new(
         TestIdentity::new(file_path.clone(), qualified_name, identity_span),
@@ -158,19 +168,6 @@ pub(crate) fn extract_parsed_test(
         implicit_assertion_sources,
         opt_outs,
     )
-}
-
-/// TODO(S2.2) — body-walker integration stub. S2.2 replaces this with
-/// a `BodyVisitor` drive over `&item.block`; the return tuple becomes
-/// `(body.assertions, body.implicit_assertion_sources)`. S1.1
-/// shipped the empty walker; S2.1 ships the orchestrator with stubbed
-/// body integration; S2.2 lights up the assertion side; S2.3 + S2.4
-/// light up the implicit-source side.
-fn body_visit_stub() -> (
-    Vec<scrap_core::domain::parsed::ParsedAssertion>,
-    Vec<scrap_core::domain::assertion_sources::AssertionSource>,
-) {
-    (Vec::new(), Vec::new())
 }
 
 #[cfg(test)]

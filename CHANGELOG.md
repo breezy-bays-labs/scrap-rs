@@ -82,6 +82,41 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
   `crates/scrap-core/src/domain/types.rs`. Mirrors the `ast-purity`
   shape; the column-deferral exclusion is tracked by scrap-rs#17
   (SARIF reporter — the column-aware consumer).
+||||||| parent of 6f6afb6 (feat(scrap4rs/parser): body walker — explicit assertion recognition)
+- `scrap4rs::parser::body::BodyVisitor` (scrap-rs#12 S2.2) — per-test
+  body walker via `syn::visit::Visit`. S2.2 ships `visit_macro` with
+  the explicit-assertion-macro side: leaf-segment match against the
+  v0.1 set (`assert` / `assert_eq` / `assert_ne` / `assert_matches` /
+  `panic` / `unimplemented` / `todo`) → `ParsedAssertion::new(leaf,
+  raw_args, span)`. Hand-rolled path stringification via
+  `compose_macro_path_string` avoids the whitespace injection from
+  `TokenStream::to_string()` (load-bearing for the S2.3 `recognise()`
+  exact-string lookups). v0.1 boundary: NO `visit::visit_macro`
+  recursion into token streams (per scrap-rs#12 plan revision item 22).
+- `scrap4rs::parser::assertions::compose_macro_path_string` —
+  hand-rolled `iter().map().join("::")` for `syn::Path` →
+  whitespace-free key string. Critical: NOT `quote!(#path).to_string()`
+  (which injects spaces around `::` and breaks recognise()'s exact
+  match).
+- `scrap4rs::parser::extract_parsed_test` now drives the BodyVisitor
+  for each `#[test]` fn; `ParsedTest::assertions` populates with the
+  recovered macros. The TODO(S2.2) stub from S2.1 is removed.
+- 2 S2.2 fixtures: `tests/fixtures/true_positives/{zero_assertion,
+  tautological}.rs`. The first has no assertions (parser-side baseline
+  for the future zero-assertion detector at #30); the second has 2
+  tautological assertions (`assert!(true)`, `assert_eq!(1, 1)`) for
+  the future tautology detector at #24.
+- 2 new insta snapshots (`snapshot_zero_assertion`, `snapshot_tautological`)
+  accepted via `cargo insta review` per the Reusable Reference snapshot
+  discipline. S2.1 snapshots reviewed for regenerations — none
+  surfaced, confirming the body-walker change affects only fixtures
+  with body-level assertions.
+- 3 new cucumber step impls: `has N explicit assertions`,
+  `assertion N has name "X"`, `has N implicit assertion sources`.
+  Unlocks 2 more scenarios: "A bare #[test] fn yields one parsed
+  test" (needed S2.2's count step) and "Explicit assertion macros
+  populate parsed-assertion entries" (the S2.2 target). scrap4rs
+  cucumber: 11/11 scenarios pass (was 9/9 at S2.1).
 - `scrap4rs::parser` top-level walker (scrap-rs#12 S2.1) — wires
   `visit_item_mod` (path-stack push/recurse/pop) and `visit_item_fn`
   (is_test_fn check + extract_parsed_test orchestration); recovers
