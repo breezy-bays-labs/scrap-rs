@@ -14,6 +14,41 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
 
 ### Added
 
+- CI: `zizmor` workflow-security audit job in `.github/workflows/ci.yml`
+  (mirrors crap4rs precedent). Runs `pipx run 'zizmor>=1.5,<2'
+  .github/` on every PR + push to main. `unpinned-uses` is the
+  primary gate; `excessive-permissions`, `template-injection`,
+  `artipacked`, `cache-poisoning` ride along as secondary gates at
+  no marginal cost. Major-version pinned (`<2`) so a zizmor release
+  tightening rules doesn't flip CI red between PRs.
+- CI: `.github/dependabot.yml` covering both `github-actions` and
+  `cargo` ecosystems. Weekly cadence (Mondays), grouped minor+patch
+  bumps per ecosystem, major bumps as separate PRs, 7-day cooldown
+  to surface bad-release reports before automation pulls them.
+  Commit prefix `ci(deps):` for github-actions, `chore(deps):` for
+  cargo (per the workspace's commit convention).
+- CI: workflow-level `permissions: contents: read` default in
+  `ci.yml` (least-privilege). All 9 jobs are read-only; no per-job
+  overrides needed today. Closes the `excessive-permissions` zizmor
+  audit.
+- CI: `persist-credentials: false` on every `actions/checkout` call
+  (9 sites — 8 pre-existing jobs + 1 in the new zizmor job). Keeps
+  the GH App checkout token out of the runner's `.git/config`.
+  Closes the `artipacked` zizmor audit.
+- CI: every external `uses:` ref in `ci.yml` SHA-pinned with trailing
+  `# vX` (tagged releases: `actions/checkout`, `Swatinem/rust-cache`,
+  `taiki-e/install-action`, `actions/upload-artifact`) or
+  `# tracks @<branch> branch` (branch-pinned:
+  `dtolnay/rust-toolchain@{stable,1.88}` — Dependabot can't bump
+  these per AGENTS.md "Supply-chain hygiene" Rule 2; manual quarterly
+  refresh cadence). `EmbarkStudios/cargo-deny-action` was already
+  pinned.
+- Docs: `AGENTS.md` adds `## Supply-chain hygiene` section (8 rules;
+  mirrors crap4rs Rules 1–8). Rules 9 (cache-poisoning fix for
+  release workflows) and 10 (gh CLI for release artifacts) deferred
+  to v1.0 release-workflow work per `CLAUDE.md > v0.x → v1.0
+  Transition`. Follow-up: scrap-rs#51 (extract `setup-rust` composite
+  action — mirror crap4rs pattern).
 - `domain::source` module — POD types for source discovery:
   `DiscoveryOutcome` (files + non-fatal mid-walk diagnostics),
   `SourceDiagnostic` (path + kind + message), `SourceDiagnosticKind`
