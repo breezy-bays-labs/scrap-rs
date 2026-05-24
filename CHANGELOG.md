@@ -136,9 +136,14 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
   whitespace-only exclude globs (caught eagerly at `FsWalker::try_new`
   so a config typo or empty env-var interpolation doesn't silently
   delete every walk result).
-- Workspace MSRV bumped from `1.85` to `1.88`. Authorises Rust 1.88
-  language features and the latest cucumber crate (the prior 0.21
-  pin was lifted) inside the file-walker harness.
+- Workspace MSRV bumped from `1.85` to `1.93`. An intermediate 1.88
+  bump (file-walker pipeline) authorised cucumber 0.23 by lifting
+  the prior 0.21 ceiling inside the harness. The 1.93 floor aligns
+  with the sibling `crap-rs` workspace, where `oxc` 0.127+ drives
+  the pin for the `crap4ts` adapter — the same constraint will apply
+  to `scrap4ts` when it joins this workspace at v0.6+. An idiom-
+  adoption audit (1.89–1.93 language-feature sweep across
+  `crates/scrap-core/src/`) is tracked separately as a follow-up.
 
 ### Removed
 
