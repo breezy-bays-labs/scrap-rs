@@ -24,7 +24,7 @@ use syn::{Ident, ItemFn};
 
 use self::attributes::{extract_attributes, extract_opt_outs, implicit_sources_from_attributes};
 use self::body::BodyVisitor;
-use self::spans::{compute_body_line_count, span_from_spanned};
+use self::spans::{compute_body_line_count, line_to_u32, span_from_spanned};
 use self::visitor::TestVisitor;
 
 /// Zero-sized parser adapter implementing
@@ -83,8 +83,11 @@ impl TestParserPort for SynTestParser {
 fn parse_error_from_syn_error(err: &syn::Error) -> ParseError {
     let message = err.to_string();
     let syn_span = err.span();
-    let start_line = u32::try_from(syn_span.start().line).unwrap_or(u32::MAX);
-    let end_line = u32::try_from(syn_span.end().line).unwrap_or(u32::MAX);
+    // Reuse `spans::line_to_u32` for the saturating cast — single
+    // source of truth for `LineColumn::line: usize` → `u32`.
+    // (Gemini #56 helper reuse.)
+    let start_line = line_to_u32(syn_span.start().line);
+    let end_line = line_to_u32(syn_span.end().line);
 
     // Span::new debug-asserts start <= end and a 1-based line range.
     // Guard against both:

@@ -47,8 +47,10 @@ const PROJECTED_ATTR_LEAF_NAMES: &[&str] = &["test", "rstest", "should_panic", "
 pub(crate) fn is_test_fn(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| {
         attr.path().segments.last().is_some_and(|seg| {
-            let ident = seg.ident.to_string();
-            TEST_ATTR_LEAF_NAMES.contains(&ident.as_str())
+            // `syn::Ident` impls `PartialEq<str>` — compare directly
+            // against each whitelist entry without per-attr String
+            // allocation. (Gemini #56 perf opt.)
+            TEST_ATTR_LEAF_NAMES.iter().any(|&name| seg.ident == name)
         })
     })
 }
@@ -64,8 +66,11 @@ pub(crate) fn extract_attributes(item: &ItemFn) -> Vec<ParsedAttribute> {
         .iter()
         .filter(|attr| {
             attr.path().segments.last().is_some_and(|seg| {
-                let ident = seg.ident.to_string();
-                PROJECTED_ATTR_LEAF_NAMES.contains(&ident.as_str())
+                // Same `Ident: PartialEq<str>` short-circuit as
+                // `is_test_fn` above. (Gemini #56 perf opt.)
+                PROJECTED_ATTR_LEAF_NAMES
+                    .iter()
+                    .any(|&name| seg.ident == name)
             })
         })
         .map(parsed_attribute_from_syn)
@@ -155,12 +160,10 @@ pub(crate) fn extract_opt_outs(item: &ItemFn) -> BTreeSet<OptOut> {
         };
 
         for path in paths {
-            let path_str = path
-                .segments
-                .iter()
-                .map(|seg| seg.ident.to_string())
-                .collect::<Vec<_>>()
-                .join("::");
+            // Reuse the parser's canonical path stringifier — same
+            // whitespace-free `::`-joined shape `match_opt_out_key`
+            // exact-string matches against. (Gemini #56 dedup.)
+            let path_str = super::assertions::compose_macro_path_string(&path);
             if let Some(opt_out) = match_opt_out_key(&path_str) {
                 opt_outs.insert(opt_out);
             }

@@ -123,12 +123,18 @@ pub fn recognise(macro_path: &str) -> Option<AssertionSource> {
     if macro_path.starts_with("kani::") {
         return Some(AssertionSource::Kani);
     }
-    // insta::assert_* — prefix `"insta::"` AND leaf segment starts with `"assert_"`.
-    // Express as two checks against the parsed segment list (NOT a regex):
-    // the path must be under the `insta::` namespace, and the final
-    // segment after the last `::` must begin with `assert_`.
-    if let Some(leaf) = macro_path.strip_prefix("insta::")
-        && leaf.starts_with("assert_")
+    // `insta::assert_*` — paths of the shape `"insta::<rest>"` where
+    // `<rest>` itself starts with `"assert_"`. This matches insta's
+    // canonical top-level macro layout (`insta::assert_snapshot`,
+    // `insta::assert_json_snapshot`, `insta::assert_debug_snapshot`,
+    // etc.) — every assert_* macro in the insta crate lives directly
+    // under `insta::`, not in nested submodules. A nested form like
+    // `insta::inner::assert_snapshot` would NOT match (rest =
+    // "inner::assert_snapshot" does not start with "assert_"); insta
+    // does not ship such a form at v0.1, so this is the intended
+    // shallow-match semantic.
+    if let Some(rest) = macro_path.strip_prefix("insta::")
+        && rest.starts_with("assert_")
     {
         return Some(AssertionSource::Insta);
     }
