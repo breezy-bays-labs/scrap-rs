@@ -262,6 +262,51 @@ jobs:
           fi
           echo "scrap4rs adapter is parser-confined (syn/quote/proc_macro2/tree_sitter/swc/oxc only inside parser/)"
 
+  adapter-name-purity:
+    name: scrap-core adapter-name literal purity (source-only — scrap-rs#18)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The scrap-rs#18 config loader establishes the adapter-name-
+    # agnostic discipline for `crates/scrap-core/src/`: zero
+    # double-quoted "scrap4rs" / "scrap4ts" string literals — every
+    # adapter-binary name flows through `meta.config_file_name` /
+    # `meta.tool_name` set by the binary crate, never embedded as a
+    # literal in scrap-core source. This job ships a SUBSET of
+    # scrap-rs#37 (which expands the gate to tests/, tests/features/,
+    # and tests/cucumber_steps/).
+    #
+    # tracked: scrap-rs#37 — expand the gate to tests/, tests/features/,
+    # tests/cucumber_steps/ when AdapterMeta lands in scrap-rs#21 and
+    # the existing `cli/mod.rs:run()` placeholder is replaced.
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Reject adapter-name literals in scrap-core source
+        # Static pattern, no untrusted-input interpolation. The grep
+        # matches any double-quoted string containing the adapter
+        # binary name `scrap4rs` or `scrap4ts` as a substring (e.g.,
+        # `"scrap4rs (skeleton) ..."` or the bare `"scrap4rs"` form).
+        # Doc-comment backtick references (`scrap4rs.toml`) and
+        # module-path references (`scrap-rs#21`) don't false-positive
+        # because they lack the required double-quote delimiters.
+        #
+        # The single grandfathered line in `cli/mod.rs:run()` carries
+        # an in-line trailing comment `// tracked: scrap-rs#37 — ...`
+        # on the SAME line as the matched literal; the `grep -v`
+        # filter excludes it. New adapter-name literals lacking the
+        # same in-line marker fail the gate.
+        run: |
+          set -euo pipefail
+          matches=$(grep -rnE '"(scrap4rs|scrap4ts)[^"]*"' crates/scrap-core/src/ --include='*.rs' || true)
+          unmatched=$(printf '%s\n' "$matches" | grep -v 'tracked: scrap-rs#37' || true)
+          if [ -n "$unmatched" ]; then
+            echo "::error::adapter-name literal in scrap-core source — use AdapterMeta::tool_name from the binary crate (scrap-rs#21)"
+            echo "$unmatched"
+            exit 1
+          fi
+          echo "scrap-core source is adapter-name-pure (only grandfathered tracked: scrap-rs#37 line allowed)"
+
   span-purity:
     name: scrap-core Span no-columns purity (v0.1 — tracked scrap-rs#17)
     runs-on: ubuntu-latest

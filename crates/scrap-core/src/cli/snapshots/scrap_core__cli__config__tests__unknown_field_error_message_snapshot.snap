@@ -1,0 +1,7 @@
+---
+source: crates/scrap-core/src/cli/config.rs
+expression: "format!(\"{display_sanitized}\\n---\\n{source_repr}\")"
+---
+failed to parse config file <TEMPDIR>/test-adapter.toml
+---
+Error { message: "unknown field `unknown_key`, expected one of `src`, `exclude`, `extensions`, `opt_outs`, `detectors`, `overrides`", input: Some("unknown_key = true\n"), keys: [], span: Some(0..11) }

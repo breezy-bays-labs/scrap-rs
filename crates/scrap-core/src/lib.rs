@@ -26,6 +26,10 @@
 //! - [`detectors`] — per-smell detector modules (planned).
 //! - [`adapters`] — language-agnostic adapter implementations: file walker, reporters (planned).
 //! - [`cli`] — CLI surface: clap derive struct, `AnalysisConfig`, `ExitCode`, generic run loop.
+//!   - [`cli::config`] — project-level TOML config schema (`scrap-rs#18`):
+//!     `FileConfig`, `OptOutPolicy`, `DetectorConfig`, `Override`,
+//!     `ConfigError`; loader (`load_config`, `discover_config`); canonical
+//!     overrides resolver (`resolve_detector_for_path`).
 
 #![warn(missing_docs)]
 
