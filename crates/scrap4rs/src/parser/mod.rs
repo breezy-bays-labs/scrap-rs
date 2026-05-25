@@ -125,13 +125,16 @@ pub(crate) fn compose_qualified_name(path_stack: &[String], fn_ident: &Ident) ->
 /// Project one `syn::ItemFn` (already confirmed `is_test_fn` true) into
 /// the domain `ParsedTest` shape.
 ///
-/// Drives the helpers from `attributes` + `spans` + (S2.2+)
-/// `body::BodyVisitor`. The body-walker integration is currently a
-/// TODO(S2.2) stub returning empty `(assertions, implicit_sources)`;
-/// S2.2 swaps in the real `BodyVisitor::drive(&item.block)` call.
-/// S2.4 additionally wires in `N24
-/// implicit_sources_from_attributes` for the `#[should_panic]` →
-/// `AssertionSource::ShouldPanic` attribute path.
+/// Composes the attribute, opt-out, identity-span, body-line-count,
+/// and qualified-name projections from the `attributes` / `spans` /
+/// `compose_qualified_name` helpers; integrates `BodyVisitor` to
+/// extract explicit assertions plus body-walker implicit-assertion
+/// sources (proptest, kani, insta, `pretty_assertions`, `*_proptest`
+/// via `visit_macro`; cucumber chain via `visit_expr_await`;
+/// quickcheck / trybuild function-call form via `visit_expr_call`);
+/// and merges in attribute-sourced implicit sources (`#[should_panic]`
+/// → `AssertionSource::ShouldPanic`) via
+/// `implicit_sources_from_attributes`.
 pub(crate) fn extract_parsed_test(
     item: &ItemFn,
     path_stack: &[String],
@@ -143,23 +146,20 @@ pub(crate) fn extract_parsed_test(
     let qualified_name = compose_qualified_name(path_stack, &item.sig.ident);
     let identity_span = span_from_spanned(item);
 
-    // S2.2-S2.4: drive the BodyVisitor over the test fn's block to
-    // recover explicit assertions + body-walker implicit sources
-    // (proptest, kani, insta, pretty_assertions, *_proptest via
-    // visit_macro; cucumber chain via visit_expr_await; quickcheck /
-    // trybuild via visit_expr_call). S2.4 also merges N24
-    // (implicit_sources_from_attributes) for `#[should_panic]` →
-    // `AssertionSource::ShouldPanic` — the only attribute-sourced
-    // variant at v0.1.
+    // Drive the body walker over the test fn's block. `assertions`
+    // collects explicit assertion-macro calls; `implicit_assertion_sources`
+    // collects macro-form, cucumber-chain, and function-call implicit
+    // sources via the `recognise()` contract.
     let mut body_visitor = BodyVisitor::new();
     body_visitor.drive(&item.block);
     let assertions = body_visitor.assertions;
 
     // Merge body-walker sources with attribute-sourced sources.
     // Order: body emission first (parser's natural walk order),
-    // attribute sources appended. Vec.push preserves order for
-    // debugging; deduplication NOT required (variant set is small,
-    // domain spec stores Vec not BTreeSet).
+    // attribute sources appended. `Vec` (not `BTreeSet`) preserves
+    // order — useful for debugging which construct triggered
+    // recognition. Deduplication is not required; the variant set is
+    // small and the domain spec stores `Vec<AssertionSource>`.
     let mut implicit_assertion_sources = body_visitor.implicit_assertion_sources;
     implicit_assertion_sources.extend(implicit_sources_from_attributes(item));
 
@@ -218,11 +218,10 @@ mod tests {
 
     #[test]
     fn parse_bare_test_fn_yields_one_parsed_test() {
-        // S2.1 flip from the S1.1 baseline: with `visit_item_fn`
-        // wired, a bare `#[test]` fn projects to one `ParsedTest`.
-        // Body-walker stubs still keep `assertions` /
-        // `implicit_assertion_sources` empty (S2.2 + S2.3 + S2.4
-        // light those up).
+        // A bare `#[test] fn it() {}` projects to one `ParsedTest`:
+        // attributes contains a single `test` entry; assertions and
+        // implicit_assertion_sources are empty (the body is empty);
+        // opt_outs is empty (no `#[allow(scrap::*)]`).
         let parser = SynTestParser::new();
         let source = "#[test] fn it() {}";
         let file = parser
@@ -235,7 +234,6 @@ mod tests {
         assert_eq!(parsed.attributes.len(), 1);
         assert_eq!(parsed.attributes[0].name, "test");
         assert_eq!(parsed.attributes[0].raw, None);
-        // Body integration is S2.2+ stubbed: empty until then.
         assert!(parsed.assertions.is_empty());
         assert!(parsed.implicit_assertion_sources.is_empty());
         assert!(parsed.opt_outs.is_empty());
@@ -277,9 +275,8 @@ mod tests {
 
     #[test]
     fn parse_nested_mod_test_composes_qualified_name() {
-        // S2.1 verifies the path-stack walking: a fn discovered at
-        // depth-2 module nesting gets a `qualified_name` joined
-        // with `::`.
+        // Verify path-stack walking: a fn discovered at depth-2
+        // module nesting gets a `qualified_name` joined with `::`.
         let parser = SynTestParser::new();
         let source = "mod auth { mod login_tests { #[test] fn it_logs_in() {} } }";
         let file = parser

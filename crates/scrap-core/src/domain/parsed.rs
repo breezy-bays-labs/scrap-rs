@@ -169,15 +169,21 @@ pub struct ParsedAssertion {
     /// Consistent with [`ParsedAttribute::name`]; the adapter strips
     /// the namespace at the boundary so detector logic doesn't have to.
     pub name: String,
-    /// Verbatim argument text as it appears in source bytes (the
-    /// macro's token-stream contents, e.g. `"1, 1"` for
-    /// `assert_eq!(1, 1)`). `None` for empty macros (`assert!()`);
-    /// `Some("")` would only appear if a macro accepted whitespace-only
-    /// tokens, which the v0.1 set does not.
+    /// `proc_macro2::TokenStream::Display` output of the macro's
+    /// argument tokens. `None` for empty macros (`assert!()`).
     ///
-    /// Detectors use this for tautology detection (`assert_eq!(x, x)`
-    /// vs `assert_eq!(x, 1)`) etc. — the parser does NOT classify;
-    /// it carries the raw text so the detector can.
+    /// **Whitespace caveat:** `TokenStream::to_string()` *normalizes*
+    /// whitespace — `assert_eq!(1, 1)` produces
+    /// `Some("1 , 1".to_string())`, NOT `Some("1, 1".to_string())`.
+    /// Source-byte fidelity is NOT preserved; detectors comparing
+    /// `raw_args` for equality (e.g. the v0.1 tautological-assertion
+    /// detector at scrap-rs#24, which classifies `assert_eq!(x, x)`)
+    /// must account for the normalization. The Rust parser ships
+    /// the tokens it received from `syn`; tautology classification
+    /// happens detector-side.
+    ///
+    /// `Some("")` would only appear if a macro accepted whitespace-
+    /// only tokens, which the v0.1 set does not.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_args: Option<String>,
     /// Source span of the assertion call.

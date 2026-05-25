@@ -5,10 +5,15 @@
 //! Lives in the parser module tree (depends on `syn`); the domain
 //! crate stays AST-pure.
 //!
-//! S2.1 ships: `is_test_fn`, `extract_attributes`,
-//! `parsed_attribute_from_syn`, `extract_opt_outs`, `match_opt_out_key`.
-//! S2.4 adds `implicit_sources_from_attributes` for the
-//! `#[should_panic]` → `AssertionSource::ShouldPanic` projection.
+//! Surface:
+//! - `is_test_fn` — predicate distinguishing `#[test]`-like fns.
+//! - `extract_attributes` / `parsed_attribute_from_syn` — project to
+//!   `Vec<ParsedAttribute>`.
+//! - `extract_opt_outs` / `match_opt_out_key` — project
+//!   `#[allow(scrap::*)]` to `BTreeSet<OptOut>`.
+//! - `implicit_sources_from_attributes` — project attribute-channel
+//!   implicit sources (currently just `#[should_panic]` →
+//!   `AssertionSource::ShouldPanic`).
 
 use proc_macro2::TokenStream;
 use scrap_core::domain::assertion_sources::AssertionSource;
@@ -70,8 +75,8 @@ pub(crate) fn extract_attributes(item: &ItemFn) -> Vec<ParsedAttribute> {
 /// Convert one `syn::Attribute` into a `ParsedAttribute { name, raw }`.
 ///
 /// - `name` = leaf segment of `attr.path()` (e.g. `"test"` for both
-///   `#[test]` and `#[tokio::test]`), per the leaf-segment convention
-///   pinned in S0.1 for `ParsedAssertion::name` consistency.
+///   `#[test]` and `#[tokio::test]`), consistent with the leaf-segment
+///   convention pinned on `ParsedAssertion::name`.
 /// - `raw` = the argument text as a string:
 ///   - `Meta::Path` (bare attribute, e.g. `#[test]`) → `None`
 ///   - `Meta::List(list)` (e.g. `#[ignore(slow)]` or `#[allow(scrap::tautology, scrap::no_op)]`) → `Some(list.tokens.to_string())`
@@ -165,8 +170,8 @@ pub(crate) fn extract_opt_outs(item: &ItemFn) -> BTreeSet<OptOut> {
     opt_outs
 }
 
-/// S2.4 — N24 — implicit-assertion sources sourced from the fn's
-/// attribute list (not its body).
+/// Implicit-assertion sources sourced from the fn's attribute list
+/// (not its body).
 ///
 /// At v0.1 the only attribute-sourced `AssertionSource` is `ShouldPanic`
 /// (from `#[should_panic]` on the test fn). The function is shaped
@@ -174,8 +179,8 @@ pub(crate) fn extract_opt_outs(item: &ItemFn) -> BTreeSet<OptOut> {
 /// variant (e.g. a hypothetical `#[no_fail]`), it lands here.
 ///
 /// Called by `extract_parsed_test` alongside `extract_attributes` and
-/// `extract_opt_outs`; the result merges into the body-walker's S4
-/// collection before `ParsedTest::new`.
+/// `extract_opt_outs`; the result merges into the body-walker's
+/// `implicit_assertion_sources` collection before `ParsedTest::new`.
 pub(crate) fn implicit_sources_from_attributes(item: &ItemFn) -> Vec<AssertionSource> {
     let mut sources = Vec::new();
     for attr in &item.attrs {
@@ -387,7 +392,7 @@ mod tests {
         assert_eq!(match_opt_out_key(""), None);
     }
 
-    // ─── implicit_sources_from_attributes (S2.4 / N24) ───
+    // ─── implicit_sources_from_attributes ───
 
     #[test]
     fn implicit_sources_from_attributes_recognises_should_panic() {

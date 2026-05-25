@@ -3,8 +3,9 @@
 //! Lives in the parser module tree because every helper takes a
 //! `syn::*` reference. The domain crate stays AST-pure.
 //!
-//! S1.1 ships `line_to_u32` (saturating cast) and `span_from_spanned`
-//! (the line-range projection). S2.1 adds `compute_body_line_count`
+//! Surface: `line_to_u32` (saturating cast for `LineColumn::line`),
+//! `span_from_spanned` (line-range projection from any
+//! `syn::spanned::Spanned` node), `compute_body_line_count`
 //! (`syn::Block`-specific helper for `ParsedTest::body_line_count`).
 
 use scrap_core::domain::types::Span;
@@ -35,15 +36,12 @@ pub(crate) fn line_to_u32(line: usize) -> u32 {
 /// sentinel for "no usable span info" (synthetic spans from procedural
 /// expansion, etc.); we defensively clamp those to `Span::new(1, 1)`
 /// rather than panic via `Span::new`'s `debug_assert!(start <= end)`.
-/// `parse_error_from_syn_error` will use the parallel
+/// `parse_error_from_syn_error` uses the parallel
 /// `span_from_syn_error` shape for parser failures specifically.
-//
-// TODO(S2.1): the `extract_parsed_test` orchestrator calls this for
-// every test fn discovered by `visit_item_fn`. Until that lands, the
-// fn is dead in the parser proper — the test below keeps it
-// reachable through `#[cfg(test)]` only. The `#[allow(dead_code)]`
-// keeps the lib build warning-free until S2.1.
-#[allow(dead_code)]
+///
+/// Called from `extract_parsed_test` (every test fn's identity span)
+/// and from `BodyVisitor::visit_macro` (every recognised assertion's
+/// span).
 pub(crate) fn span_from_spanned<T: Spanned>(node: &T) -> Span {
     let syn_span = node.span();
     let start_line = line_to_u32(syn_span.start().line);
@@ -72,9 +70,9 @@ pub(crate) fn span_from_spanned<T: Spanned>(node: &T) -> Span {
 /// - 3-line body block (open on line 5, close on line 8) returns `3`.
 ///
 /// Saturating `u32::saturating_sub` defends against pathological
-/// inverted spans. Per scrap-rs#12 S2.1 plan revision item 14, the
-/// docstring pins to the formula (the earlier "N-1 for N-line bodies"
-/// phrasing was misleading and has been discarded).
+/// inverted spans. The docstring pins to the formula above
+/// deliberately — an "N-1 for N-line bodies" mental model is
+/// misleading.
 pub(crate) fn compute_body_line_count(block: &Block) -> u32 {
     let open = line_to_u32(block.brace_token.span.open().start().line);
     let close = line_to_u32(block.brace_token.span.close().start().line);

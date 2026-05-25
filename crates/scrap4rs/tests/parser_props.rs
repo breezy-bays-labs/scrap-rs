@@ -71,6 +71,12 @@ fn parse(source: &str) -> ParsedTestFile {
 }
 
 proptest! {
+    // Pin the case count explicitly so a future proptest default
+    // change can't silently weaken the invariant strength.
+    // 256 matches proptest's current default (and the count CHANGELOG
+    // entry / S3.1 commit body claim).
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
     /// For every parse_file-able source the strategy produces, the
     /// parser must return Ok(_) and never panic.
     #[test]

@@ -1,19 +1,26 @@
-//! `BodyVisitor<'ast>` — per-test body walker using `syn::visit::Visit`.
+//! `BodyVisitor` — per-test body walker using `syn::visit::Visit`.
 //!
 //! Walks the body of one `#[test]`-attributed fn and accumulates
-//! domain facts: explicit assertions (S2.2 — this session),
-//! macro-form implicit-assertion sources (S2.3), non-macro implicit
-//! sources + the cucumber `.await` chain (S2.4).
+//! domain facts:
+//! - explicit assertion macros (`visit_macro` leaf-name match against
+//!   the v0.1 set: `assert` / `assert_eq` / `assert_ne` /
+//!   `assert_matches` / `panic` / `unimplemented` / `todo`) →
+//!   `Vec<ParsedAssertion>`,
+//! - macro-form implicit-assertion sources (`visit_macro` `recognise()`
+//!   branch: `proptest!`, `kani::*`, `insta::assert_*!`,
+//!   `pretty_assertions::*`, `*_proptest` suffix),
+//! - cucumber `.await` chain terminal (`visit_expr_await` walks the
+//!   `ExprAwait::base` for `World::cucumber().run(...)` or
+//!   `cucumber::Cucumber::run(...)` shapes; fabricates the synthetic
+//!   `"cucumber::run"` key for `recognise()`),
+//! - function-call implicit sources (`visit_expr_call` for
+//!   `quickcheck::quickcheck(...)`, `trybuild::TestCases::*`, etc.)
+//!   → `Vec<AssertionSource>`.
 //!
 //! Driven from `extract_parsed_test` in `parser/mod.rs` — fresh
-//! visitor per test fn; `Vec`-based accumulators preserve emission
-//! order (the breadboard's S3/S4 stores; useful for debugging).
-//!
-//! S2.2 ships: `BodyVisitor` + `visit_macro` (assertion-macro side
-//! only — match against the v0.1 macro set + push `ParsedAssertion`).
-//! S2.3 extends `visit_macro` with the implicit-source path via
-//! `recognise()`. S2.4 adds `visit_expr_await` (cucumber chain) +
-//! `visit_expr_call` (function-call implicit sources).
+//! visitor per test fn. `Vec`-based accumulators preserve emission
+//! order (useful for debugging which body construct triggered
+//! recognition).
 
 use scrap_core::domain::assertion_sources::{AssertionSource, recognise};
 use scrap_core::domain::parsed::ParsedAssertion;
@@ -26,7 +33,7 @@ use super::spans::span_from_spanned;
 /// Set of v0.1 assertion-macro leaf-segment names. Matched against
 /// the LEAF segment of the macro path so `pretty_assertions::assert_eq`
 /// matches `"assert_eq"` (and is also picked up as an implicit
-/// `PrettyAssertions` source by S2.3's `recognise()` branch).
+/// `PrettyAssertions` source via the `recognise()` branch).
 const ASSERTION_MACRO_NAMES: &[&str] = &[
     "assert",
     "assert_eq",
@@ -40,15 +47,17 @@ const ASSERTION_MACRO_NAMES: &[&str] = &[
 /// Per-test body walker. Constructed fresh in `extract_parsed_test`,
 /// drained via the field accessors after the body visit completes.
 pub(crate) struct BodyVisitor {
-    /// Explicit assertions found in the body. S2.2 populates via
-    /// `visit_macro`.
+    /// Explicit assertions found in the body. Populated by
+    /// `visit_macro` (leaf-segment match against
+    /// [`ASSERTION_MACRO_NAMES`]).
     pub(crate) assertions: Vec<ParsedAssertion>,
-    /// Implicit-assertion sources found in the body. S2.3 populates
-    /// via `visit_macro` (macro-form sources: proptest, kani, insta,
-    /// `pretty_assertions`, `*_proptest` suffix). S2.4 will extend with
-    /// `visit_expr_await` (cucumber chain) and `visit_expr_call`
-    /// (function-call sources). Emission order is preserved (`Vec`,
-    /// not `BTreeSet`) — useful for debugging which body construct
+    /// Implicit-assertion sources found in the body. Populated by
+    /// `visit_macro` (macro-form sources via `recognise()`:
+    /// `proptest`, `kani`, `insta`, `pretty_assertions`, `*_proptest`
+    /// suffix), `visit_expr_await` (cucumber chain), and
+    /// `visit_expr_call` (function-call sources: `quickcheck`,
+    /// `trybuild`). Emission order is preserved (`Vec`, not
+    /// `BTreeSet`) — useful for debugging which body construct
     /// triggered recognition.
     pub(crate) implicit_assertion_sources: Vec<AssertionSource>,
 }
@@ -70,8 +79,8 @@ impl BodyVisitor {
 }
 
 impl<'ast> Visit<'ast> for BodyVisitor {
-    /// Recognise explicit assertion macros (and S2.3+ implicit-source
-    /// macros). Whitespace-sensitive path stringification via
+    /// Recognise explicit assertion macros AND implicit-source
+    /// macros. Whitespace-sensitive path stringification via
     /// `compose_macro_path_string` (NOT `quote!`/`TokenStream`) so
     /// `recognise()`'s exact-string lookups stay accurate.
     ///
@@ -80,15 +89,15 @@ impl<'ast> Visit<'ast> for BodyVisitor {
     /// token-stream descent is out of scope. Wrapped/custom macros
     /// (e.g. a hypothetical `my_proptest!` wrapping `proptest!`) are
     /// tracked under v0.3+ surface if real codebases push back at
-    /// adoption time. (Per scrap-rs#12 S2.2 plan revision item 22.)
+    /// adoption time.
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
         let path = compose_macro_path_string(&mac.path);
 
-        // S2.2 — explicit assertion macros: leaf-segment match
-        // against the v0.1 set. The leaf (rightmost segment) is what
-        // makes `pretty_assertions::assert_eq` match `"assert_eq"`
-        // here while ALSO being recognised as an implicit
-        // `PrettyAssertions` source by the S2.3 branch below.
+        // Explicit assertion macros: leaf-segment match against the
+        // v0.1 set. The leaf (rightmost segment) is what makes
+        // `pretty_assertions::assert_eq` match `"assert_eq"` here
+        // while ALSO being recognised as an implicit
+        // `PrettyAssertions` source by the recognise() branch below.
         if let Some(leaf) = path.rsplit("::").next()
             && ASSERTION_MACRO_NAMES.contains(&leaf)
         {
@@ -98,12 +107,12 @@ impl<'ast> Visit<'ast> for BodyVisitor {
                 .push(ParsedAssertion::new(leaf, raw_args, span));
         }
 
-        // S2.3 — implicit-assertion sources via the recognise()
-        // contract (proptest!, kani::*, insta::assert_*!,
-        // pretty_assertions::*, *_proptest suffix). Do NOT
-        // short-circuit on the explicit-assertion branch above — a
-        // macro can be BOTH (e.g. `pretty_assertions::assert_eq`
-        // produces both a ParsedAssertion AND an AssertionSource).
+        // Implicit-assertion sources via the recognise() contract
+        // (proptest!, kani::*, insta::assert_*!, pretty_assertions::*,
+        // *_proptest suffix). Do NOT short-circuit on the
+        // explicit-assertion branch above — a macro can be BOTH (e.g.
+        // `pretty_assertions::assert_eq` produces both a
+        // ParsedAssertion AND an AssertionSource).
         if let Some(src) = recognise(&path) {
             self.implicit_assertion_sources.push(src);
         }
@@ -113,7 +122,7 @@ impl<'ast> Visit<'ast> for BodyVisitor {
         // macros are out of scope at v0.1; v0.3+ surface follow-up).
     }
 
-    /// S2.4 — cucumber `.await` chain recognition.
+    /// Cucumber `.await` chain recognition.
     ///
     /// `.await` desugars to `syn::Expr::Await(ExprAwait)` with its own
     /// dedicated Visit method — it is NOT a method call. This override
@@ -134,7 +143,7 @@ impl<'ast> Visit<'ast> for BodyVisitor {
         syn::visit::visit_expr_await(self, node);
     }
 
-    /// S2.4 — function-call implicit-source recognition.
+    /// Function-call implicit-source recognition.
     ///
     /// For `Expr::Call` whose `.func` is `Expr::Path` (e.g.
     /// `quickcheck::quickcheck(prop)`, `trybuild::TestCases::new()`),
@@ -156,8 +165,8 @@ impl<'ast> Visit<'ast> for BodyVisitor {
     }
 }
 
-/// S2.4 — detect whether an `&Expr` (the receiver of an `.await`) is
-/// a cucumber chain we should project as `AssertionSource::Cucumber`.
+/// Detect whether an `&Expr` (the receiver of an `.await`) is a
+/// cucumber chain we should project as `AssertionSource::Cucumber`.
 ///
 /// Two canonical shapes recognised:
 /// 1. `World::cucumber().run("tests").await` — the AST is
@@ -284,8 +293,9 @@ mod tests {
     #[test]
     fn body_visitor_leaf_segment_match_for_namespaced_assert_eq() {
         // `pretty_assertions::assert_eq` matches `"assert_eq"` via
-        // leaf-segment match. S2.3 will additionally recognise this
-        // as `AssertionSource::PrettyAssertions` via recognise().
+        // leaf-segment match here AND is recognised as
+        // `AssertionSource::PrettyAssertions` via the recognise()
+        // branch (see `body_visitor_recognises_pretty_assertions_as_both`).
         let item = parse_test_fn("fn t() { pretty_assertions::assert_eq!(1, 1); }");
         let mut visitor = BodyVisitor::new();
         visitor.drive(&item.block);
@@ -332,7 +342,7 @@ mod tests {
         assert_eq!(visitor.assertions[0].raw_args, None);
     }
 
-    // ─── S2.3: implicit-source recognition ──────────────────────────
+    // ─── visit_macro implicit-source recognition ────────────────────
 
     #[test]
     fn body_visitor_recognises_proptest_macro() {
@@ -413,7 +423,7 @@ mod tests {
         assert!(visitor.implicit_assertion_sources.is_empty());
     }
 
-    // ─── S2.4: visit_expr_await / visit_expr_call / is_cucumber_chain ──
+    // ─── visit_expr_await / visit_expr_call / is_cucumber_chain ─────
 
     fn parse_expr(source: &str) -> syn::Expr {
         syn::parse_str(source).expect("expr parses")

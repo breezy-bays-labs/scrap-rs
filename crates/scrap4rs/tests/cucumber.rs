@@ -7,16 +7,16 @@
 //! `When` matchers (`I parse the source: <docstring>` and
 //! `I parse the fixture <path>`).
 //!
-//! S1.1 ships the harness scaffold + scenario 1 only ("Empty source
-//! compiles to an empty test inventory"). Wave 2 sessions (S2.1 →
-//! S2.4) extend the step impls as each .feature scenario becomes
-//! reachable. Scenarios 2-9 will surface as "step undefined" at S1.1;
-//! cucumber 0.23 reports them but does NOT fail the binary (exit 0).
-//!
 //! Step matchers use `regex = r"..."` mode rather than Cucumber
 //! Expressions because the .feature scenarios embed brackets, quotes,
 //! and backticks that the Expression parser would treat as special
 //! tokens.
+//!
+//! Two `When` matchers per the parser-feature contract:
+//! `When I parse the source: <docstring>` (inline source via Gherkin
+//! docstring) and `When I parse the fixture <path>` (file-backed
+//! source). Extensions to the .feature scenarios add rows that match
+//! one of those two `When` shapes; the matcher surface stays fixed.
 
 // Cucumber-rs step functions naturally take `String` params (the
 // regex capture API yields owned data) and use `match { _ => panic!() }`
@@ -57,30 +57,28 @@ fn given_a_syn_test_parser(w: &mut World) {
 
 // ─── When ─────────────────────────────────────────────────────────
 //
-// Per the Reusable Reference: two `When` matchers ONLY in the final
-// state. S1.1 ships ONLY the `I parse the source:` matcher (scenario
-// 1 needs it); the `I parse the fixture <path>` matcher lands in
-// S2.3 when the fixture files materialize. Until then, scenarios
-// using the fixture matcher report "step undefined" and cucumber
-// 0.23 exits 0 on those (no false-positive failures from missing
-// fixtures during Wave 2 development).
+// Two `When` matchers per the parser-feature step-matcher convention:
+// `I parse the source: <docstring>` (inline source) and
+// `I parse the fixture <path>` (file-backed source). Extensions to
+// the .feature contract add rows, not matchers.
 
 #[when(regex = r"^I parse the source:$")]
 fn when_i_parse_the_source(w: &mut World, step: &cucumber::gherkin::Step) {
     let parser = w.parser.as_ref().expect("Given step seeds the parser");
     // The docstring body is the inline source. cucumber-rs makes it
     // available via `step.docstring()`. Empty / absent docstring
-    // collapses to empty source — exactly what scenario 1 needs.
+    // collapses to empty source — exactly what the empty-source
+    // scenario needs.
     let source = step.docstring().cloned().unwrap_or_default();
     w.result = Some(parser.parse_test_source(&source, &FilePath::new("scenario.rs")));
 }
 
-// S2.3 — the deferred `When I parse the fixture <path>` matcher
-// lands now that the runner-shell fixture corpus exists. Regex
-// captures the path; file is read crate-relative via
-// `CARGO_MANIFEST_DIR`. Per the Reusable Reference convention this
-// is the SECOND and FINAL `When` matcher — Wave 2+ sessions extend
-// the .feature rows, not the matcher surface.
+// `When I parse the fixture <path>` — file-backed source variant.
+// Regex captures the crate-relative path; file is read via
+// `CARGO_MANIFEST_DIR`. This is the SECOND of exactly two `When`
+// matchers per the parser-feature step-matcher convention
+// (`I parse the source: <docstring>` is the inline-source variant);
+// extensions to the .feature contract add rows, not matchers.
 #[when(regex = r"^I parse the fixture (.+)$")]
 fn when_i_parse_the_fixture(w: &mut World, fixture_path: String) {
     let parser = w.parser.as_ref().expect("Given step seeds the parser");
@@ -90,7 +88,7 @@ fn when_i_parse_the_fixture(w: &mut World, fixture_path: String) {
     w.result = Some(parser.parse_test_source(&source, &FilePath::new(abs)));
 }
 
-// ─── Then (scenario 1 only — Wave 2 extends) ────────────────────────
+// ─── Then matchers ──────────────────────────────────────────────────
 
 #[then(regex = r"^parsing succeeds$")]
 fn then_parsing_succeeds(w: &mut World) {
@@ -142,7 +140,7 @@ fn then_parsing_fails_with_syntax(w: &mut World) {
     }
 }
 
-// ─── Per-test inspection helpers (S2.1+ scenarios) ──────────────────
+// ─── Per-test inspection helpers ────────────────────────────────────
 
 /// Find the `ParsedTest` whose `qualified_name` matches `name`.
 /// Panics with a list of available names if not found, so cucumber
@@ -183,12 +181,13 @@ fn then_test_exists(w: &mut World, name: String) {
 fn then_test_has_attribute(w: &mut World, test_name: String, attr_name: String) {
     let test = find_test(assert_ok(w), &test_name);
     let names: Vec<&str> = test.attributes.iter().map(|a| a.name.as_str()).collect();
-    // Leaf-segment convention (pinned in S0.1): tokio::test → "test",
-    // so the scenario's `#[tokio::test]` row expects "test" not
-    // "tokio::test". But the Examples table in parser.feature uses
-    // the full path string ("tokio::test") because that's what's
-    // immediately readable. We accept either: leaf match OR full path
-    // match against the user-provided attr.
+    // Leaf-segment convention: tokio::test → "test", so the
+    // scenario's `#[tokio::test]` row stores "test" in
+    // `ParsedAttribute::name`. The Examples table in parser.feature
+    // uses the full path string ("tokio::test") because that's what's
+    // immediately readable; we accept either by extracting the leaf
+    // from the user-provided attr and comparing against the stored
+    // names list.
     let attr_leaf = attr_name.rsplit("::").next().unwrap_or(&attr_name);
     assert!(
         names.contains(&attr_leaf),
@@ -232,7 +231,7 @@ fn then_test_has_n_opt_outs(w: &mut World, name: String, expected: usize) {
     );
 }
 
-// ─── S2.2 — explicit assertion + implicit-source counts ─────────────
+// ─── Explicit assertion + implicit-source counts ────────────────────
 
 #[then(regex = r#"^test "([^"]+)" has (\d+) explicit assertions?$"#)]
 fn then_test_has_n_explicit_assertions(w: &mut World, name: String, expected: usize) {
@@ -301,16 +300,13 @@ fn then_test_has_implicit_assertion_source(w: &mut World, test_name: String, var
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     // `filter_run_and_exit` ensures the exit code propagates correctly
-    // (per the cucumber-rs standards/testing rule that lands with the
-    // file-walker pipeline).
+    // (per the cucumber-rs standards/testing rule documented in
+    // ops/standards/testing/cucumber-rs.md).
     //
-    // S1.1 filter: skip scenarios tagged `@wip` — those need Wave 2
-    // session support that hasn't landed yet. Each Wave 2 session
-    // (S2.1 → S2.4) removes the `@wip` tag from the scenarios it
-    // unlocks; the rest stay skipped. This keeps CI logs clean
-    // during Wave 2 instead of showing N failing scenarios while the
-    // walker grows incrementally. The `@wip` tag is removed entirely
-    // (per scenario) as each session lands.
+    // `not @wip` filter retained as future-facing scaffolding for any
+    // later incremental-landing PR (the parser file currently has
+    // zero `@wip` tags; see the historical-note comment in
+    // `tests/features/parser.feature`).
     World::cucumber()
         .filter_run_and_exit("tests/features", |_, _, sc| {
             !sc.tags.iter().any(|t| t == "wip")

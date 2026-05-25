@@ -39,15 +39,10 @@ Feature: scrap4rs syn-based test parser — TestParserPort contract
       """
     Then parsing fails with a ParseError::Syntax
 
-  # Scenarios below are tagged `@wip` and skipped until the
-  # implementing session lands their support. The tag is removed
-  # scenario-by-scenario as each Wave 2 / 3 session unlocks it:
-  #   @wave2-s2-1  → Wave 2 / S2.1 (top-level walker + attributes)
-  #   @wave2-s2-2  → Wave 2 / S2.2 (explicit assertion macros)
-  #   @wave2-s2-3  → Wave 2 / S2.3 (macro-form implicit sources)
-  #   @wave2-s2-4  → Wave 2 / S2.4 (non-macro implicit + should_panic)
-  # The cucumber harness filters `@wip` out (`not @wip`); CI logs
-  # stay clean during Wave 2 instead of showing N failing scenarios.
+  # Historical note: scrap-rs#12 used `@wip` tags during incremental
+  # landing; final state has zero `@wip`-tagged scenarios. The
+  # cucumber harness retains the `not @wip` filter as future-facing
+  # scaffolding for any later incremental-landing PR.
 
   Scenario: A bare #[test] fn yields one parsed test with zero assertions
     When I parse the source:

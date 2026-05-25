@@ -83,8 +83,10 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
   shape; the column-deferral exclusion is tracked by scrap-rs#17
   (SARIF reporter — the column-aware consumer).
 - Property tests at `crates/scrap4rs/tests/parser_props.rs`
-  (scrap-rs#12 S3.1) — three invariants pinned over a hand-rolled
-  `valid_test_source_strategy` (256 cases each per `PROPTEST_CASES`):
+  (scrap-rs#12) — three invariants pinned over a hand-rolled
+  `valid_test_source_strategy` (256 cases — pinned via
+  `ProptestConfig::with_cases(256)` so future proptest default drift
+  cannot silently weaken the invariant strength):
   - `proptest_no_panic_on_parse_file_able_source` — for any strategy
     output, the parser returns `Ok(_)` and never panics.
   - `proptest_idempotent_reparse` — parsing the same source twice

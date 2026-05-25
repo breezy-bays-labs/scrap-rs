@@ -5,9 +5,10 @@
 //! Lives in the parser module tree (depends on `syn`); the domain
 //! crate stays AST-pure.
 //!
-//! S2.2 ships `compose_macro_path_string`. S2.4 will add
-//! `compose_expr_path_string` (the symmetric helper for
-//! `Expr::Path` in `visit_expr_call`).
+//! Surface: `compose_macro_path_string`. Used by `visit_macro` (the
+//! recognised macro's `mac.path`) and `visit_expr_call` (the function
+//! call's `Expr::Path` `.func`) — both consume `syn::Path` and need
+//! the same whitespace-free `::`-joined projection.
 
 use syn::Path;
 
@@ -20,12 +21,12 @@ use syn::Path;
 /// silently breaks the exact-string lookups in
 /// `scrap_core::domain::assertion_sources::recognise()`. The
 /// hand-rolled `iter().map().join("::")` shape preserved here is the
-/// load-bearing convention (per scrap-rs#12 S2.2 plan revision
-/// item 12).
+/// load-bearing convention.
 ///
-/// Used by both:
-/// - `visit_macro` (S2.2 + S2.3) — `mac.path` projection
-/// - (S2.4) `compose_expr_path_string` analog for function calls
+/// Used by:
+/// - `BodyVisitor::visit_macro` — `mac.path` projection
+/// - `BodyVisitor::visit_expr_call` — `Expr::Path` projection for
+///   function-call implicit sources
 pub(crate) fn compose_macro_path_string(path: &Path) -> String {
     path.segments
         .iter()

@@ -2,13 +2,9 @@
 //!
 //! Discovers tests by overriding `visit_item_mod` (to maintain the
 //! qualified-name path stack) and `visit_item_fn` (to project each
-//! `#[test]`-attributed fn into a `ParsedTest`). The body-walker
-//! (`BodyVisitor`, lands at S2.2) is driven inside `extract_parsed_test`.
-//!
-//! S1.1 shipped the skeleton (empty Visit overrides + seed/drain
-//! pair). S2.1 wires up `visit_item_mod` and `visit_item_fn`. Wave 2
-//! sessions S2.2 → S2.4 fill in the body walker the orchestrator
-//! drives.
+//! `#[test]`-attributed fn into a `ParsedTest`). Per-test body
+//! inspection is delegated to `super::body::BodyVisitor`, driven
+//! from `extract_parsed_test` in `parser/mod.rs`.
 
 use scrap_core::domain::parsed::{ParseDiagnostic, ParsedTest, ParsedTestFile};
 use scrap_core::domain::types::FilePath;
@@ -79,9 +75,8 @@ impl<'ast> Visit<'ast> for TestVisitor {
         }
         // Deliberately NOT calling `visit::visit_item_fn(self, node)`
         // — nested fns inside a test body are not themselves tests at
-        // v0.1. (S2.2 + downstream sessions revisit when body-walker
-        // recursion lands; the no-recurse choice for visit_item_fn
-        // here is independent of the visit_macro no-recurse choice
-        // documented in body.rs.)
+        // v0.1 (per kickstart plan §11.4). The no-recurse choice
+        // here is independent of the `visit_macro` no-recurse choice
+        // documented in `body.rs`.
     }
 }
