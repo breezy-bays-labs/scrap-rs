@@ -15,6 +15,11 @@
 
 #![warn(missing_docs)]
 
+// VERIFY — DO NOT MERGE. Deliberately violates parser-confinement to
+// confirm the CI gate fires. See scrap-rs#52 verification protocol.
+#[allow(unused_imports)]
+use syn::Item;
+
 pub use scrap_core::{adapters, cli, core, detectors, domain, ports};
 
 pub mod parser;
