@@ -14,6 +14,15 @@ env:
   CARGO_TARGET_DIR: target
   CARGO_TERM_COLOR: always
 
+# Workflow-level least-privilege default. Every job inherits
+# `contents: read` unless it explicitly overrides; the
+# `excessive-permissions` zizmor audit fails any job missing a
+# scoped `permissions:` block. See AGENTS.md "Supply-chain
+# hygiene" Rule 8. All 9 jobs in this workflow are read-only;
+# no per-job overrides are needed today.
+permissions:
+  contents: read
+
 # Workflow-level timeout. Per-job 15 min ceiling guards against a wedged
 # runner draining minutes overnight; current jobs complete in <2 min so
 # this is a generous backstop, not a tight bound.
@@ -27,8 +36,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # tracks @stable branch
       - run: cargo fmt --all --check
 
   clippy:
@@ -36,9 +47,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # tracks @stable branch
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: scrap-rs
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -59,13 +72,15 @@ jobs:
           - os: macos-15-intel
             name: macos-x86
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # tracks @stable branch
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: scrap-rs
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
         with:
           tool: cargo-nextest@0.9
       # cucumber-rs `harness = false` binaries don't implement libtest's
@@ -84,18 +99,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # tracks @stable branch
         with:
           components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: scrap-rs
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
         with:
           tool: cargo-nextest@0.9
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
         with:
           tool: cargo-llvm-cov@0.6
       # Threshold rationale: domain-only achieves >95% line coverage
@@ -118,7 +135,7 @@ jobs:
           cargo llvm-cov --no-report nextest --workspace --locked -E 'not binary(cucumber)'
           cargo llvm-cov --no-report test -p scrap-core --test cucumber --locked
           cargo llvm-cov report --lcov --output-path lcov.info --fail-under-lines 85
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: lcov
           path: lcov.info
@@ -129,9 +146,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.88
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@98e1b82157cd469e843cb7f524c1313b4ad9492c # tracks @1.88 branch
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: scrap-rs-msrv
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -142,7 +161,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       # SHA-pinned: cargo-deny is the supply-chain gate itself, so a
       # tag-poisoning attack on the action would silently disable every
       # other supply-chain check. Tag v2 → 91bf2b6 (verified via
@@ -167,7 +188,9 @@ jobs:
     # tool: the rule is "no AST-library imports inside
     # crates/scrap-core/src/," and grep enforces exactly that.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Reject AST-library imports in scrap-core
         # Static pattern, no untrusted-input interpolation. Regex notes:
         #   - Matches both `use` and `extern crate` forms.
@@ -192,13 +215,49 @@ jobs:
     env:
       RUSTDOCFLAGS: -D warnings
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # tracks @stable branch
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: scrap-rs
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo doc --workspace --no-deps --document-private-items --locked
+
+  zizmor:
+    # Mechanical enforcement of the SHA-pin + workflow-security policy.
+    # Runs `zizmor` (https://woodruffw.github.io/zizmor/) over every
+    # workflow + composite action. The `unpinned-uses` audit is the
+    # primary gate — any new floating-tag `uses:` reference (in a
+    # workflow OR a composite action) fails CI here. Other zizmor
+    # audits (template-injection, excessive-permissions, artipacked,
+    # cache-poisoning, etc.) ride along as additional supply-chain
+    # hygiene checks at no marginal cost. Dedicated job
+    # (parallelizable, fail-fast) rather than chained into ast-purity
+    # / cargo-deny so a supply-chain regression surfaces without
+    # waiting on the Rust toolchain. zizmor itself is installed via
+    # `pipx run` from the public Python registry — no third-party
+    # action wrapper to pin (the wrapper itself would just be another
+    # `uses:` reference to keep fresh).
+    #
+    # See AGENTS.md "Supply-chain hygiene" for the convention this
+    # job enforces.
+    name: zizmor (workflow security audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Run zizmor on .github/
+        # `pipx run` fetches a pinned-by-PyPI build into a transient
+        # venv; the `>=1.5,<2` constraint locks the audit ruleset to
+        # the 1.x major so a zizmor release tightening rules doesn't
+        # flip CI red between PRs. Bumping the constraint is a manual
+        # edit (no Dependabot ecosystem covers this invocation form);
+        # the major-version cap means 2.x lands via human-reviewed PR.
+        run: pipx run 'zizmor>=1.5,<2' .github/
 
   # cargo-public-api (semver-style public API gate) and cargo-mutants
   # (mutation testing) are deliberately deferred. cargo-public-api lands
