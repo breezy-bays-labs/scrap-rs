@@ -45,9 +45,15 @@ updates:
     # ecosystems with semver semantics like npm/cargo/pip).
     cooldown:
       default-days: 7
+    # Conventional-commit scope discipline: the `prefix` field IS the
+    # full prefix Dependabot writes, including any parenthesized scope.
+    # `include: "scope"` would append the ecosystem name as the scope
+    # (producing `ci(github_actions): bump foo/bar`), which contradicts
+    # AGENTS.md "Supply-chain hygiene" Rule 5 (`ci(deps): …` is the
+    # convention for github-actions bumps). Embedding `(deps)` in
+    # `prefix` and omitting `include` produces the desired form.
     commit-message:
-      prefix: "ci"
-      include: "scope"
+      prefix: "ci(deps)"
     labels:
       - "type:chore"
       - "priority:soon"
@@ -82,9 +88,15 @@ updates:
     # practice.
     cooldown:
       default-days: 7
+    # Same convention as the github-actions block above: `prefix`
+    # carries the full conventional-commit prefix including the
+    # `(deps)` scope; `include: "scope"` would tack on `cargo` as the
+    # scope and yield `chore(cargo): …`, which contradicts AGENTS.md
+    # "Supply-chain hygiene" Rule 5 (`chore(deps): …` is the
+    # convention for cargo bumps; `chore:` covers non-source
+    # maintenance in this workspace).
     commit-message:
-      prefix: "chore"
-      include: "scope"
+      prefix: "chore(deps)"
     labels:
       - "type:chore"
       - "priority:soon"
