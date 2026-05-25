@@ -81,6 +81,119 @@ use serde::{Deserialize, Serialize};
 use crate::domain::opt_outs::OptOut;
 use crate::domain::smell::SmellCategory;
 
+// ────────────────────────────────────────────────────────────────────────
+// Error enum + diagnostic helpers
+// ────────────────────────────────────────────────────────────────────────
+
+/// Errors produced by [`load_config`] and [`discover_config`].
+///
+/// Fresh enum, NOT a wrap of `crate::ports::source::SourceError` — the
+/// config loader is a different port boundary from the file walker
+/// (per shaping D-LOCK-7). `Io` here covers config-file read failures
+/// and `discover_config` permission errors; `Parse` covers toml
+/// deserialization; `InvalidGlob` carries `<file>:<line>` context via
+/// `toml::Spanned` (subsumes scrap-rs#34); `InvalidValue` is the
+/// post-parse validator's catch-all for semantic-but-not-syntactic
+/// errors (`line_threshold` on the wrong smell, `penalty = 0`, empty
+/// exclude patterns, etc.).
+///
+/// `#[non_exhaustive]` per ADR-nested-json-envelope's enum discipline:
+/// consumers must use a `_` arm so new variants don't break callers
+/// pattern-matching against `ConfigError`. New variants land additively
+/// without a `schema_version` bump.
+#[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    /// I/O failure reading the config file or walking ancestors during
+    /// [`discover_config`] (permission-denied, non-NotFound).
+    #[error("failed to read config file {}", path.display())]
+    Io {
+        /// Path the loader was visiting when the error fired.
+        path: PathBuf,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// TOML deserialization failure — syntactically invalid TOML or a
+    /// field that violates `deny_unknown_fields` / type expectations
+    /// (`enabled = "true"` instead of `enabled = true`, unknown
+    /// top-level key, etc.).
+    #[error("failed to parse config file {}", path.display())]
+    Parse {
+        /// Path the loader was reading.
+        path: PathBuf,
+        /// Underlying `toml::de::Error`.
+        #[source]
+        source: toml::de::Error,
+    },
+    /// A configured glob (top-level `exclude` or per-override `match`)
+    /// failed to compile under `globset::Glob::new`. Carries the source
+    /// `<file>:<line>` from `toml::Spanned` (subsumes scrap-rs#34's
+    /// `<file>:<line>` context wrap).
+    #[error("invalid glob at {}:{}: {pattern}", file.display(), line)]
+    InvalidGlob {
+        /// Source file path.
+        file: PathBuf,
+        /// 1-based line number where the offending pattern starts.
+        line: u32,
+        /// The offending raw glob string.
+        pattern: String,
+        /// Underlying globset error.
+        #[source]
+        source: globset::Error,
+    },
+    /// Semantic validation failure surfaced by `validate_raw_config`
+    /// — `line_threshold` set on a smell other than `LargeExample`,
+    /// `penalty = 0` (silently neuters the detector), empty exclude
+    /// pattern (`globset` accepts silently and the walker rewrites to
+    /// `**/`, the opposite of caller intent), etc.
+    ///
+    /// `line` may be 0 for errors on non-Spanned fields. Line resolution
+    /// for `penalty = 0` etc. is tracked-as-followup at scrap-rs#64.
+    #[error("invalid value at {}:{}: {message}", file.display(), line)]
+    InvalidValue {
+        /// Source file path.
+        file: PathBuf,
+        /// 1-based line number; `0` is the placeholder for errors on
+        /// non-Spanned fields (tracked: scrap-rs#64).
+        line: u32,
+        /// Human-readable error message.
+        message: String,
+    },
+}
+
+/// Translate a byte offset into a 1-based line number for diagnostic
+/// messages.
+///
+/// `offset` is typically the `.start` of a [`toml::Spanned<T>::span`].
+/// Counting walks `\n` bytes in `source[..offset.min(source.len())]`
+/// (the `min` clip guards against defensive out-of-bounds offsets that
+/// would otherwise slice-panic — Spanned shouldn't produce them but
+/// the helper stays total either way).
+///
+/// Returns `u32::MAX` if the file is so large its line count exceeds
+/// `u32::MAX` (a pathological case; the diagnostic still displays
+/// something usable). The `u32::try_from(...).unwrap_or(u32::MAX)`
+/// idiom at the single return point replaces saturating arithmetic
+/// threaded through the loop (advisory #12) — same semantics, less
+/// custom math.
+///
+/// # Panics
+///
+/// Never panics; out-of-bounds offsets saturate to the source's last
+/// line, and the line count saturates to `u32::MAX` for impossibly
+/// large inputs.
+// W3.1 wires this into validate_raw_config. Until W3.1 lands, only
+// the W2.1 unit tests use it — `#[allow(dead_code)]` quiets the lint
+// for the single-wave window where the loader isn't yet built.
+#[allow(dead_code)]
+pub(crate) fn byte_offset_to_line(source: &str, offset: usize) -> u32 {
+    let clipped = offset.min(source.len());
+    let prefix = &source[..clipped];
+    let newlines = prefix.bytes().filter(|&b| b == b'\n').count();
+    u32::try_from(newlines.saturating_add(1)).unwrap_or(u32::MAX)
+}
+
 /// Project-level config schema parsed from `<adapter>.toml`.
 ///
 /// Plain Old Data per `adr-port-surface-and-domain-conventions` D8 —
@@ -399,5 +512,76 @@ penalty = 10
             reparsed.opt_outs.honor,
             Some(vec![OptOut::NoAsserts, OptOut::NoOp]),
         );
+    }
+
+    // ── W2.1: byte_offset_to_line + ConfigError Display tests ─────────
+
+    #[test]
+    fn byte_offset_to_line_empty_source_returns_line_one() {
+        assert_eq!(byte_offset_to_line("", 0), 1);
+    }
+
+    #[test]
+    fn byte_offset_to_line_no_newlines_returns_line_one() {
+        let src = "key = value";
+        assert_eq!(byte_offset_to_line(src, 0), 1);
+        assert_eq!(byte_offset_to_line(src, 5), 1);
+        assert_eq!(byte_offset_to_line(src, src.len()), 1);
+    }
+
+    #[test]
+    fn byte_offset_to_line_two_line_source() {
+        // "a\nb" — byte 0 is line 1 ('a'); byte 2 is line 2 ('b').
+        let src = "a\nb";
+        assert_eq!(byte_offset_to_line(src, 0), 1);
+        assert_eq!(
+            byte_offset_to_line(src, 1),
+            1,
+            "offset on the newline itself stays on the prior line"
+        );
+        assert_eq!(byte_offset_to_line(src, 2), 2);
+    }
+
+    #[test]
+    fn byte_offset_to_line_three_line_source() {
+        // "a\nb\nc" — byte 4 is line 3 ('c').
+        let src = "a\nb\nc";
+        assert_eq!(byte_offset_to_line(src, 4), 3);
+    }
+
+    #[test]
+    fn byte_offset_to_line_out_of_bounds_offset_saturates_to_last_line() {
+        // Defensive — shouldn't fire in practice (Spanned bounds are
+        // honest) but the helper stays total either way.
+        let src = "a\nb\nc";
+        assert_eq!(byte_offset_to_line(src, 999), 3);
+    }
+
+    #[test]
+    fn config_error_io_displays_path_and_preserves_source() {
+        use std::error::Error;
+        let err = ConfigError::Io {
+            path: PathBuf::from("test-adapter.toml"),
+            source: std::io::Error::other("boom"),
+        };
+        let display = err.to_string();
+        assert!(display.contains("test-adapter.toml"), "got: {display}");
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn config_error_invalid_glob_displays_file_line_and_pattern() {
+        use std::error::Error;
+        let globset_err = globset::Glob::new("[unclosed").unwrap_err();
+        let err = ConfigError::InvalidGlob {
+            file: PathBuf::from("test-adapter.toml"),
+            line: 5,
+            pattern: "[unclosed".to_string(),
+            source: globset_err,
+        };
+        let display = err.to_string();
+        assert!(display.contains("test-adapter.toml:5"), "got: {display}");
+        assert!(display.contains("[unclosed"), "got: {display}");
+        assert!(err.source().is_some());
     }
 }
