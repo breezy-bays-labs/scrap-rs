@@ -1,0 +1,21 @@
+---
+source: crates/scrap4rs/tests/parser_snapshots.rs
+assertion_line: 57
+expression: file
+---
+path: tests/fixtures/true_positives/zero_assertion.rs
+tests:
+  - identity:
+      file_path: tests/fixtures/true_positives/zero_assertion.rs
+      qualified_name: no_assertions_at_all
+      span:
+        start_line: 9
+        end_line: 13
+    attributes:
+      - name: test
+        raw: ~
+    assertions: []
+    body_line_count: 3
+    implicit_assertion_sources: []
+    opt_outs: []
+diagnostics: []

@@ -1,0 +1,31 @@
+---
+source: crates/scrap4rs/tests/parser_snapshots.rs
+assertion_line: 63
+expression: file
+---
+path: tests/fixtures/true_positives/tautological.rs
+tests:
+  - identity:
+      file_path: tests/fixtures/true_positives/tautological.rs
+      qualified_name: assert_true_is_tautological
+      span:
+        start_line: 11
+        end_line: 15
+    attributes:
+      - name: test
+        raw: ~
+    assertions:
+      - name: assert
+        raw_args: "true"
+        span:
+          start_line: 13
+          end_line: 13
+      - name: assert_eq
+        raw_args: "1 , 1"
+        span:
+          start_line: 14
+          end_line: 14
+    body_line_count: 3
+    implicit_assertion_sources: []
+    opt_outs: []
+diagnostics: []

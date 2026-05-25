@@ -1,0 +1,14 @@
+---
+source: crates/scrap4rs/tests/parser_snapshots.rs
+assertion_line: 155
+expression: err
+---
+Syntax {
+    message: "cannot parse string into token stream",
+    span: Some(
+        Span {
+            start_line: 11,
+            end_line: 11,
+        },
+    ),
+}

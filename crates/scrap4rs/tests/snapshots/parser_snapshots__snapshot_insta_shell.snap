@@ -1,0 +1,22 @@
+---
+source: crates/scrap4rs/tests/parser_snapshots.rs
+assertion_line: 83
+expression: file
+---
+path: tests/fixtures/runner_shells/insta_shell.rs
+tests:
+  - identity:
+      file_path: tests/fixtures/runner_shells/insta_shell.rs
+      qualified_name: it
+      span:
+        start_line: 10
+        end_line: 13
+    attributes:
+      - name: test
+        raw: ~
+    assertions: []
+    body_line_count: 2
+    implicit_assertion_sources:
+      - insta
+    opt_outs: []
+diagnostics: []

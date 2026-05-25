@@ -1,0 +1,27 @@
+---
+source: crates/scrap4rs/tests/parser_snapshots.rs
+assertion_line: 90
+expression: file
+---
+path: tests/fixtures/runner_shells/pretty_assertions_shell.rs
+tests:
+  - identity:
+      file_path: tests/fixtures/runner_shells/pretty_assertions_shell.rs
+      qualified_name: it
+      span:
+        start_line: 12
+        end_line: 15
+    attributes:
+      - name: test
+        raw: ~
+    assertions:
+      - name: assert_eq
+        raw_args: "1 , 1"
+        span:
+          start_line: 14
+          end_line: 14
+    body_line_count: 2
+    implicit_assertion_sources:
+      - pretty_assertions
+    opt_outs: []
+diagnostics: []

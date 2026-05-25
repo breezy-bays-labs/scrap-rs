@@ -1,0 +1,24 @@
+---
+source: crates/scrap4rs/tests/parser_snapshots.rs
+assertion_line: 121
+expression: file
+---
+path: tests/fixtures/runner_shells/should_panic_shell.rs
+tests:
+  - identity:
+      file_path: tests/fixtures/runner_shells/should_panic_shell.rs
+      qualified_name: it
+      span:
+        start_line: 10
+        end_line: 15
+    attributes:
+      - name: test
+        raw: ~
+      - name: should_panic
+        raw: ~
+    assertions: []
+    body_line_count: 3
+    implicit_assertion_sources:
+      - should_panic
+    opt_outs: []
+diagnostics: []

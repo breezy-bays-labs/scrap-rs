@@ -960,7 +960,15 @@ dependencies = [
 name = "scrap4rs"
 version = "0.1.0"
 dependencies = [
+ "cucumber",
+ "insta",
+ "proc-macro2",
+ "proptest",
+ "quote",
  "scrap-core",
+ "static_assertions",
+ "syn",
+ "tokio",
 ]
 
 [[package]]

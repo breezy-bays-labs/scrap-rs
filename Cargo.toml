@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/breezy-bays-labs/scrap-rs"
 homepage = "https://github.com/breezy-bays-labs/scrap-rs"
 authors = ["Christopher Bays <cmbays@breezybayslabs.com>"]
-rust-version = "1.88"
+rust-version = "1.93"
 
 # Centralized dep versions. Front-loaded so detector PRs (P13–P17),
 # port-trait PRs (#5), and the eventual scrap4ts adapter all consume
@@ -18,7 +18,7 @@ rust-version = "1.88"
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-insta = { version = "1", features = ["json"] }
+insta = { version = "1", features = ["json", "yaml"] }
 proptest = "1"
 thiserror = "2"
 globset = "0.4"
@@ -27,7 +27,7 @@ static_assertions = "1"
 tempfile = "3"
 # `cucumber` runs the .feature behavioral contract at
 # `crates/scrap-core/tests/features/file_walker.feature`. Pin lifted
-# from earlier 0.21 ceiling now that workspace MSRV is 1.88.
+# from earlier 0.21 ceiling now that workspace MSRV is 1.93.
 cucumber = "0.23"
 # `tokio` powers the cucumber harness's async runtime
 # (cucumber 0.23 exposes only async run_and_exit). Used solely
@@ -36,7 +36,43 @@ cucumber = "0.23"
 # inside step defs, so the 2026-04-26 cucumber+parking_lot
 # deadlock vector does not apply.
 tokio = { version = "1", features = ["macros", "rt"] }
+# `syn` powers the Rust-source parser adapter in scrap4rs (lands
+# with scrap-rs#12). Confined to `crates/scrap4rs/` per
+# adr-hexagonal-layout; `scrap-core` stays AST-pure (ast-purity CI
+# grep enforces). Features: `parsing` + `full` (parse_file + item
+# / expr / stmt grammar coverage), `visit` (the Visit<'ast> trait
+# the walker implements), `extra-traits` (Debug derives for syn
+# types — helpful in tests and debugging).
+syn = { version = "2", features = ["full", "parsing", "visit", "extra-traits"] }
+# `proc-macro2` is a transitive dep of `syn`; pinned explicitly here
+# with the `span-locations` feature, which is REQUIRED for the
+# parser's span extraction. `proc_macro2::Span::start()` / `Span::end()`
+# return a meaningful `LineColumn` only under
+# `#[cfg(span_locations)]`; without this feature, every span line
+# collapses to 0 and downstream snapshots become garbage.
+# scrap4ts will inherit the same feature when it joins (v0.6+).
+proc-macro2 = { version = "1", features = ["span-locations"] }
+# `quote` provides the `ToTokens` trait used by `parser/attributes.rs`
+# (`parsed_attribute_from_syn` projects `Meta::NameValue` via
+# `value.to_token_stream().to_string()` for the `raw` field's
+# verbatim source-byte fidelity). The `quote!(...)` macro is NOT
+# used — path stringification stays hand-rolled (no whitespace
+# injection). scrap-rs#12 S1.1 plan revision item 7 was
+# over-aggressive about dropping this; restored here in S2.1.
+quote = "1"
 
-# Workspace-wide lint config lands as detectors come online.
-# scrap4ts joins this workspace when its parser adapter ships
-# (v0.6+ era — see ops kickstart plan §3 and adr-hexagonal-layout).
+# ─── Workspace lints (item 20 — lifted from per-crate #![warn(...)]) ───
+#
+# Lifted at scrap-rs#12 S1.1 so scrap-core and scrap4rs share a single
+# lint policy block and scrap4ts inherits cleanly at v0.6+ join. Each
+# crate's `Cargo.toml` adds `[lints] workspace = true` and the
+# previously-per-crate `#![warn(clippy::pedantic, clippy::cargo)]`
+# headers come out of `crates/*/src/lib.rs`.
+[workspace.lints.rust]
+# Reserved — kept as an empty namespace so scrap4ts inherits at join.
+# Future rust-lint policy lifts land here (e.g. `unsafe_code = "forbid"`
+# once the policy is workspace-wide rather than crate-by-crate).
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }

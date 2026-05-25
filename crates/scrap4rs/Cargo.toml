@@ -27,5 +27,55 @@ path = "src/main.rs"
 [dependencies]
 # Language-agnostic core — domain types, port traits, detectors,
 # reporters, CLI surface. scrap4rs adds only the Rust-specific parser
-# adapter (lands with scrap-rs#5 via syn/proc-macro2/quote).
+# adapter (lands with scrap-rs#12).
 scrap-core = { path = "../scrap-core", version = "0.1.0" }
+# `syn` is the Rust-source AST library that powers the parser adapter
+# (`crates/scrap4rs/src/parser/`). Features come from the workspace
+# pin: `parsing` + `full` + `visit` + `extra-traits`. Confined to this
+# crate per adr-hexagonal-layout.
+syn = { workspace = true }
+# `proc-macro2` is `syn`'s span/token-stream primitive layer. The
+# `span-locations` feature on the workspace pin is required for line
+# extraction in `parser/spans.rs::span_from_spanned`.
+proc-macro2 = { workspace = true }
+# `quote` exposes the `ToTokens` trait used in
+# `parser/attributes.rs::parsed_attribute_from_syn` to project
+# `Meta::NameValue` expressions to verbatim source-byte strings.
+# The `quote!(...)` macro is NOT used; path stringification is
+# hand-rolled.
+quote = { workspace = true }
+
+[dev-dependencies]
+# `insta` snapshots — per-fixture `ParsedTestFile` shape assertions
+# at `tests/parser_snapshots.rs` (lands in S2.1+).
+insta = { workspace = true }
+# `proptest` invariants — no-panic + idempotent re-parse + span
+# monotonicity at `tests/parser_props.rs` (lands in S3.1).
+proptest = { workspace = true }
+# `static_assertions` smoke at `tests/parser_surface.rs` — confirms
+# `SynTestParser: TestParserPort + Send + Sync` and `dyn TestParserPort`
+# stays NOT-Send + NOT-Sync per D11.
+static_assertions = { workspace = true }
+# `cucumber` runs the .feature behavioural contract at
+# `crates/scrap4rs/tests/features/parser.feature`. Mirrors the
+# scrap-core file-walker harness shape. `harness = false` below so
+# cucumber-rs owns the test runner end-to-end.
+cucumber = { workspace = true }
+# `tokio` powers the cucumber harness's async runtime. Used only
+# inside `tests/cucumber.rs`.
+tokio = { workspace = true }
+
+[[test]]
+name = "cucumber"
+# cucumber-rs `harness = false` because the harness's `main()` owns
+# the runner (cucumber 0.23 exposes only async `run_and_exit`).
+# CI nextest skips this binary via `-E 'not binary(cucumber)'` and
+# runs it separately via `cargo test -p scrap4rs --test cucumber`.
+harness = false
+
+[lints]
+# Inherits clippy::pedantic + clippy::cargo from the workspace
+# `[workspace.lints.clippy]` block — lifted from per-crate
+# `#![warn(...)]` headers at scrap-rs#12 S1.1 so scrap4ts can inherit
+# cleanly at v0.6+ join.
+workspace = true
