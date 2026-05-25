@@ -342,33 +342,70 @@ jobs:
         # the major-version cap means 2.x lands via human-reviewed PR.
         run: pipx run 'zizmor>=1.5,<2' .github/
 
-  crap-self:
+  scorecard:
     # Symmetric dogfood (scrap-rs#20). scrap-rs's own detectors measure
-    # *test* code for smells (V1); crap4rs measures *production* code
-    # for complexity (V2). This job runs the sibling crap4rs binary
-    # against scrap-rs's own production-code surface — see CLAUDE.md /
-    # AGENTS.md "Symmetric dogfood" rule.
+    # *test* code for smells (V1); crap-rs measures *production* code
+    # for complexity (V2). This job runs crap-rs's templated scorecard
+    # composite action against scrap-rs's production-code surface — see
+    # CLAUDE.md / AGENTS.md "Symmetric dogfood" rule.
+    #
+    # Composite action pinned by git SHA to the CAPSTONE quick-start
+    # commit (`726b805` — "templated example + README quick-start +
+    # badge + dogfood smoke", 2026-05-25). Composite actions are
+    # consumed as git refs rather than release tarballs — no release
+    # workflow needed on the crap-rs side and no `cargo binstall` step
+    # needed here. The action handles binary install + LCOV consumption
+    # + threshold gate + markdown render + HTML artifact + sticky PR
+    # comment in a single `uses:` invocation, mirroring the templated
+    # example at `crap-rs/.github/workflows/examples/crap-scorecard.yml`.
     #
     # crap4rs requires a coverage source (CRAP = cognitive complexity ×
-    # uncovered-rate), so we regenerate `lcov.info` locally with the
-    # same two-step recipe as the `coverage:` job. Regeneration rather
-    # than `needs: coverage` keeps this job fully parallel (no artifact
-    # plumbing across jobs) and mirrors mokumo's per-job pattern.
+    # uncovered-rate), so we regenerate `lcov.info` locally before
+    # invoking the action. Two-step recipe (rather than the templated
+    # example's one-line `cargo llvm-cov nextest --workspace --lcov`)
+    # mirrors the `coverage:` job above — cucumber's `harness = false`
+    # binary doesn't implement libtest's `--list --format terse`
+    # interface that nextest uses to enumerate tests, so a single-step
+    # invocation drops cucumber-exercised coverage. Without the split
+    # the BDD-tested branches of `classify_entry`, the parser body
+    # walker, etc. show 0% coverage and inflate CRAP scores.
     #
-    # `--exclude "**/tests/**"` is required, not defensive: without it,
-    # integration test files surface as false-positive CRAP exceeders
-    # because llvm-cov reports 0% coverage for test bodies (tests test
-    # other code, not themselves).
+    # `crap4rs.toml` at repo root carries the test-file exclude (the
+    # action passes `--config <path>` through to crap4rs; per-invocation
+    # `--exclude` flags are not on the action's input surface). The
+    # config file is the documented integration point for caller-side
+    # excludes — see § Inputs (`config:`) in the action README.
     #
-    # Threshold 15 = `ThresholdPreset::Default` for the cognitive metric
-    # (matches crap4rs 0.6.0 calibrated default). Pass explicitly rather
-    # than relying on the no-flag default so future crap4rs cutoff
-    # recalibration doesn't silently move the gate. `--strict` (=8) is
-    # available for promotion once detector PRs land more representative
-    # production-code surface.
-    name: crap-self (production-code complexity)
+    # Preset values (per orchestrator's prescription, mirroring the
+    # composite action README's "Quick start"):
+    # - `threshold-preset: default` resolves to cognitive=15 (matches
+    #   the prior manual gate's `--threshold 15`).
+    # - `run-mode: full` skips delta — no baseline produced; baseline-
+    #   management is a future concern when scorecard-aggregate
+    #   integration enters the roadmap.
+    # - `gate-mode: gate-on-analysis` enforces the threshold (function
+    #   above threshold → job fails). Semantic-equivalent to the prior
+    #   manual gate's exit-code dependency.
+    # - `comment-mode: sticky` posts/updates a PR-level scorecard
+    #   comment on every PR run. Requires `pull-requests: write` on
+    #   this job (the action emits a no-op-with-warning on fork-PR
+    #   token-elevation refusals — see action README § Quick start).
+    # - `html-report: true` uploads the per-language HTML report as a
+    #   workflow artifact + appends the download link to the sticky
+    #   comment. KPI tiles + file cards + dark mode out of the box.
+    # - `languages: rust` — single-language single-adapter path. scrap-rs
+    #   joins the multi-language path at v0.6+ when `scrap4ts` lands.
+    name: scrap4rs CRAP scorecard
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # `contents: read` mirrors the workflow-level default; explicit
+    # here for the same reason every other job in this file is explicit
+    # (zizmor `excessive-permissions` audit clarity). `pull-requests:
+    # write` is the additional grant the sticky-comment step needs —
+    # this is the ONLY job in the workflow that needs more than read.
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -386,14 +423,10 @@ jobs:
       - uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
         with:
           tool: cargo-llvm-cov@0.6
-      - uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
-        with:
-          tool: crap4rs@0.6.0
-      # Two-step coverage regen mirrors the `coverage:` job (cucumber's
-      # `harness = false` binary doesn't implement libtest's
-      # `--list --format terse` interface that nextest uses to enumerate
-      # tests). Without the split, nextest fails on cucumber with exit 2
-      # and we lose all coverage signal.
+      # Two-step coverage regen mirrors the `coverage:` job — see this
+      # job's block-level comment for the cucumber `harness = false`
+      # rationale. Same byte-identical recipe across jobs so a future
+      # llvm-cov upgrade only touches the two recipe blocks.
       - name: Generate coverage LCOV for crap input
         run: |
           cargo llvm-cov clean --workspace
@@ -401,16 +434,17 @@ jobs:
           cargo llvm-cov --no-report test -p scrap-core --test cucumber --locked
           cargo llvm-cov --no-report test -p scrap4rs --test cucumber --locked
           cargo llvm-cov report --lcov --output-path lcov.info
-      - name: Run crap4rs against scrap-rs production code
-        # No `--no-fail` — exit code IS the gate. A function exceeding
-        # threshold 15 fails the job; the offending function name(s) and
-        # CRAP score(s) print in stderr (crap4rs default table renderer).
-        run: |
-          crap4rs \
-            --coverage lcov.info \
-            --src crates/ \
-            --exclude "**/tests/**" \
-            --threshold 15
+      - uses: breezy-bays-labs/crap-rs/.github/actions/scorecard@726b8050cba87860af221c78516d49ff7f5db5fe # crap-rs CAPSTONE quick-start template
+        with:
+          coverage: lcov.info
+          src: crates/
+          config: crap4rs.toml
+          threshold-preset: default
+          run-mode: full
+          gate-mode: gate-on-analysis
+          comment-mode: sticky
+          html-report: true
+          languages: rust
 
   # cargo-public-api (semver-style public API gate) and cargo-mutants
   # (mutation testing) are deliberately deferred. cargo-public-api lands

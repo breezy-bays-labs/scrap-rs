@@ -1,0 +1,36 @@
+# crap4rs configuration for scrap-rs production-code complexity gating.
+#
+# Consumed by the `scorecard` CI job
+# (`.github/workflows/ci.yml`) via the `breezy-bays-labs/crap-rs`
+# composite action's `config:` input. The composite action passes
+# `--config <path>` through to the underlying `crap4rs` binary; the
+# binary merges this file with CLI flags (CLI wins on conflict).
+#
+# Threshold preset:
+#   strict (8)  — high-quality libraries, safety-critical code
+#   default (15) — typical projects (balanced); matches crap4rs 0.6.0
+#                  calibrated default for the cognitive metric
+#   lenient (25) — legacy or transitional code
+#
+# Pinned to `default` (15) for scrap-rs's current production-code
+# surface (254 functions; max CRAP 13.0). Promote to `strict` (8)
+# once detector PRs land more representative complexity and the
+# top-quintile carries comfortable margin under the tighter cutoff.
+preset = "default"
+
+# Exclude integration test files from production-code analysis.
+#
+# Required (not defensive): without this exclusion, crap4rs's `--src
+# crates/` walker discovers `.rs` files under `crates/*/tests/**` and
+# cross-references them against the LCOV report — but llvm-cov records
+# 0% coverage for test bodies (tests test other code, not themselves),
+# so each test function surfaces as a high-CRAP false-positive. Empty
+# CRAP signal from the production-code dogfood is exactly what we
+# need this gate to surface.
+#
+# `tests/fixtures/error_recovery/**` contains intentionally-malformed
+# Rust files used as parser-resilience fixtures; the broader
+# `**/tests/**` pattern subsumes them.
+exclude = [
+    "**/tests/**",
+]
