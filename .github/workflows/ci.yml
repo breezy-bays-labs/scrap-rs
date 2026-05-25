@@ -342,10 +342,80 @@ jobs:
         # the major-version cap means 2.x lands via human-reviewed PR.
         run: pipx run 'zizmor>=1.5,<2' .github/
 
+  crap-self:
+    # Symmetric dogfood (scrap-rs#20). scrap-rs's own detectors measure
+    # *test* code for smells (V1); crap4rs measures *production* code
+    # for complexity (V2). This job runs the sibling crap4rs binary
+    # against scrap-rs's own production-code surface — see CLAUDE.md /
+    # AGENTS.md "Symmetric dogfood" rule.
+    #
+    # crap4rs requires a coverage source (CRAP = cognitive complexity ×
+    # uncovered-rate), so we regenerate `lcov.info` locally with the
+    # same two-step recipe as the `coverage:` job. Regeneration rather
+    # than `needs: coverage` keeps this job fully parallel (no artifact
+    # plumbing across jobs) and mirrors mokumo's per-job pattern.
+    #
+    # `--exclude "**/tests/**"` is required, not defensive: without it,
+    # integration test files surface as false-positive CRAP exceeders
+    # because llvm-cov reports 0% coverage for test bodies (tests test
+    # other code, not themselves).
+    #
+    # Threshold 15 = `ThresholdPreset::Default` for the cognitive metric
+    # (matches crap4rs 0.6.0 calibrated default). Pass explicitly rather
+    # than relying on the no-flag default so future crap4rs cutoff
+    # recalibration doesn't silently move the gate. `--strict` (=8) is
+    # available for promotion once detector PRs land more representative
+    # production-code surface.
+    name: crap-self (production-code complexity)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # tracks @stable branch
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: scrap-rs
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
+        with:
+          tool: cargo-nextest@0.9
+      - uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
+        with:
+          tool: cargo-llvm-cov@0.6
+      - uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
+        with:
+          tool: crap4rs@0.6.0
+      # Two-step coverage regen mirrors the `coverage:` job (cucumber's
+      # `harness = false` binary doesn't implement libtest's
+      # `--list --format terse` interface that nextest uses to enumerate
+      # tests). Without the split, nextest fails on cucumber with exit 2
+      # and we lose all coverage signal.
+      - name: Generate coverage LCOV for crap input
+        run: |
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov --no-report nextest --workspace --locked -E 'not binary(cucumber)'
+          cargo llvm-cov --no-report test -p scrap-core --test cucumber --locked
+          cargo llvm-cov --no-report test -p scrap4rs --test cucumber --locked
+          cargo llvm-cov report --lcov --output-path lcov.info
+      - name: Run crap4rs against scrap-rs production code
+        # No `--no-fail` — exit code IS the gate. A function exceeding
+        # threshold 15 fails the job; the offending function name(s) and
+        # CRAP score(s) print in stderr (crap4rs default table renderer).
+        run: |
+          crap4rs \
+            --coverage lcov.info \
+            --src crates/ \
+            --exclude "**/tests/**" \
+            --threshold 15
+
   # cargo-public-api (semver-style public API gate) and cargo-mutants
   # (mutation testing) are deliberately deferred. cargo-public-api lands
   # at v1.0 when semver gating begins; cargo-mutants lands with the
   # first detector PR (P13) when mutating real logic earns its keep.
-  # Self-check, scorecard-smoke, and crap-self land as detectors come
-  # online (sub-issues P24/P25). They require a non-trivial scrap4rs
-  # binary to operate against, so they are deferred from the bootstrap.
+  # Self-check and scorecard-smoke land as detectors come online
+  # (sub-issues P24/P25). They require a non-trivial scrap4rs binary to
+  # operate against, so they are deferred from the bootstrap.

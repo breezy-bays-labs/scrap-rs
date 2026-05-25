@@ -14,6 +14,18 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
 
 ### Added
 
+- CI: `crap-self` job in `.github/workflows/ci.yml` — runs `crap4rs`
+  v0.6.0 against scrap-rs production code (`crates/*/src/**`, excluding
+  `tests/**`) at the calibrated cognitive-default threshold 15.
+  Symmetric to the existing test-smell detection: scrap-rs measures
+  *test* code for smells (V1) via its own detectors; crap4rs measures
+  *production* code for complexity (V2). Pulls the `crap4rs` binary
+  via `taiki-e/install-action` (cargo-binstall under the hood), then
+  regenerates LCOV inline via the same two-step `cargo llvm-cov`
+  recipe used by the `coverage:` job. Threshold passed explicitly so
+  future crap4rs cutoff recalibration doesn't silently move the gate;
+  `--strict` (=8) available for promotion once detector PRs land more
+  production-code surface. Closes scrap-rs#20.
 - CI: `zizmor` workflow-security audit job in `.github/workflows/ci.yml`
   (mirrors crap4rs precedent). Runs `pipx run 'zizmor>=1.5,<2'
   .github/` on every PR + push to main. `unpinned-uses` is the
@@ -351,6 +363,14 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
 
 ### Changed
 
+- `FsWalker::discover_test_files` (`crates/scrap-core/src/adapters/source/fs.rs`)
+  decomposed into a `Decision` enum + `classify_entry`, `preflight_root`,
+  and `FsWalker::build_walker` helpers (cognitive complexity 30 → 8 on
+  the method; new helpers all ≤8). Pure refactor — no behaviour change;
+  the existing 16-test unit suite + 217-line `file_walker.feature` BDD
+  harness exercise every branch end-to-end. Unblocked the new
+  `crap-self` gate at the calibrated cognitive-default threshold 15.
+  Refs scrap-rs#20.
 - Workspace lint policy lifted from per-crate
   `#![warn(clippy::pedantic, clippy::cargo)]` headers in
   `crates/{scrap-core,scrap4rs}/src/lib.rs` to
