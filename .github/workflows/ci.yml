@@ -216,6 +216,52 @@ jobs:
           fi
           echo "scrap-core is AST-library-pure"
 
+  parser-confinement:
+    name: scrap4rs adapter parser-confinement
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The hexagonal layering ADR
+    # (`ops/decisions/scrap4rs/adr-hexagonal-layout.md`) enforces the
+    # boundary at the *adapter* level too — `syn` / `quote` /
+    # `proc_macro2` belong to the Rust-source parser adapter and must
+    # not leak into other modules of `scrap4rs` (CLI surface, future
+    # re-exports, etc.). The existing `ast-purity` job keeps these out
+    # of `scrap-core`; this job keeps them confined to
+    # `crates/scrap4rs/src/parser/` within the adapter crate itself.
+    # Preventive structural enforcement before scrap-rs#21 (CLI
+    # clap-derive) adds pressure on the adapter boundary.
+    #
+    # Why grep, not module visibility: `mod parser;` already keeps
+    # parser internals private, but nothing prevents a sibling module
+    # from re-importing `syn` at top level. The rule is "no AST-library
+    # imports outside crates/scrap4rs/src/parser/" — grep enforces
+    # exactly that, with the same regex shape as ast-purity for
+    # diff-by-eye review.
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Reject AST-library imports outside scrap4rs/src/parser/
+        # Static pattern, no untrusted-input interpolation. Regex token
+        # list (syn|quote|proc_macro2?|tree_sitter|swc|oxc) is byte-
+        # identical to ast-purity for symmetric review. Path exclusion
+        # is a post-grep `grep -v` on the path prefix (rather than
+        # `--exclude-dir=parser`) so it's anchored to
+        # `crates/scrap4rs/src/parser/` specifically — a hypothetical
+        # future non-AST `parser` subdir under another path would not
+        # accidentally inherit the exception. `|| true` keeps `set -e`
+        # from tripping when grep finds zero matches (its idiomatic
+        # exit-1-on-no-match).
+        run: |
+          set -euo pipefail
+          hits=$(grep -rEn '^[[:space:]]*(use|extern[[:space:]]+crate)[[:space:]]+(::)?(syn|quote|proc_macro2?|tree_sitter|swc|oxc)([_:; ]|$)' crates/scrap4rs/src/ 2>/dev/null | grep -v '^crates/scrap4rs/src/parser/' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::AST-library imports outside crates/scrap4rs/src/parser/ — see decisions/scrap4rs/adr-hexagonal-layout.md"
+            echo "$hits"
+            exit 1
+          fi
+          echo "scrap4rs adapter is parser-confined (syn/quote/proc_macro2/tree_sitter/swc/oxc only inside parser/)"
+
   span-purity:
     name: scrap-core Span no-columns purity (v0.1 — tracked scrap-rs#17)
     runs-on: ubuntu-latest
