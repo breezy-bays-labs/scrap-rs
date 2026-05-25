@@ -25,6 +25,16 @@ globset = "0.4"
 ignore = "0.4"
 static_assertions = "1"
 tempfile = "3"
+# `toml` powers the project-level config schema loader at
+# `crates/scrap-core/src/cli/config.rs` (lands with scrap-rs#18).
+# Version 1.x ships the `toml::Spanned<T>` API the loader uses
+# to attach `<file>:<line>` context to invalid-glob errors
+# (subsumes scrap-rs#34). MSRV 1.85 ≤ workspace MSRV 1.93 —
+# compatible. `serde_spanned`'s `Spanned<T>` is re-exported as
+# `toml::Spanned` per toml 1.x convention. scrap4ts (v0.6+) will
+# inherit the same loader from scrap-core; no per-adapter dep
+# duplication.
+toml = "1"
 # `cucumber` runs the .feature behavioral contract at
 # `crates/scrap-core/tests/features/file_walker.feature`. Pin lifted
 # from earlier 0.21 ceiling now that workspace MSRV is 1.93.

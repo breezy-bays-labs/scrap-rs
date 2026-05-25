@@ -44,6 +44,12 @@ globset = { workspace = true }
 # `ignore::Error` via `#[source]` for `OverrideBuilder::build()` setup
 # failures (rare; forward-compat hatch).
 ignore = { workspace = true }
+# `toml` powers the project-level config loader at `cli/config.rs`
+# (lands with scrap-rs#18). `toml::Spanned<String>` carries byte
+# offsets used by the loader's `validate_raw_config` pass to attach
+# `<file>:<line>` context to `ConfigError::InvalidGlob` (subsumes
+# scrap-rs#34). scrap4ts (v0.6+) inherits this loader unchanged.
+toml = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
