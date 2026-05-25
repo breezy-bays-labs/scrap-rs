@@ -74,7 +74,7 @@
 //! guide; surfaced here for visibility.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -183,10 +183,6 @@ pub enum ConfigError {
 /// Never panics; out-of-bounds offsets saturate to the source's last
 /// line, and the line count saturates to `u32::MAX` for impossibly
 /// large inputs.
-// W3.1 wires this into validate_raw_config. Until W3.1 lands, only
-// the W2.1 unit tests use it — `#[allow(dead_code)]` quiets the lint
-// for the single-wave window where the loader isn't yet built.
-#[allow(dead_code)]
 pub(crate) fn byte_offset_to_line(source: &str, offset: usize) -> u32 {
     let clipped = offset.min(source.len());
     let prefix = &source[..clipped];
@@ -361,6 +357,223 @@ pub struct Override {
     /// (last match wins per smell key).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub detectors: BTreeMap<SmellCategory, DetectorConfig>,
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Loader (private `RawConfig` mirror + validation pipeline)
+// ────────────────────────────────────────────────────────────────────────
+
+/// Private deserialization mirror of [`FileConfig`] with [`toml::Spanned`]
+/// wrappers around the glob string fields.
+///
+/// The two-step pipeline (`RawConfig` → validate → `FileConfig`) lets the
+/// validator attach `<file>:<line>` context to invalid-glob errors via
+/// the `Spanned` byte-range, then strip the spans so the POD `FileConfig`
+/// stays free of `serde_spanned` types in its public surface.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawConfig {
+    #[serde(default)]
+    src: Option<PathBuf>,
+    #[serde(default)]
+    exclude: Vec<toml::Spanned<String>>,
+    #[serde(default)]
+    extensions: Option<Vec<String>>,
+    #[serde(default)]
+    opt_outs: OptOutPolicy,
+    #[serde(default)]
+    detectors: BTreeMap<SmellCategory, DetectorConfig>,
+    #[serde(default)]
+    overrides: Vec<RawOverride>,
+}
+
+/// Private deserialization mirror of [`Override`] with [`toml::Spanned`]
+/// wrappers around the `match` glob strings.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawOverride {
+    #[serde(rename = "match")]
+    r#match: Vec<toml::Spanned<String>>,
+    #[serde(default)]
+    detectors: BTreeMap<SmellCategory, DetectorConfig>,
+}
+
+/// Read and parse a TOML config file from `path`.
+///
+/// Pipeline:
+///
+/// 1. `std::fs::read_to_string(path)` — fails with [`ConfigError::Io`].
+/// 2. `toml::from_str::<RawConfig>(...)` — fails with [`ConfigError::Parse`].
+/// 3. [`validate_raw_config`] — fails with [`ConfigError::InvalidGlob`]
+///    or [`ConfigError::InvalidValue`].
+/// 4. Strip `Spanned` wrappers via `.into_inner()`; construct the POD
+///    [`FileConfig`].
+///
+/// Validation runs BEFORE the strip-and-construct step so the validator
+/// still has byte-offset access via `Spanned::span()`. Tests assert on
+/// `ConfigError` variants, not on the order of multiple-simultaneous-error
+/// firing — the validator short-circuits on the first failure.
+///
+/// # Errors
+///
+/// - [`ConfigError::Io`] — file read failure (missing file, permission denied).
+/// - [`ConfigError::Parse`] — TOML syntax error, unknown field, type mismatch.
+/// - [`ConfigError::InvalidGlob`] — exclude or override `match` glob that
+///   `globset::Glob::new` rejects. Carries `<file>:<line>` context from
+///   [`toml::Spanned`].
+/// - [`ConfigError::InvalidValue`] — semantic validation failure
+///   (`line_threshold` on a non-`LargeExample` smell; `penalty = 0`;
+///   empty exclude pattern).
+#[must_use = "the loaded config must be applied or surfaced to the user"]
+pub fn load_config(path: &Path) -> Result<FileConfig, ConfigError> {
+    let source = std::fs::read_to_string(path).map_err(|source| ConfigError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let raw: RawConfig = toml::from_str(&source).map_err(|source| ConfigError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    validate_raw_config(&raw, &source, path)?;
+
+    Ok(FileConfig {
+        src: raw.src,
+        exclude: raw
+            .exclude
+            .into_iter()
+            .map(toml::Spanned::into_inner)
+            .collect(),
+        extensions: raw.extensions,
+        opt_outs: raw.opt_outs,
+        detectors: raw.detectors,
+        overrides: raw
+            .overrides
+            .into_iter()
+            .map(|ov| Override {
+                r#match: ov
+                    .r#match
+                    .into_iter()
+                    .map(toml::Spanned::into_inner)
+                    .collect(),
+                detectors: ov.detectors,
+            })
+            .collect(),
+    })
+}
+
+/// Validate a parsed [`RawConfig`]. Runs after `toml::from_str` succeeds
+/// and before the POD [`FileConfig`] is constructed.
+///
+/// Validation order (deterministic, documented for test stability):
+///
+/// 1. Top-level `exclude` globs (in vector order).
+/// 2. Top-level `detectors` map (in `SmellCategory` Ord order — `BTreeMap`
+///    iteration is sorted by key).
+/// 3. Each `[[overrides]]` entry in document order:
+///    a. `r#match` globs (in vector order).
+///    b. The override's `detectors` map (in `SmellCategory` Ord order).
+///
+/// The validator short-circuits on the first failure. Tests that need to
+/// assert on a specific error variant should construct fixtures where
+/// that variant is the EARLIEST error per this order — otherwise the
+/// test will see a different error than expected.
+///
+/// # Errors
+///
+/// - [`ConfigError::InvalidGlob`] — `globset::Glob::new` rejects a
+///   pattern. Line attribution comes from [`toml::Spanned::span`]
+///   converted via [`byte_offset_to_line`].
+/// - [`ConfigError::InvalidValue`] — empty exclude pattern,
+///   `line_threshold` on a smell other than `LargeExample`, or
+///   `penalty = Some(0)`. `line: 0` is the placeholder for errors on
+///   non-Spanned fields (line resolution for those is tracked at
+///   scrap-rs#64).
+fn validate_raw_config(raw: &RawConfig, source: &str, path: &Path) -> Result<(), ConfigError> {
+    // 1. Top-level exclude globs (vector order).
+    validate_globs(&raw.exclude, source, path)?;
+
+    // 2. Top-level detectors map (BTreeMap iter is sorted by key).
+    for (smell, cfg) in &raw.detectors {
+        validate_detector_config(*smell, cfg, path)?;
+    }
+
+    // 3. Each override in document order.
+    for ov in &raw.overrides {
+        validate_globs(&ov.r#match, source, path)?;
+        for (smell, cfg) in &ov.detectors {
+            validate_detector_config(*smell, cfg, path)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate a slice of `Spanned<String>` globs (used for both `exclude`
+/// and per-override `match` lists).
+///
+/// Empty/whitespace-only patterns are rejected eagerly per the
+/// `FsWalker::try_new` `EmptyExcludePattern` contract — `globset`
+/// silently accepts empty strings and the override builder would rewrite
+/// them into a global `**/` whitelist that nullifies all exclude
+/// semantics (silent data deletion the caller didn't ask for).
+fn validate_globs(
+    globs: &[toml::Spanned<String>],
+    source: &str,
+    path: &Path,
+) -> Result<(), ConfigError> {
+    for spanned in globs {
+        let pattern = spanned.get_ref();
+        let line = byte_offset_to_line(source, spanned.span().start);
+        if pattern.trim().is_empty() {
+            return Err(ConfigError::InvalidValue {
+                file: path.to_path_buf(),
+                line,
+                message: "empty or whitespace-only glob pattern".to_string(),
+            });
+        }
+        if let Err(source) = globset::Glob::new(pattern) {
+            return Err(ConfigError::InvalidGlob {
+                file: path.to_path_buf(),
+                line,
+                pattern: pattern.clone(),
+                source,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Validate a single `[detectors.<smell>]` or `[overrides.detectors.<smell>]`
+/// block.
+///
+/// `line: 0` is the placeholder for these errors — non-Spanned field
+/// errors don't yet carry line attribution (tracked: scrap-rs#64).
+fn validate_detector_config(
+    smell: SmellCategory,
+    cfg: &DetectorConfig,
+    path: &Path,
+) -> Result<(), ConfigError> {
+    if cfg.line_threshold.is_some() && smell != SmellCategory::LargeExample {
+        return Err(ConfigError::InvalidValue {
+            file: path.to_path_buf(),
+            line: 0,
+            message: format!(
+                "line_threshold is only valid on [detectors.large_example], not [detectors.{}]",
+                smell.as_wire_str()
+            ),
+        });
+    }
+    if cfg.penalty == Some(0) {
+        return Err(ConfigError::InvalidValue {
+            file: path.to_path_buf(),
+            line: 0,
+            message: format!(
+                "penalty must be > 0 (on [detectors.{}]); zero silently neuters the detector",
+                smell.as_wire_str()
+            ),
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -583,5 +796,295 @@ penalty = 10
         assert!(display.contains("test-adapter.toml:5"), "got: {display}");
         assert!(display.contains("[unclosed"), "got: {display}");
         assert!(err.source().is_some());
+    }
+
+    // ── W3.1: load_config + validator integration tests ────────────────
+
+    /// Materialize a TOML fixture under a temp directory and return the
+    /// path. Tempdir lives as long as the returned guard.
+    fn write_fixture(contents: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test-adapter.toml");
+        std::fs::write(&path, contents).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn load_config_minimal_valid_yields_default() {
+        let (_dir, path) = write_fixture("");
+        let cfg = load_config(&path).unwrap();
+        assert_eq!(cfg, FileConfig::default());
+    }
+
+    #[test]
+    fn load_config_comments_only_yields_default() {
+        let (_dir, path) = write_fixture("# just a comment\n# another\n");
+        let cfg = load_config(&path).unwrap();
+        assert_eq!(cfg, FileConfig::default());
+    }
+
+    #[test]
+    fn load_config_full_fixture_parses_to_expected_pod() {
+        let (_dir, path) = write_fixture(
+            r#"
+src = "crates"
+exclude = ["vendored/**"]
+extensions = ["rs"]
+
+[opt_outs]
+honor = ["no_asserts"]
+
+[detectors.zero_assertion]
+enabled = true
+penalty = 10
+
+[detectors.large_example]
+line_threshold = 30
+
+[[overrides]]
+match = ["tests/integration/**"]
+[overrides.detectors.large_example]
+line_threshold = 100
+"#,
+        );
+        let cfg = load_config(&path).unwrap();
+        assert_eq!(cfg.src, Some(PathBuf::from("crates")));
+        assert_eq!(cfg.exclude, vec!["vendored/**"]);
+        assert_eq!(cfg.extensions, Some(vec!["rs".to_string()]));
+        assert_eq!(cfg.opt_outs.honor, Some(vec![OptOut::NoAsserts]));
+        assert_eq!(cfg.detectors.len(), 2);
+        assert_eq!(
+            cfg.detectors[&SmellCategory::ZeroAssertion].enabled,
+            Some(true),
+        );
+        assert_eq!(
+            cfg.detectors[&SmellCategory::LargeExample].line_threshold,
+            Some(30),
+        );
+        assert_eq!(cfg.overrides.len(), 1);
+        assert_eq!(cfg.overrides[0].r#match, vec!["tests/integration/**"]);
+        assert_eq!(
+            cfg.overrides[0].detectors[&SmellCategory::LargeExample].line_threshold,
+            Some(100),
+        );
+    }
+
+    #[test]
+    fn load_config_invalid_glob_at_line_5() {
+        // Fixture explicitly engineered: the broken glob `[unclosed`
+        // sits on line 5. Lines 1-4 are preamble; line 5 is the entry
+        // we expect the validator to fail on.
+        //
+        // Line 1: (blank, leading newline)
+        // Line 2: src = "crates"
+        // Line 3: (blank)
+        // Line 4: exclude = [
+        // Line 5:   "[unclosed",
+        // Line 6: ]
+        let (_dir, path) =
+            write_fixture("\nsrc = \"crates\"\n\nexclude = [\n  \"[unclosed\",\n]\n");
+        let err = load_config(&path).unwrap_err();
+        match err {
+            ConfigError::InvalidGlob { line, pattern, .. } => {
+                assert_eq!(line, 5, "expected line 5 (the [unclosed line), got {line}");
+                assert_eq!(pattern, "[unclosed");
+            }
+            other => panic!("expected InvalidGlob, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn load_config_invalid_glob_in_override_at_known_line() {
+        // The override match `[bad` sits on line 4.
+        // Line 1: (blank)
+        // Line 2: [[overrides]]
+        // Line 3: match = [
+        // Line 4:   "[bad",
+        // Line 5: ]
+        let (_dir, path) = write_fixture("\n[[overrides]]\nmatch = [\n  \"[bad\",\n]\n");
+        let err = load_config(&path).unwrap_err();
+        match err {
+            ConfigError::InvalidGlob { line, pattern, .. } => {
+                assert_eq!(line, 4, "expected line 4 (the [bad line), got {line}");
+                assert_eq!(pattern, "[bad");
+            }
+            other => panic!("expected InvalidGlob, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn load_config_line_threshold_on_zero_assertion_rejected() {
+        let (_dir, path) = write_fixture(
+            r"
+[detectors.zero_assertion]
+line_threshold = 99
+",
+        );
+        let err = load_config(&path).unwrap_err();
+        match err {
+            ConfigError::InvalidValue { message, .. } => {
+                assert!(
+                    message.contains("line_threshold"),
+                    "expected line_threshold in message, got {message}",
+                );
+                assert!(
+                    message.contains("zero_assertion"),
+                    "expected zero_assertion in message, got {message}",
+                );
+            }
+            other => panic!("expected InvalidValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn load_config_zero_penalty_rejected() {
+        let (_dir, path) = write_fixture(
+            r"
+[detectors.no_op_io]
+penalty = 0
+",
+        );
+        let err = load_config(&path).unwrap_err();
+        match err {
+            ConfigError::InvalidValue { message, .. } => {
+                assert!(
+                    message.contains("penalty"),
+                    "expected penalty in message, got {message}",
+                );
+            }
+            other => panic!("expected InvalidValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn load_config_empty_exclude_pattern_rejected() {
+        let (_dir, path) = write_fixture("exclude = [\"\"]\n");
+        let err = load_config(&path).unwrap_err();
+        match err {
+            ConfigError::InvalidValue { message, .. } => {
+                assert!(
+                    message.contains("empty"),
+                    "expected 'empty' in message, got {message}",
+                );
+            }
+            other => panic!("expected InvalidValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn load_config_whitespace_only_exclude_pattern_rejected() {
+        let (_dir, path) = write_fixture("exclude = [\"   \"]\n");
+        let err = load_config(&path).unwrap_err();
+        match err {
+            ConfigError::InvalidValue { message, .. } => {
+                assert!(
+                    message.contains("empty"),
+                    "expected 'empty' in message, got {message}",
+                );
+            }
+            other => panic!("expected InvalidValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn load_config_unknown_top_level_field_rejected() {
+        let (_dir, path) = write_fixture("unknown_key = true\n");
+        let err = load_config(&path).unwrap_err();
+        match err {
+            ConfigError::Parse { source, .. } => {
+                let msg = source.to_string();
+                assert!(
+                    msg.contains("unknown")
+                        || msg.contains("unknown field")
+                        || msg.contains("unknown_key"),
+                    "expected unknown-field message, got: {msg}",
+                );
+            }
+            other => panic!("expected Parse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn load_config_unknown_detector_smell_key_rejected() {
+        // A typo'd smell key (`zer_assertion`) is unknown to SmellCategory.
+        let (_dir, path) = write_fixture(
+            r"
+[detectors.zer_assertion]
+enabled = true
+",
+        );
+        let err = load_config(&path).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Parse { .. }),
+            "expected Parse, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn load_config_missing_file_returns_io() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("does-not-exist.toml");
+        let err = load_config(&missing).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Io { .. }),
+            "expected Io, got {err:?}",
+        );
+    }
+
+    // ── MUST-FIX #2: OptOutPolicy 3-state coverage via load_config ────
+
+    #[test]
+    fn load_config_opt_outs_omitted_yields_none() {
+        // No [opt_outs] block → honor stays None (honor-all default).
+        let (_dir, path) = write_fixture("src = \"crates\"\n");
+        let cfg = load_config(&path).unwrap();
+        assert!(cfg.opt_outs.is_empty());
+        assert_eq!(cfg.opt_outs.honor, None);
+    }
+
+    #[test]
+    fn load_config_opt_outs_honor_empty_yields_some_empty() {
+        // Strictest project policy: honor NO per-test suppressions.
+        let (_dir, path) = write_fixture("[opt_outs]\nhonor = []\n");
+        let cfg = load_config(&path).unwrap();
+        assert_eq!(cfg.opt_outs.honor, Some(vec![]));
+        assert!(
+            !cfg.opt_outs.is_empty(),
+            "Some(vec![]) is NOT empty per is_empty semantics",
+        );
+    }
+
+    #[test]
+    fn load_config_opt_outs_honor_variants_yields_some_vec() {
+        let (_dir, path) = write_fixture("[opt_outs]\nhonor = [\"no_asserts\", \"no_op\"]\n");
+        let cfg = load_config(&path).unwrap();
+        assert_eq!(
+            cfg.opt_outs.honor,
+            Some(vec![OptOut::NoAsserts, OptOut::NoOp]),
+        );
+    }
+
+    // ── Load -> serialize -> load round-trip ──────────────────────────
+
+    #[test]
+    fn load_config_load_then_serialize_round_trip() {
+        let (_dir, path) = write_fixture(
+            r#"
+src = "crates"
+exclude = ["vendored/**"]
+
+[detectors.zero_assertion]
+penalty = 10
+
+[[overrides]]
+match = ["tests/integration/**"]
+[overrides.detectors.large_example]
+line_threshold = 100
+"#,
+        );
+        let loaded = load_config(&path).unwrap();
+        let reserialized = toml::to_string_pretty(&loaded).unwrap();
+        let reparsed: FileConfig = toml::from_str(&reserialized).unwrap();
+        assert_eq!(loaded, reparsed);
     }
 }
