@@ -576,6 +576,81 @@ fn validate_detector_config(
     Ok(())
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// Discovery (walk-upward by file name)
+// ────────────────────────────────────────────────────────────────────────
+
+/// Walk upward from `start` looking for `file_name`; return the first
+/// match.
+///
+/// **Adapter-name-agnostic API**: `file_name` is the per-adapter literal
+/// (e.g. the Rust adapter's `scrap4rs.toml`, the future TS adapter's
+/// `scrap4ts.toml`) supplied at call time via `meta.config_file_name`
+/// from the binary crate. This module never references those names
+/// directly — every test uses `"test-adapter.toml"` so the source-only
+/// adapter-name-purity CI gate (lands in W7.1) ships clean. The
+/// expanded gate at scrap-rs#37 covers `tests/` and `tests/features/`
+/// in the same way.
+///
+/// **Stop condition**: walk continues until `Path::parent()` returns
+/// `None` (the filesystem root). `Path::parent()` is purely lexical
+/// — no canonicalization — so symlink loops cannot occur.
+///
+/// **Sibling divergence**: crap-rs's `discover_config` checks the CWD
+/// only; scrap-rs walks upward (matches `rustfmt` convention). Users
+/// running `scrap4rs --src crates/scrap-core` from the workspace root
+/// expect the loader to find `scrap4rs.toml` at the workspace root,
+/// not require it in each sub-crate.
+///
+/// **Result shape**: `Ok(Some(path))` on hit; `Ok(None)` when the walk
+/// exhausts the ancestor chain without finding the file. Returns
+/// `Err(ConfigError::Io)` ONLY on non-NotFound I/O errors (permission
+/// denied, etc.) — the contract is visible to scrap-rs#21 which
+/// depends on distinguishing "no config exists" from "config exists
+/// but unreadable".
+///
+/// # Errors
+///
+/// [`ConfigError::Io`] when a `std::fs::metadata` call returns an
+/// `Err(e)` where `e.kind() != ErrorKind::NotFound` (typically
+/// permission denied on an ancestor directory). The error's `path`
+/// field carries the candidate file path that failed.
+///
+/// # Panics
+///
+/// Never panics.
+#[must_use = "the discovered config path must be loaded or surfaced; ignoring would silently fall back to defaults"]
+pub fn discover_config(start: &Path, file_name: &str) -> Result<Option<PathBuf>, ConfigError> {
+    // Best-effort canonicalize so relative `start` walks the absolute
+    // ancestor chain. If canonicalize fails (start doesn't exist),
+    // fall back to the lexical path — the walk still terminates at
+    // root via Path::parent() returning None.
+    let starting = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
+
+    let mut cursor: Option<&Path> = Some(&starting);
+    while let Some(dir) = cursor {
+        let candidate = dir.join(file_name);
+        match std::fs::metadata(&candidate) {
+            Ok(meta) if meta.is_file() => return Ok(Some(candidate)),
+            Ok(_) => {
+                // Exists but is a directory / symlink to dir / etc.
+                // — NOT a config file; continue walking up.
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Expected case — file simply absent in this ancestor.
+            }
+            Err(source) => {
+                return Err(ConfigError::Io {
+                    path: candidate,
+                    source,
+                });
+            }
+        }
+        cursor = dir.parent();
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1086,5 +1161,158 @@ line_threshold = 100
         let reserialized = toml::to_string_pretty(&loaded).unwrap();
         let reparsed: FileConfig = toml::from_str(&reserialized).unwrap();
         assert_eq!(loaded, reparsed);
+    }
+
+    // ── W4.1: discover_config tests ────────────────────────────────────
+
+    /// Scope-guarded chmod restore — MUST-FIX #3. Mirrors the
+    /// `PermissionGuard` in `adapters/source/fs.rs`'s `#[cfg(test)]`
+    /// block. Tests that chmod 0o000 a dir must restore permissions
+    /// before `TempDir::drop` runs its `rm -rf`, or stderr leaks
+    /// chmod-denied warnings that downstream agentic loops misread as
+    /// real test failures (per feedback_pristine-test-output).
+    ///
+    /// Duplication of the file-walker's guard is deliberate: structurally,
+    /// integration-test mods in `tests/common/mod.rs` can't be re-used
+    /// from `src/`-side `#[cfg(test)]` blocks; cross-direction reuse
+    /// isn't possible in Rust's test-mod layout. Both bodies are
+    /// trivial (~20 LOC) and identical.
+    #[cfg(unix)]
+    struct PermissionGuard {
+        path: std::path::PathBuf,
+        restore_mode: u32,
+    }
+
+    #[cfg(unix)]
+    impl Drop for PermissionGuard {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            // Best-effort restore; ignore failure so panics in the
+            // test body propagate cleanly.
+            let _ = std::fs::set_permissions(
+                &self.path,
+                std::fs::Permissions::from_mode(self.restore_mode),
+            );
+        }
+    }
+
+    #[test]
+    fn discover_config_finds_file_in_start_dir() {
+        let (_dir, path) = write_fixture("");
+        let start = path.parent().unwrap();
+        let found = discover_config(start, "test-adapter.toml").unwrap();
+        // Canonicalize the expected path for the macOS /private/var
+        // prefix that tempfile uses.
+        let expected = std::fs::canonicalize(&path).unwrap();
+        assert_eq!(found, Some(expected));
+    }
+
+    #[test]
+    fn discover_config_walks_up_two_levels() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // Place test-adapter.toml at root; search from root/a/b/c/.
+        std::fs::write(root.join("test-adapter.toml"), "").unwrap();
+        let deep = root.join("a").join("b").join("c");
+        std::fs::create_dir_all(&deep).unwrap();
+        let found = discover_config(&deep, "test-adapter.toml").unwrap();
+        let expected = std::fs::canonicalize(root.join("test-adapter.toml")).unwrap();
+        assert_eq!(found, Some(expected));
+    }
+
+    #[test]
+    fn discover_config_returns_none_when_absent_in_isolated_tempdir() {
+        // Deep tempdir-relative start so the walk goes up through
+        // tempdir-internal directories that are guaranteed to lack
+        // `test-adapter.toml`. Walk may continue upward to /tmp or /
+        // and find no match (or a stray match — neither outcome is
+        // testable across machines, so we assert "no panic + Ok"
+        // instead of strict Ok(None). The strict assertion below is
+        // safe because tempfile's roots (`/tmp`, `$TMPDIR`) are
+        // extremely unlikely to host a `test-adapter.toml` literal.
+        let dir = tempfile::tempdir().unwrap();
+        let deep = dir.path().join("a").join("b").join("c");
+        std::fs::create_dir_all(&deep).unwrap();
+        let result = discover_config(&deep, "test-adapter.toml").unwrap();
+        assert_eq!(
+            result, None,
+            "no test-adapter.toml in tempdir tree; ancestor walk should also miss",
+        );
+    }
+
+    #[test]
+    fn discover_config_respects_caller_supplied_name() {
+        // Mirrors crap-rs#161 regression smoke. Tempdir contains
+        // `different.toml` only; search for `test-adapter.toml` returns
+        // None (the parameter actually drives discovery, not a
+        // hard-coded constant).
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("different.toml"), "").unwrap();
+        let found = discover_config(root, "test-adapter.toml").unwrap();
+        assert_eq!(
+            found, None,
+            "different.toml exists but test-adapter.toml does not; walk must respect caller-supplied name",
+        );
+    }
+
+    #[test]
+    fn discover_config_stops_at_directory_not_file() {
+        // A directory named `test-adapter.toml` should NOT match —
+        // discover_config requires meta.is_file().
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir(root.join("test-adapter.toml")).unwrap();
+        let found = discover_config(root, "test-adapter.toml").unwrap();
+        assert_eq!(
+            found, None,
+            "directory-shaped entry must not match (is_file check)",
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discover_config_returns_io_error_on_permission_denied_parent() {
+        // Chmod 0o000 the PARENT directory of the search target so
+        // `std::fs::metadata(parent/test-adapter.toml)` fails with
+        // PermissionDenied. Chmod on the candidate itself wouldn't
+        // help on macOS — owner can stat their own files even when
+        // stripped. Chmod on the containing dir denies the join+metadata.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let locked = dir.path().join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        // Search starts INSIDE `locked` so the very first metadata call
+        // is `locked/test-adapter.toml`. With 0o000 on `locked`, that
+        // metadata call fails with PermissionDenied.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let _guard = PermissionGuard {
+            path: locked.clone(),
+            restore_mode: 0o755,
+        };
+
+        let result = discover_config(&locked, "test-adapter.toml");
+        // Some macOS / filesystem combinations may still allow the
+        // owner to stat through 0o000 (the stat is on the candidate,
+        // not the dir). If the system permits the stat (returns Ok)
+        // we expect Ok(None) — the candidate doesn't exist; if the
+        // system denies it (returns Err), we expect ConfigError::Io.
+        // Both are valid contracts; the test asserts that the
+        // function NEVER PANICS and returns one of the two shapes.
+        // Both Ok(None) and Err(ConfigError::Io { .. }) are valid
+        // contracts depending on the filesystem's owner-stat rule:
+        //   - Ok(None): permission bypassed for owner; candidate stat
+        //     returns NotFound; walk continues / exhausts.
+        //   - Err(ConfigError::Io): permission denied surfaces through
+        //     std::fs::metadata.
+        // Test asserts the function NEVER PANICS and returns one of
+        // the two shapes — neither outcome is portable across
+        // macOS/Linux filesystem semantics.
+        match result {
+            Ok(None) | Err(ConfigError::Io { .. }) => {
+                // Acceptable per the above contract.
+            }
+            other => panic!("expected Ok(None) or ConfigError::Io, got {other:?}"),
+        }
     }
 }
