@@ -21,13 +21,13 @@ use std::process::ExitCode;
 /// pipeline + `ExitCode` shaping) lands with the CLI sub-issue.
 #[must_use]
 pub fn run() -> ExitCode {
-    // tracked: scrap-rs#37 — placeholder adapter-name literal; replaced
-    // by `AdapterMeta::tool_name` threading in scrap-rs#21. The
-    // source-only adapter-name-purity CI gate landing in
-    // scrap-rs#18 W7.1 grandfathers this single line via the
-    // `tracked: scrap-rs#37` comment marker so the gate ships
-    // enforceable on every NEW addition while #21 handles the
-    // structural replacement.
-    println!("scrap4rs (skeleton) — see https://github.com/breezy-bays-labs/scrap-rs");
+    // Placeholder adapter-name literal; replaced by
+    // `AdapterMeta::tool_name` threading in scrap-rs#21. The
+    // source-only adapter-name-purity CI gate landing in scrap-rs#18
+    // W7.1 grandfathers this single line via the per-line trailing
+    // `tracked: scrap-rs#37` marker (in-line comment below) so the
+    // gate ships enforceable on every NEW addition while #21
+    // handles the structural replacement via AdapterMeta.
+    println!("scrap4rs (skeleton) — see https://github.com/breezy-bays-labs/scrap-rs"); // tracked: scrap-rs#37 — AdapterMeta replacement
     ExitCode::SUCCESS
 }

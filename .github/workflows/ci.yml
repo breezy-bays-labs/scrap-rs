@@ -284,18 +284,21 @@ jobs:
           persist-credentials: false
       - name: Reject adapter-name literals in scrap-core source
         # Static pattern, no untrusted-input interpolation. The grep
-        # matches the double-quoted forms "scrap4rs" or "scrap4ts" —
-        # tightly scoped so doc-comment backtick references
-        # (`scrap4rs.toml`) and module-path references
-        # (`scrap-rs#21`) don't false-positive.
+        # matches any double-quoted string containing the adapter
+        # binary name `scrap4rs` or `scrap4ts` as a substring (e.g.,
+        # `"scrap4rs (skeleton) ..."` or the bare `"scrap4rs"` form).
+        # Doc-comment backtick references (`scrap4rs.toml`) and
+        # module-path references (`scrap-rs#21`) don't false-positive
+        # because they lack the required double-quote delimiters.
         #
-        # The `tracked: scrap-rs#37` marker on the single grandfathered
-        # line in `cli/mod.rs:run()` is filtered out so this gate ships
-        # enforceable on every NEW addition while scrap-rs#21 handles
-        # the structural replacement via AdapterMeta.
+        # The single grandfathered line in `cli/mod.rs:run()` carries
+        # an in-line trailing comment `// tracked: scrap-rs#37 — ...`
+        # on the SAME line as the matched literal; the `grep -v`
+        # filter excludes it. New adapter-name literals lacking the
+        # same in-line marker fail the gate.
         run: |
           set -euo pipefail
-          matches=$(grep -rnE '"(scrap4rs|scrap4ts)"' crates/scrap-core/src/ --include='*.rs' || true)
+          matches=$(grep -rnE '"(scrap4rs|scrap4ts)[^"]*"' crates/scrap-core/src/ --include='*.rs' || true)
           unmatched=$(printf '%s\n' "$matches" | grep -v 'tracked: scrap-rs#37' || true)
           if [ -n "$unmatched" ]; then
             echo "::error::adapter-name literal in scrap-core source — use AdapterMeta::tool_name from the binary crate (scrap-rs#21)"
