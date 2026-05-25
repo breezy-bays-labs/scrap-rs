@@ -29,28 +29,47 @@
 use cucumber::{World as _, gherkin, given, then, when};
 use scrap_core::adapters::source::fs::FsWalker;
 use scrap_core::adapters::source::memory::MemorySource;
+use scrap_core::cli::config::{ConfigError, FileConfig};
 use scrap_core::domain::config::AnalysisConfig;
 use scrap_core::domain::source::{DiscoveryOutcome, SourceDiagnostic, SourceDiagnosticKind};
 use scrap_core::domain::types::{FilePath, SourceRoot};
 use scrap_core::ports::source::{SourceError, SourcePort};
 use std::path::{Path, PathBuf};
 
+// ─── Sibling step-def modules (W5.1 mod-block split per SHOULD-FIX #5) ─
+//
+// Cucumber-rs registers `#[given]/#[when]/#[then]` step fns globally
+// within the test binary; sub-modules referenced via `#[path]` work
+// identically. World stays in this entry file so cucumber::World's
+// derive sees the single canonical struct.
+//
+// scrap-rs#67 stays open as a fallback if implementation surfaces
+// unexpected cucumber-rs quirks; W0.1 spike found mod-blocks viable.
+
+#[path = "cucumber_steps/config.rs"]
+mod config_steps;
+
 // ─── World ──────────────────────────────────────────────────────────
 
 /// Per-scenario state. Cucumber-rs constructs a fresh `World` for each
 /// scenario via `Default`; all fields default to `None` / empty.
 #[derive(Debug, cucumber::World, Default)]
-struct World {
-    tempdir: Option<tempfile::TempDir>,
-    config: Option<AnalysisConfig>,
-    walker: Option<FsWalker>,
-    walker_construction_result: Option<Result<FsWalker, SourceError>>,
-    outcome: Option<Result<DiscoveryOutcome, SourceError>>,
-    memory_source: Option<MemorySource>,
+pub struct World {
+    pub tempdir: Option<tempfile::TempDir>,
+    pub config: Option<AnalysisConfig>,
+    pub walker: Option<FsWalker>,
+    pub walker_construction_result: Option<Result<FsWalker, SourceError>>,
+    pub outcome: Option<Result<DiscoveryOutcome, SourceError>>,
+    pub memory_source: Option<MemorySource>,
     /// Tracks the explicit pre-flight root path supplied by the
     /// `missing-root` and `file-root` scenarios, so the corresponding
     /// `Then` step can assert that `SourceError::Io.path` equals it.
-    expected_io_path: Option<PathBuf>,
+    pub expected_io_path: Option<PathBuf>,
+    /// W5.1 config-loader fields — populated by `cucumber_steps::config`
+    /// step defs.
+    pub config_fixture_path: Option<PathBuf>,
+    pub config_load_result: Option<Result<FileConfig, ConfigError>>,
+    pub discover_result: Option<Result<Option<PathBuf>, ConfigError>>,
 }
 
 // ─── Background ─────────────────────────────────────────────────────
