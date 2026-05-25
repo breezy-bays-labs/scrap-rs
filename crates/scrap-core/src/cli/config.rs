@@ -651,6 +651,71 @@ pub fn discover_config(start: &Path, file_name: &str) -> Result<Option<PathBuf>,
     Ok(None)
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// Canonical overrides resolver (last-match-wins)
+// ────────────────────────────────────────────────────────────────────────
+
+/// Resolves the [`DetectorConfig`] to apply for a `(path, smell)` pair,
+/// accounting for `[[overrides]]` (last-match-wins per shape R7).
+///
+/// Walks `config.overrides` in **reverse document order**; returns the
+/// first matching override's per-detector config (matched if ANY of its
+/// `r#match` globs match the path AND the override has a
+/// `DetectorConfig` for the smell). Falls back to
+/// `config.detectors.get(&smell)` (top-level per-detector config) if
+/// no override matches. Returns a reference to a `'static` default
+/// `DetectorConfig` sentinel when neither matches — the merge in
+/// scrap-rs#21 then applies the v0.1 defaults (`enabled = true`,
+/// per-smell penalty).
+///
+/// **Free function, module-level, `pub`** per orchestrator decision
+/// (2026-05-25) overriding the cabinet trio's `pub(crate)` preference.
+/// Both scrap4rs (#21) and scrap4ts (v0.6+) call this from their CLI
+/// merge paths so the override-resolution rule lives in exactly one
+/// place. Not a method on `FileConfig` because that would violate ADR
+/// D8 (POD discipline — no methods beyond `Default::default()` and
+/// serde derives).
+///
+/// **Glob re-compilation**: each call re-walks the override `r#match`
+/// patterns and compiles each via `globset::Glob::new` + `.compile_matcher()`.
+/// This is a perf trade-off documented for the v0.1 surface; a future
+/// PR can pre-compile globs once at `load_config` time into a
+/// `GlobSet` stored on `Override` (would require schema change).
+/// Defensive: if a glob fails to compile here, it's silently treated
+/// as "no match" — validation in `load_config` should have already
+/// rejected every bad pattern.
+///
+/// # Errors
+///
+/// (none — pure data interpretation, no I/O.)
+///
+/// # Panics
+///
+/// Never panics; glob compilation failures fall back to "no match" so
+/// the resolver remains total.
+#[must_use]
+pub fn resolve_detector_for_path<'c>(
+    config: &'c FileConfig,
+    path: &Path,
+    smell: SmellCategory,
+) -> &'c DetectorConfig {
+    static DEFAULT: std::sync::OnceLock<DetectorConfig> = std::sync::OnceLock::new();
+    for ov in config.overrides.iter().rev() {
+        let matches = ov.r#match.iter().any(|pat| {
+            globset::Glob::new(pat)
+                .ok()
+                .is_some_and(|g| g.compile_matcher().is_match(path))
+        });
+        if matches && let Some(dc) = ov.detectors.get(&smell) {
+            return dc;
+        }
+    }
+    config
+        .detectors
+        .get(&smell)
+        .unwrap_or_else(|| DEFAULT.get_or_init(DetectorConfig::default))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1313,6 +1378,272 @@ line_threshold = 100
                 // Acceptable per the above contract.
             }
             other => panic!("expected Ok(None) or ConfigError::Io, got {other:?}"),
+        }
+    }
+
+    // ── W6.1: pub resolve_detector_for_path unit tests ─────────────────
+
+    fn detector_cfg(enabled: Option<bool>, penalty: Option<u32>) -> DetectorConfig {
+        DetectorConfig {
+            enabled,
+            penalty,
+            line_threshold: None,
+        }
+    }
+
+    #[test]
+    fn resolve_no_overrides_falls_back_to_top_level() {
+        let mut cfg = FileConfig::default();
+        let top = detector_cfg(Some(true), Some(7));
+        cfg.detectors
+            .insert(SmellCategory::ZeroAssertion, top.clone());
+        let got =
+            resolve_detector_for_path(&cfg, Path::new("src/lib.rs"), SmellCategory::ZeroAssertion);
+        assert_eq!(*got, top);
+    }
+
+    #[test]
+    fn resolve_no_match_returns_default_sentinel() {
+        let cfg = FileConfig::default();
+        let got =
+            resolve_detector_for_path(&cfg, Path::new("src/lib.rs"), SmellCategory::ZeroAssertion);
+        assert_eq!(*got, DetectorConfig::default());
+    }
+
+    #[test]
+    fn resolve_single_override_match_wins() {
+        let override_cfg = detector_cfg(Some(false), None);
+        let cfg = FileConfig {
+            overrides: vec![Override {
+                r#match: vec!["tests/**".to_string()],
+                detectors: [(SmellCategory::ZeroAssertion, override_cfg.clone())]
+                    .into_iter()
+                    .collect(),
+            }],
+            ..Default::default()
+        };
+        let got = resolve_detector_for_path(
+            &cfg,
+            Path::new("tests/foo.rs"),
+            SmellCategory::ZeroAssertion,
+        );
+        assert_eq!(*got, override_cfg);
+    }
+
+    #[test]
+    fn resolve_last_matching_override_wins() {
+        // Both overrides match `tests/integration/foo.rs`; the SECOND
+        // one's per-detector config must win (reverse-iterate, first
+        // reverse-match returned).
+        let first = detector_cfg(Some(true), Some(10));
+        let second = detector_cfg(Some(false), Some(99));
+        let cfg = FileConfig {
+            overrides: vec![
+                Override {
+                    r#match: vec!["tests/**".to_string()],
+                    detectors: [(SmellCategory::ZeroAssertion, first.clone())]
+                        .into_iter()
+                        .collect(),
+                },
+                Override {
+                    r#match: vec!["tests/integration/**".to_string()],
+                    detectors: [(SmellCategory::ZeroAssertion, second.clone())]
+                        .into_iter()
+                        .collect(),
+                },
+            ],
+            ..Default::default()
+        };
+        let got = resolve_detector_for_path(
+            &cfg,
+            Path::new("tests/integration/foo.rs"),
+            SmellCategory::ZeroAssertion,
+        );
+        assert_eq!(*got, second, "expected second (later) override to win");
+    }
+
+    #[test]
+    fn resolve_override_without_smell_falls_through_to_top_level() {
+        let top = detector_cfg(Some(true), Some(11));
+        let cfg = FileConfig {
+            detectors: [(SmellCategory::ZeroAssertion, top.clone())]
+                .into_iter()
+                .collect(),
+            overrides: vec![Override {
+                r#match: vec!["tests/**".to_string()],
+                // Override matches the path but defines NoOpIo, not ZeroAssertion.
+                detectors: [(SmellCategory::NoOpIo, detector_cfg(Some(false), None))]
+                    .into_iter()
+                    .collect(),
+            }],
+            ..Default::default()
+        };
+        let got = resolve_detector_for_path(
+            &cfg,
+            Path::new("tests/foo.rs"),
+            SmellCategory::ZeroAssertion,
+        );
+        assert_eq!(
+            *got, top,
+            "override missing the smell should fall through to top-level"
+        );
+    }
+
+    // ── W6.1: insta snapshot for unknown-field error ───────────────────
+
+    #[test]
+    fn unknown_field_error_message_snapshot() {
+        use std::error::Error;
+        let (_dir, path) = write_fixture("unknown_key = true\n");
+        let err = load_config(&path).unwrap_err();
+        // Render Display + #[source] chain for the snapshot. Replace
+        // the per-machine tempdir path prefix with `<TEMPDIR>` so the
+        // snapshot is deterministic across machines. The replacement
+        // looks for the absolute path component ending in
+        // `test-adapter.toml`.
+        let display = err.to_string();
+        let path_str = path.display().to_string();
+        let display_sanitized = display.replace(&path_str, "<TEMPDIR>/test-adapter.toml");
+        let source_repr = err.source().map(|s| format!("{s:?}")).unwrap_or_default();
+        insta::assert_snapshot!(format!("{display_sanitized}\n---\n{source_repr}"));
+    }
+
+    // ── W6.1: round-trip property test ─────────────────────────────────
+
+    mod overrides_property {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Brute-force oracle: iterate overrides front-to-back; last
+        /// matching one's config wins. Mirrors the resolver's contract
+        /// in a deliberately different implementation shape so they
+        /// don't share bugs.
+        fn brute_force_resolve<'c>(
+            config: &'c FileConfig,
+            path: &Path,
+            smell: SmellCategory,
+        ) -> Option<&'c DetectorConfig> {
+            let mut winner: Option<&DetectorConfig> = None;
+            for ov in &config.overrides {
+                let matches = ov.r#match.iter().any(|pat| {
+                    globset::Glob::new(pat)
+                        .ok()
+                        .is_some_and(|g| g.compile_matcher().is_match(path))
+                });
+                if matches && let Some(dc) = ov.detectors.get(&smell) {
+                    winner = Some(dc);
+                }
+            }
+            winner.or_else(|| config.detectors.get(&smell))
+        }
+
+        fn arb_overlapping_config() -> impl Strategy<Value = FileConfig> {
+            let glob_pool = prop_oneof![
+                Just("tests/**".to_string()),
+                Just("tests/integration/**".to_string()),
+                Just("benches/**".to_string()),
+                Just("**".to_string()),
+            ];
+            let detector_cfg_strat = (
+                prop::option::of(any::<bool>()),
+                prop::option::of(1u32..=100),
+            )
+                .prop_map(|(enabled, penalty)| DetectorConfig {
+                    enabled,
+                    penalty,
+                    line_threshold: None,
+                });
+            let override_strat = (
+                proptest::collection::vec(glob_pool, 1..=3),
+                proptest::collection::vec(detector_cfg_strat, 0..=2),
+            )
+                .prop_map(|(matches, cfgs)| Override {
+                    r#match: matches,
+                    detectors: cfgs
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, cfg)| {
+                            let smell = if i == 0 {
+                                SmellCategory::ZeroAssertion
+                            } else {
+                                SmellCategory::LargeExample
+                            };
+                            (smell, cfg)
+                        })
+                        .collect(),
+                });
+            proptest::collection::vec(override_strat, 1..=5).prop_map(|overrides| FileConfig {
+                overrides,
+                ..Default::default()
+            })
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig { cases: 64, .. ProptestConfig::default() })]
+
+            #[test]
+            fn pub_resolver_matches_brute_force_oracle(
+                config in arb_overlapping_config(),
+                path_idx in 0u8..4,
+            ) {
+                let paths = [
+                    "tests/foo.rs",
+                    "tests/integration/bar.rs",
+                    "benches/baz.rs",
+                    "src/lib.rs",
+                ];
+                let path = Path::new(paths[path_idx as usize]);
+                let smell = SmellCategory::ZeroAssertion;
+                let resolver = resolve_detector_for_path(&config, path, smell);
+                let oracle = brute_force_resolve(&config, path, smell);
+                if let Some(expected) = oracle {
+                    prop_assert_eq!(resolver, expected);
+                } else {
+                    prop_assert_eq!(resolver, &DetectorConfig::default());
+                }
+            }
+        }
+    }
+
+    // ── W6.1: round-trip property — arbitrary FileConfig ──────────────
+
+    mod round_trip_property {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn arb_file_config() -> impl Strategy<Value = FileConfig> {
+            // Bounded shape: omit `src` half the time, generate small
+            // exclude lists with VALID globs (skips the validator's
+            // empty-pattern + globset-error checks), and a small
+            // detectors map.
+            let valid_glob_pool = prop_oneof![
+                Just("tests/**".to_string()),
+                Just("vendored/**".to_string()),
+                Just("benches/**".to_string()),
+                Just("docs/*.md".to_string()),
+            ];
+            let src_strat = prop::option::of(Just(PathBuf::from("crates")));
+            let exclude_strat = proptest::collection::vec(valid_glob_pool, 0..=3);
+            let ext_strat = prop::option::of(Just(vec!["rs".to_string()]));
+            (src_strat, exclude_strat, ext_strat).prop_map(|(src, exclude, extensions)| {
+                FileConfig {
+                    src,
+                    exclude,
+                    extensions,
+                    ..Default::default()
+                }
+            })
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig { cases: 32, .. ProptestConfig::default() })]
+
+            #[test]
+            fn parse_serialize_parse_round_trip(fixture in arb_file_config()) {
+                let serialized = toml::to_string_pretty(&fixture).unwrap();
+                let reparsed: FileConfig = toml::from_str(&serialized).unwrap();
+                prop_assert_eq!(fixture, reparsed);
+            }
         }
     }
 }
