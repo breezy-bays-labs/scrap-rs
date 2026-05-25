@@ -14,6 +14,27 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
 
 ### Added
 
+- CI: `scorecard` job in `.github/workflows/ci.yml` adopts crap-rs's
+  templated `scorecard` composite action
+  (`breezy-bays-labs/crap-rs/.github/actions/scorecard@726b805` — the
+  CAPSTONE quick-start commit). Production-code CRAP analysis with
+  sticky PR comment + HTML report artifact via a single `uses:`
+  invocation; no `cargo binstall` plumbing on the scrap-rs side (the
+  action handles install). Composite actions are git-ref consumed, so
+  no release-tarball dependency. Inputs follow the templated example's
+  preset surface: `threshold-preset: default` (cognitive=15),
+  `run-mode: full` (no baseline), `gate-mode: gate-on-analysis` (hard
+  gate), `comment-mode: sticky`, `html-report: true`, `languages: rust`.
+  Test-file excludes carried via `crap4rs.toml` at repo root (the
+  action's `config:` input passes `--config <path>` through to the
+  underlying binary; per-invocation `--exclude` flags aren't on the
+  action's input surface). Symmetric to the existing test-smell
+  detection: scrap-rs measures *test* code for smells (V1) via its
+  own detectors; crap-rs measures *production* code for complexity
+  (V2). Closes scrap-rs#20.
+- `crap4rs.toml` at repo root — pins `preset = "default"` (= 15
+  cognitive) and `exclude = ["**/tests/**"]`. Consumed by the new
+  `scorecard` CI job via the composite action's `config:` input.
 - CI: `zizmor` workflow-security audit job in `.github/workflows/ci.yml`
   (mirrors crap4rs precedent). Runs `pipx run 'zizmor>=1.5,<2'
   .github/` on every PR + push to main. `unpinned-uses` is the
@@ -351,6 +372,14 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
 
 ### Changed
 
+- `FsWalker::discover_test_files` (`crates/scrap-core/src/adapters/source/fs.rs`)
+  decomposed into a `Decision` enum + `classify_entry`, `preflight_root`,
+  and `FsWalker::build_walker` helpers (cognitive complexity 30 → 8 on
+  the method; new helpers all ≤8). Pure refactor — no behaviour change;
+  the existing 16-test unit suite + 217-line `file_walker.feature` BDD
+  harness exercise every branch end-to-end. Unblocked the new
+  `crap-self` gate at the calibrated cognitive-default threshold 15.
+  Refs scrap-rs#20.
 - Workspace lint policy lifted from per-crate
   `#![warn(clippy::pedantic, clippy::cargo)]` headers in
   `crates/{scrap-core,scrap4rs}/src/lib.rs` to

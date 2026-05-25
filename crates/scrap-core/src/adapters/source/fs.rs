@@ -95,40 +95,9 @@ impl FsWalker {
 impl SourcePort for FsWalker {
     fn discover_test_files(&self) -> Result<DiscoveryOutcome, SourceError> {
         let path = self.config.src.as_path();
+        preflight_root(path)?;
 
-        // Pre-flight: surface missing/non-directory roots as fatal
-        // SourceError::Io. The walk itself does NOT produce a clean
-        // error here — it would silently yield an empty iterator,
-        // which is indistinguishable from an empty directory.
-        let metadata = std::fs::metadata(path).map_err(|source| SourceError::Io {
-            path: FilePath::new(path),
-            source,
-        })?;
-        if !metadata.is_dir() {
-            return Err(SourceError::Io {
-                path: FilePath::new(path),
-                source: std::io::Error::other("source root is not a directory"),
-            });
-        }
-
-        let mut builder = ignore::WalkBuilder::new(path);
-        builder
-            .git_ignore(self.config.respect_gitignore)
-            .git_exclude(self.config.respect_gitignore)
-            .git_global(self.config.respect_gitignore)
-            .ignore(self.config.respect_gitignore)
-            // Honour .gitignore files even outside a git repository
-            // (the ignore crate's default is to require .git/). User
-            // expectation is "if there's a .gitignore here, respect
-            // it"; this matches rg/fd behaviour with --no-require-git.
-            .require_git(false)
-            .overrides(self.override_matcher.clone());
-
-        // Per-entry extension matching uses `eq_ignore_ascii_case`
-        // against the configured extensions verbatim (E2 from shaping).
-        // This avoids both a Vec<String> pre-allocation and a
-        // per-entry `to_ascii_lowercase()` heap allocation; the
-        // case-insensitive comparison happens in-place.
+        let builder = self.build_walker(path);
         let allowed_extensions: &[String] = &self.config.extensions;
 
         let mut files: Vec<FilePath> = Vec::new();
@@ -136,55 +105,11 @@ impl SourcePort for FsWalker {
 
         for entry in builder.build() {
             match entry {
-                Ok(entry) => {
-                    // Skip the root entry the walker yields first.
-                    // `entry.depth() == 0` is the documented `ignore`
-                    // crate predicate for the walk root and avoids a
-                    // path-component comparison per entry.
-                    if entry.depth() == 0 {
-                        continue;
-                    }
-                    let entry_path = entry.path();
-                    let Some(ft) = entry.file_type() else {
-                        // Walker couldn't determine the file type
-                        // (typically a stat failure on a dangling
-                        // symlink). Surface as MidwalkIo so the silent
-                        // skip is observable.
-                        diagnostics.push(SourceDiagnostic::new(
-                            relative_filepath(entry_path, path),
-                            SourceDiagnosticKind::MidwalkIo,
-                            format!("could not determine file type for {}", entry_path.display()),
-                        ));
-                        continue;
-                    };
-                    if ft.is_symlink() {
-                        // Walker default is follow_links(false); without
-                        // a diagnostic, symlinked source files would be
-                        // silently dropped from discovery (silent-failure
-                        // class). Emit `Other` so the caller sees what
-                        // was skipped.
-                        diagnostics.push(SourceDiagnostic::new(
-                            relative_filepath(entry_path, path),
-                            SourceDiagnosticKind::Other,
-                            format!("symlink not followed: {}", entry_path.display()),
-                        ));
-                        continue;
-                    }
-                    if !ft.is_file() {
-                        continue;
-                    }
-                    if allowed_extensions.is_empty() {
-                        files.push(relative_filepath(entry_path, path));
-                        continue;
-                    }
-                    if let Some(ext) = entry_path.extension().and_then(std::ffi::OsStr::to_str)
-                        && allowed_extensions
-                            .iter()
-                            .any(|allowed| allowed.eq_ignore_ascii_case(ext))
-                    {
-                        files.push(relative_filepath(entry_path, path));
-                    }
-                }
+                Ok(entry) => match classify_entry(&entry, path, allowed_extensions) {
+                    Decision::Include(fp) => files.push(fp),
+                    Decision::Skip => {}
+                    Decision::Diagnostic(d) => diagnostics.push(d),
+                },
                 Err(err) => diagnostics.push(classify_walk_error(&err, path)),
             }
         }
@@ -202,6 +127,119 @@ impl SourcePort for FsWalker {
 
         Ok(DiscoveryOutcome::new(files, diagnostics))
     }
+}
+
+impl FsWalker {
+    /// Build the `ignore::WalkBuilder` configured from this walker's
+    /// `AnalysisConfig`. Per-entry extension filtering and root-skip
+    /// happen later in [`classify_entry`]; this method only sets up
+    /// the VCS-honouring and user-override layers.
+    fn build_walker(&self, path: &Path) -> ignore::WalkBuilder {
+        let mut builder = ignore::WalkBuilder::new(path);
+        builder
+            .git_ignore(self.config.respect_gitignore)
+            .git_exclude(self.config.respect_gitignore)
+            .git_global(self.config.respect_gitignore)
+            .ignore(self.config.respect_gitignore)
+            // Honour .gitignore files even outside a git repository
+            // (the ignore crate's default is to require .git/). User
+            // expectation is "if there's a .gitignore here, respect
+            // it"; this matches rg/fd behaviour with --no-require-git.
+            .require_git(false)
+            .overrides(self.override_matcher.clone());
+        builder
+    }
+}
+
+/// Per-entry classification outcome returned by [`classify_entry`].
+///
+/// The walk-loop body in [`FsWalker::discover_test_files`] is a flat
+/// `match` on this enum: `Include` appends to the file collection,
+/// `Skip` is a no-op, `Diagnostic` appends to the non-fatal diagnostic
+/// stream. Lifts the per-entry decision tree out of the hot loop so the
+/// loop reads as a 4-line dispatch and the classification logic can be
+/// unit-tested through `classify_entry` independently of the walker.
+enum Decision {
+    Include(FilePath),
+    Skip,
+    Diagnostic(SourceDiagnostic),
+}
+
+/// Pre-flight the walk root: surface missing/non-directory roots as
+/// fatal [`SourceError::Io`] *before* the walker silently yields an
+/// empty iterator (which is indistinguishable from an empty directory).
+fn preflight_root(path: &Path) -> Result<(), SourceError> {
+    let metadata = std::fs::metadata(path).map_err(|source| SourceError::Io {
+        path: FilePath::new(path),
+        source,
+    })?;
+    if !metadata.is_dir() {
+        return Err(SourceError::Io {
+            path: FilePath::new(path),
+            source: std::io::Error::other("source root is not a directory"),
+        });
+    }
+    Ok(())
+}
+
+/// Classify one walker-yielded entry into a [`Decision`] that the walk
+/// loop can dispatch on. Flat early-return chain mirrors the original
+/// branch order:
+///
+/// 1. Depth-0 root entry → `Skip`. Documented `ignore` crate predicate
+///    for the walk root; avoids a path-component comparison per entry.
+/// 2. `file_type()` returns `None` → `Diagnostic(MidwalkIo)`. Typically
+///    a stat failure on a dangling symlink; surface so the silent skip
+///    is observable.
+/// 3. Symlink → `Diagnostic(Other)`. Walker default is
+///    `follow_links(false)`; without a diagnostic, symlinked source
+///    files would be silently dropped (silent-failure class).
+/// 4. Non-file (directory, fifo, etc.) → `Skip`.
+/// 5. `allowed_extensions` empty → `Include` (no extension filtering).
+/// 6. Extension matches one of `allowed_extensions` case-insensitively
+///    → `Include`; otherwise `Skip`.
+///
+/// Per-entry extension matching uses `eq_ignore_ascii_case` against the
+/// configured extensions verbatim (E2 from shaping). This avoids both a
+/// `Vec<String>` pre-allocation and a per-entry `to_ascii_lowercase()`
+/// heap allocation; the case-insensitive comparison happens in-place.
+fn classify_entry(
+    entry: &ignore::DirEntry,
+    walked_root: &Path,
+    allowed_extensions: &[String],
+) -> Decision {
+    if entry.depth() == 0 {
+        return Decision::Skip;
+    }
+    let entry_path = entry.path();
+    let Some(ft) = entry.file_type() else {
+        return Decision::Diagnostic(SourceDiagnostic::new(
+            relative_filepath(entry_path, walked_root),
+            SourceDiagnosticKind::MidwalkIo,
+            format!("could not determine file type for {}", entry_path.display()),
+        ));
+    };
+    if ft.is_symlink() {
+        return Decision::Diagnostic(SourceDiagnostic::new(
+            relative_filepath(entry_path, walked_root),
+            SourceDiagnosticKind::Other,
+            format!("symlink not followed: {}", entry_path.display()),
+        ));
+    }
+    if !ft.is_file() {
+        return Decision::Skip;
+    }
+    if allowed_extensions.is_empty() {
+        return Decision::Include(relative_filepath(entry_path, walked_root));
+    }
+    if let Some(ext) = entry_path.extension().and_then(std::ffi::OsStr::to_str)
+        && allowed_extensions
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(ext))
+    {
+        return Decision::Include(relative_filepath(entry_path, walked_root));
+    }
+    Decision::Skip
 }
 
 /// Strip `walked_root` from `entry_path` and wrap the result as a
