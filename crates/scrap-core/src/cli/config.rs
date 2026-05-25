@@ -404,8 +404,8 @@ struct RawOverride {
 ///
 /// 1. `std::fs::read_to_string(path)` — fails with [`ConfigError::Io`].
 /// 2. `toml::from_str::<RawConfig>(...)` — fails with [`ConfigError::Parse`].
-/// 3. [`validate_raw_config`] — fails with [`ConfigError::InvalidGlob`]
-///    or [`ConfigError::InvalidValue`].
+/// 3. `validate_raw_config` (private) — fails with
+///    [`ConfigError::InvalidGlob`] or [`ConfigError::InvalidValue`].
 /// 4. Strip `Spanned` wrappers via `.into_inner()`; construct the POD
 ///    [`FileConfig`].
 ///
