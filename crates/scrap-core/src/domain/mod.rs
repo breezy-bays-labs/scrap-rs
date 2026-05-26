@@ -22,11 +22,13 @@
 //! - `threshold` — `ThresholdMode`
 //! - `opt_outs` — `OptOut` enum (lands with scrap-rs#12)
 //! - `assertion_sources` — `AssertionSource` enum + `recognise()` (folds in scrap-rs#4 surface via scrap-rs#12)
+//! - `behavioral_fact` — `BehavioralFact` enum (folds in scrap-rs#25's projection surface via scrap-rs#30; first variant `ResultAsserted`)
 //!
 //! Module roster (planned, not yet implemented):
 //! - `score` — saturating-curve helpers (v0.3+ per kickstart plan §3)
 
 pub mod assertion_sources;
+pub mod behavioral_fact;
 pub mod classification;
 pub mod config;
 pub mod finding;
