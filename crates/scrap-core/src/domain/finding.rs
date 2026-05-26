@@ -84,12 +84,14 @@ mod tests {
                 Severity::High,
                 Actionability::AutoRefactor,
                 10,
+                None,
             ),
             Smell::new(
                 SmellCategory::LargeExample,
                 Severity::Low,
                 Actionability::ManualSplit,
                 4,
+                None,
             ),
         ];
         let f = Finding::new(test, smells);

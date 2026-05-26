@@ -14,6 +14,26 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
 
 ### Added
 
+- `Smell.span: Option<Span>` — additive per-Smell line attribution
+  inside a `Finding`. Detectors emit `Some(span)` when they have
+  per-assertion location (e.g. a `tautological-assertion` smell can
+  point at the exact `assert_eq!(x, x)` line); `None` when the smell
+  is whole-test (e.g. `zero-assertion`, where the whole body is the
+  evidence). The enclosing `Finding::test.span` always covers the
+  whole test body; `Smell::span` is strictly narrower or absent.
+  Both constructors `Smell::new` and `Smell::with_message` accept
+  the new `span: Option<Span>` parameter additively (slot order
+  mirrors `ParseDiagnostic::new(kind, span, message)` in
+  `domain/parsed.rs` — same crate, same layer, established
+  precedent). Wire-shape uses
+  `#[serde(skip_serializing_if = "Option::is_none")]` so existing
+  emitters/parsers stay byte-compatible — no `schema_version` bump
+  per ADR `adr-nested-json-envelope.md` D2 forward-compat rules;
+  insta snapshot at `wire_envelope_snapshot__report_v01.snap` is
+  byte-identical. Unblocks scrap-rs#30 (zero-assertion),
+  scrap-rs#24 (tautological), scrap-rs#25, scrap-rs#26, scrap-rs#31
+  — all consume the new constructor signature.
+  Closes scrap-rs#76.
 - CI: `scorecard` job in `.github/workflows/ci.yml` adopts crap-rs's
   templated `scorecard` composite action
   (`breezy-bays-labs/crap-rs/.github/actions/scorecard@726b805` — the

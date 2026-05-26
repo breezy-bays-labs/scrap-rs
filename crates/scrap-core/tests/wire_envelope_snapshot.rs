@@ -28,6 +28,7 @@ fn fixture_report() -> Report {
         Severity::High,
         Actionability::AutoRefactor,
         10,
+        None,
     );
     let finding = Finding::new(test, vec![smell]);
 
