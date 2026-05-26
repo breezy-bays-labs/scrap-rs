@@ -32,7 +32,7 @@ for the full layering invariant + per-crate dep table.
 
 | Smell                     | Penalty | Detection                                                       |
 |---------------------------|---------|-----------------------------------------------------------------|
-| `zero-assertion`          | 10      | `#[test]` body has no `assert*!`/`should_panic`/`.expect`/`.unwrap` and no implicit-assertion source (see `domain/assertion_sources.rs`) |
+| `zero-assertion`          | 10      | `#[test]` body has no `assert*!`/`should_panic`/`.expect`/`.unwrap` and no implicit-assertion source (see `domain/assertion_sources.rs` for the runner-shell registry + `domain/behavioral_fact.rs::BehavioralFact::ResultAsserted` for the `.expect`/`.unwrap` recognition that lands at scrap-rs#30; v0.3+ behavioral-fact variants land with scrap-rs#25) |
 | `tautological-assertion`  | 10      | `assert!(true)`, `assert_eq!(x, x)`, literal-vs-literal compare |
 | `no-op-io`                | 8       | All exprs are `let _ = ...;` with no follow-up check            |
 | `surface-only-io`         | 6       | Calls `*.exists()` / `Path::is_file` post-create without read-back |
