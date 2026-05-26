@@ -121,6 +121,20 @@ fn snapshot_should_panic_shell() {
     insta::assert_yaml_snapshot!(file);
 }
 
+// ─── scrap-rs#30 snapshots: BehavioralFact::ResultAsserted recognition ─
+
+#[test]
+fn snapshot_unwrap_chain() {
+    let file = parse_fixture("tests/fixtures/behavioral_facts/unwrap_chain.rs");
+    insta::assert_yaml_snapshot!(file);
+}
+
+#[test]
+fn snapshot_expect_chain() {
+    let file = parse_fixture("tests/fixtures/behavioral_facts/expect_chain.rs");
+    insta::assert_yaml_snapshot!(file);
+}
+
 // ─── S3.1 snapshots: error-recovery fixtures ─────────────────────────
 //
 // These fixtures are syntactically invalid Rust — they exist to
