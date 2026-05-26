@@ -11,7 +11,7 @@
 //! ```jsonc
 //! {
 //!   "schema_version": 1,
-//!   "tool": "scrap4rs",
+//!   "tool": "your-adapter",
 //!   "tool_version": "0.1.0",
 //!   "language": "rust",
 //!   "timestamp": "2026-05-26T00:00:00Z",
@@ -22,6 +22,11 @@
 //!   "diagnostics": { /* present iff verbose mode populated */ }
 //! }
 //! ```
+//!
+//! (The `tool` / `language` / `tool_version` values come from the
+//! adapter binary's [`crate::adapter_meta::AdapterMeta`] —
+//! scrap-core stays adapter-name-agnostic per the source-only
+//! purity CI gate at scrap-rs#18.)
 //!
 //! `result.*` is the truthful gate — immune to `EmitOptions` reshape.
 //! `view.*` carries the filtered display projection. Optional
@@ -243,10 +248,10 @@ struct JsonEnvelope<'a> {
 /// use scrap_core::domain::threshold::ThresholdMode;
 ///
 /// let meta = AdapterMeta {
-///     tool: "scrap4rs",
+///     tool: "your-adapter",
 ///     language: "rust",
 ///     tool_version: env!("CARGO_PKG_VERSION"),
-///     config_file_name: "scrap4rs.toml",
+///     config_file_name: "your-adapter.toml",
 /// };
 /// let report = Report::default();
 /// emit(

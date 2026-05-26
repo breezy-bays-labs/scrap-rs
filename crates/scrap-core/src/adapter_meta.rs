@@ -1,7 +1,6 @@
 //! Adapter-supplied identity for the JSON envelope (and future reporters).
 //!
-//! Every adapter binary (`scrap4rs`, future `scrap4ts`, future
-//! adapters) constructs one of these and threads it into
+//! Every adapter binary constructs one of these and threads it into
 //! `scrap_core::adapters::reporters::*::emit` and the forthcoming
 //! `scrap_core::cli::run` entry point. POD per the constructor-pattern
 //! convention used across `scrap-core::domain` — `Default::default()`
@@ -30,11 +29,13 @@
 //! ## Adapter-name purity
 //!
 //! `scrap-core` source MUST NOT carry adapter-binary-name literals
-//! (`"scrap4rs"`, `"scrap4ts"`) per the source-only `scrap-core
-//! adapter-name literal purity` CI gate. This module references the
-//! pattern abstractly; concrete literals live in adapter-binary
-//! `main.rs` and in `crates/scrap-core/tests/` test fixtures (the
-//! source-only gate scopes to `crates/scrap-core/src/`).
+//! per the source-only `scrap-core adapter-name literal purity` CI
+//! gate. This module references the pattern abstractly; concrete
+//! literals live in adapter-binary `main.rs` and in
+//! `crates/scrap-core/tests/` test fixtures (the source-only gate
+//! scopes to `crates/scrap-core/src/`, the latter is covered by
+//! per-line `tracked: scrap-rs#37` grandfather markers when test
+//! fixtures need realism).
 //!
 //! tracked: scrap-rs#73 — `adr-port-surface-and-domain-conventions`
 //! ADR not yet authored; this module's design references the existing
@@ -52,8 +53,11 @@
 /// docstring "Why no Default" rationale.
 #[derive(Debug, Clone)]
 pub struct AdapterMeta {
-    /// Adapter tool name, e.g. `"scrap4rs"`. Emitted verbatim into the
-    /// JSON envelope's `tool` field.
+    /// Adapter tool name, e.g. a generic `your-adapter` placeholder
+    /// here (concrete adapter binaries supply their own literal at
+    /// construction time — `scrap-core` source stays adapter-name-
+    /// agnostic per scrap-rs#18). Emitted verbatim into the JSON
+    /// envelope's `tool` field.
     pub tool: &'static str,
     /// Source-language identifier, e.g. `"rust"` / `"typescript"`.
     /// Emitted verbatim into the JSON envelope's `language` field.
@@ -62,10 +66,11 @@ pub struct AdapterMeta {
     /// Emitted verbatim into the JSON envelope's `tool_version`
     /// field.
     pub tool_version: &'static str,
-    /// Per-adapter config-file basename (e.g. `"scrap4rs.toml"`).
-    /// Used by `cli::config::discover_config(start, file_name)`;
-    /// lives here so every adapter-binary metadata lives in one
-    /// place.
+    /// Per-adapter config-file basename (e.g. a generic
+    /// `your-adapter.toml`; concrete adapter binaries supply the
+    /// real basename). Used by
+    /// `cli::config::discover_config(start, file_name)`; lives here
+    /// so every adapter-binary metadata lives in one place.
     pub config_file_name: &'static str,
 }
 
@@ -73,33 +78,33 @@ pub struct AdapterMeta {
 mod tests {
     use super::*;
 
-    // Test-fixture meta. The `"scrap4rs"` literal here is OK because
-    // the source-only adapter-name literal purity CI gate scopes to
-    // `crates/scrap-core/src/`, NOT `tests/` or `#[cfg(test)] mod`
-    // blocks within src/. scrap-rs#37 expands the gate to tests/ via
-    // a `tracked: scrap-rs#37` per-line grandfather marker — when
-    // that lands, this fixture stays valid because it's in a
-    // `#[cfg(test)]` block under src/, not in `tests/`.
+    // Test-fixture meta uses a generic adapter-name placeholder so
+    // the source-only adapter-name literal purity CI gate
+    // (scrap-rs#18) stays green even on `#[cfg(test)] mod` blocks
+    // under `src/` — that gate scopes to `crates/scrap-core/src/`
+    // and does NOT exempt cfg(test) blocks. Real adapter-name
+    // literals live in `tests/` fixtures (out of source-gate scope)
+    // and in adapter-binary `main.rs` (a different crate).
     //
     // Constructed-inline below rather than as a const because
     // `AdapterMeta` doesn't impl `Copy` and a `const fn` constructor
     // would over-restrict future field shapes.
     fn fixture_meta() -> AdapterMeta {
         AdapterMeta {
-            tool: "scrap4rs",
+            tool: "test-adapter",
             language: "rust",
             tool_version: "0.1.0",
-            config_file_name: "scrap4rs.toml",
+            config_file_name: "test-adapter.toml",
         }
     }
 
     #[test]
     fn adapter_meta_constructs_with_all_fields() {
         let meta = fixture_meta();
-        assert_eq!(meta.tool, "scrap4rs");
+        assert_eq!(meta.tool, "test-adapter");
         assert_eq!(meta.language, "rust");
         assert_eq!(meta.tool_version, "0.1.0");
-        assert_eq!(meta.config_file_name, "scrap4rs.toml");
+        assert_eq!(meta.config_file_name, "test-adapter.toml");
     }
 
     #[test]
