@@ -1,6 +1,5 @@
 ---
 source: crates/scrap4rs/tests/parser_snapshots.rs
-assertion_line: 49
 expression: file
 ---
 path: tests/fixtures/opt_outs/allows.rs
@@ -19,6 +18,7 @@ tests:
     implicit_assertion_sources: []
     opt_outs:
       - no_asserts
+    behavioral_facts: []
   - identity:
       file_path: tests/fixtures/opt_outs/allows.rs
       qualified_name: allows_tautology
@@ -33,6 +33,7 @@ tests:
     implicit_assertion_sources: []
     opt_outs:
       - tautology
+    behavioral_facts: []
   - identity:
       file_path: tests/fixtures/opt_outs/allows.rs
       qualified_name: allows_no_op
@@ -47,6 +48,7 @@ tests:
     implicit_assertion_sources: []
     opt_outs:
       - no_op
+    behavioral_facts: []
   - identity:
       file_path: tests/fixtures/opt_outs/allows.rs
       qualified_name: allows_two_keys
@@ -62,6 +64,7 @@ tests:
     opt_outs:
       - tautology
       - no_op
+    behavioral_facts: []
   - identity:
       file_path: tests/fixtures/opt_outs/allows.rs
       qualified_name: no_opt_outs
@@ -75,4 +78,5 @@ tests:
     body_line_count: 0
     implicit_assertion_sources: []
     opt_outs: []
+    behavioral_facts: []
 diagnostics: []

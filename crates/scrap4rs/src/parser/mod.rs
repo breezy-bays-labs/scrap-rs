@@ -166,6 +166,14 @@ pub(crate) fn extract_parsed_test(
     let mut implicit_assertion_sources = body_visitor.implicit_assertion_sources;
     implicit_assertion_sources.extend(implicit_sources_from_attributes(item));
 
+    // Empty `behavioral_facts` placeholder for per-commit bisectability —
+    // commit 3 swaps this for `body_visitor.behavioral_facts` once the
+    // `visit_expr_method_call` override lands. Per scrap-rs#30 plan's
+    // CEng FOLD-REQUIRED 1 (per memory `feedback_cargo-check-after-mod-tree-edits`):
+    // commit 2 must compile in isolation, so we pre-seed the new positional
+    // arg with an empty BTreeSet here.
+    let behavioral_facts = std::collections::BTreeSet::new();
+
     ParsedTest::new(
         TestIdentity::new(file_path.clone(), qualified_name, identity_span),
         attributes,
@@ -173,6 +181,7 @@ pub(crate) fn extract_parsed_test(
         body_line_count,
         implicit_assertion_sources,
         opt_outs,
+        behavioral_facts,
     )
 }
 

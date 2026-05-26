@@ -1,6 +1,5 @@
 ---
 source: crates/scrap4rs/tests/parser_snapshots.rs
-assertion_line: 109
 expression: file
 ---
 path: tests/fixtures/runner_shells/cucumber_shell.rs
@@ -19,4 +18,5 @@ tests:
     implicit_assertion_sources:
       - cucumber
     opt_outs: []
+    behavioral_facts: []
 diagnostics: []

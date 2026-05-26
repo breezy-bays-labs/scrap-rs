@@ -1,6 +1,5 @@
 ---
 source: crates/scrap4rs/tests/parser_snapshots.rs
-assertion_line: 43
 expression: file
 ---
 path: tests/fixtures/attribute_variants.rs
@@ -18,6 +17,7 @@ tests:
     body_line_count: 0
     implicit_assertion_sources: []
     opt_outs: []
+    behavioral_facts: []
   - identity:
       file_path: tests/fixtures/attribute_variants.rs
       qualified_name: tokio_test
@@ -31,6 +31,7 @@ tests:
     body_line_count: 0
     implicit_assertion_sources: []
     opt_outs: []
+    behavioral_facts: []
   - identity:
       file_path: tests/fixtures/attribute_variants.rs
       qualified_name: rstest_test
@@ -44,6 +45,7 @@ tests:
     body_line_count: 0
     implicit_assertion_sources: []
     opt_outs: []
+    behavioral_facts: []
   - identity:
       file_path: tests/fixtures/attribute_variants.rs
       qualified_name: should_panic_test
@@ -60,6 +62,7 @@ tests:
     implicit_assertion_sources:
       - should_panic
     opt_outs: []
+    behavioral_facts: []
   - identity:
       file_path: tests/fixtures/attribute_variants.rs
       qualified_name: bare_ignore
@@ -75,6 +78,7 @@ tests:
     body_line_count: 0
     implicit_assertion_sources: []
     opt_outs: []
+    behavioral_facts: []
   - identity:
       file_path: tests/fixtures/attribute_variants.rs
       qualified_name: ignore_with_reason
@@ -90,6 +94,7 @@ tests:
     body_line_count: 0
     implicit_assertion_sources: []
     opt_outs: []
+    behavioral_facts: []
   - identity:
       file_path: tests/fixtures/attribute_variants.rs
       qualified_name: ignore_with_list
@@ -105,4 +110,5 @@ tests:
     body_line_count: 0
     implicit_assertion_sources: []
     opt_outs: []
+    behavioral_facts: []
 diagnostics: []

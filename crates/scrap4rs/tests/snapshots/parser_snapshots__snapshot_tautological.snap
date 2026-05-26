@@ -1,6 +1,5 @@
 ---
 source: crates/scrap4rs/tests/parser_snapshots.rs
-assertion_line: 63
 expression: file
 ---
 path: tests/fixtures/true_positives/tautological.rs
@@ -28,4 +27,5 @@ tests:
     body_line_count: 3
     implicit_assertion_sources: []
     opt_outs: []
+    behavioral_facts: []
 diagnostics: []
