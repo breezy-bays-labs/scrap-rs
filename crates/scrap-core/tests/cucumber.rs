@@ -31,6 +31,7 @@ use scrap_core::adapters::source::fs::FsWalker;
 use scrap_core::adapters::source::memory::MemorySource;
 use scrap_core::cli::config::{ConfigError, FileConfig};
 use scrap_core::domain::config::AnalysisConfig;
+use scrap_core::domain::finding::Finding;
 use scrap_core::domain::source::{DiscoveryOutcome, SourceDiagnostic, SourceDiagnosticKind};
 use scrap_core::domain::types::{FilePath, SourceRoot};
 use scrap_core::ports::source::{SourceError, SourcePort};
@@ -48,6 +49,9 @@ use std::path::{Path, PathBuf};
 
 #[path = "cucumber_steps/config.rs"]
 mod config_steps;
+
+#[path = "cucumber_steps/json_reporter.rs"]
+mod json_reporter_steps;
 
 // ─── World ──────────────────────────────────────────────────────────
 
@@ -70,6 +74,11 @@ pub struct World {
     pub config_fixture_path: Option<PathBuf>,
     pub config_load_result: Option<Result<FileConfig, ConfigError>>,
     pub discover_result: Option<Result<Option<PathBuf>, ConfigError>>,
+    /// scrap-rs#14 JSON envelope reporter fields — populated by
+    /// `cucumber_steps::json_reporter` step defs.
+    pub envelope_findings: Vec<Finding>,
+    pub envelope_output: Option<Vec<u8>>,
+    pub envelope_output_alt: Option<Vec<u8>>,
 }
 
 // ─── Background ─────────────────────────────────────────────────────

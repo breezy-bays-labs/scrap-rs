@@ -24,7 +24,13 @@
 //!   `SourcePort`/`SourceError`, `TestParserPort`/`ParseError`.
 //! - [`core`] — generic orchestration over ports (planned).
 //! - [`detectors`] — per-smell detector modules (planned).
-//! - [`adapters`] — language-agnostic adapter implementations: file walker, reporters (planned).
+//! - [`adapters`] — language-agnostic adapter implementations: file walker, reporters.
+//!   - [`adapters::reporters::json`] — v0.1 JSON envelope reporter (`scrap-rs#14`):
+//!     `emit()` free function + `EmitOptions`, `ViewSpec`, `ViewBlock`,
+//!     `DeltaBlock`, `DiagnosticsBlock`. Wire shape per `adr-nested-json-envelope`.
+//! - [`adapter_meta`] — `AdapterMeta` adapter-binary identity bundle
+//!   (`scrap-rs#14`); top-level placement so reporters and the future
+//!   `cli::run` consume the same type without crossing module boundaries.
 //! - [`cli`] — CLI surface: clap derive struct, `AnalysisConfig`, `ExitCode`, generic run loop.
 //!   - [`cli::config`] — project-level TOML config schema (`scrap-rs#18`):
 //!     `FileConfig`, `OptOutPolicy`, `DetectorConfig`, `Override`,
@@ -33,6 +39,7 @@
 
 #![warn(missing_docs)]
 
+pub mod adapter_meta;
 pub mod adapters;
 pub mod cli;
 pub mod core;

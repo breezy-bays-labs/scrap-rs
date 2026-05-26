@@ -7,9 +7,10 @@
 //!
 //! Module skeleton:
 //! - `source/` — `SourcePort` impls (`fs::FsWalker`, `memory::MemorySource`)
-//! - `parser/` — syn AST walker, attribute + assertion recognition (v0.1 P10–P11)
-//! - `detectors/` — one detector module per smell (v0.1 P13–P17)
-//! - `config.rs` — `scrap4rs.toml` schema (v0.1 P22)
-//! - `reporters/` — JSON / Markdown / table / SARIF / scorecard-row (v0.1 P18–P21, v0.2 P29)
+//! - `reporters/` — free-function reporters (`json` live; markdown / stdout / sarif / scorecard-row planned)
+//! - `parser/` — adapter-specific (lives in `crates/scrap4rs/src/parser/`, NOT here)
+//! - `detectors/` — one detector module per smell (lives in `crates/scrap-core/src/detectors/`)
+//! - `config.rs` — `scrap4rs.toml` schema (lives in `crates/scrap-core/src/cli/config.rs`)
 
+pub mod reporters;
 pub mod source;
