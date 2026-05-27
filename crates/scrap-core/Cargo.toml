@@ -57,6 +57,11 @@ toml = { workspace = true }
 # dev-dependencies in scrap-rs#14 — was only used by snapshot tests
 # until the reporter landed.
 serde_json = { workspace = true }
+# `comfy-table` powers the terminal table reporter at
+# `adapters/reporters/table.rs` (scrap-rs#16). Allowed dep per
+# AGENTS.md scrap-core deps table. Shared version via
+# `[workspace.dependencies]`.
+comfy-table = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

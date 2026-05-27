@@ -46,6 +46,16 @@ cucumber = "0.23"
 # inside step defs, so the 2026-04-26 cucumber+parking_lot
 # deadlock vector does not apply.
 tokio = { version = "1", features = ["macros", "rt"] }
+# `comfy-table` powers the terminal table reporter at
+# `crates/scrap-core/src/adapters/reporters/table.rs` (scrap-rs#16).
+# `"7"` resolves as `^7.0.0` per Cargo SemVer rules — accepts any
+# minor or patch bump within major 7. Snapshot stability does NOT
+# rely on this pin; it relies on D-SNAP-1 interactive re-bless
+# discipline (`cargo insta review` — NEVER blind accept) on every
+# comfy-table bump, including minors. House style is `^N`-style
+# elsewhere (`serde = { version = "1" }`); kept consistent here.
+# Allowed dep per AGENTS.md scrap-core deps table.
+comfy-table = "7"
 # `syn` powers the Rust-source parser adapter in scrap4rs (lands
 # with scrap-rs#12). Confined to `crates/scrap4rs/` per
 # adr-hexagonal-layout; `scrap-core` stays AST-pure (ast-purity CI
