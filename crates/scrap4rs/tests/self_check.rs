@@ -1,0 +1,111 @@
+//! In-repo dogfood: run each `scrap-core` detector against scrap4rs's
+//! own source tree (`crates/scrap4rs/src/`) and assert zero findings.
+//!
+//! Per Christopher's per-detector self-check pattern (decision
+//! 2026-05-26), every v0.1 detector adds one `test_<detector>_self_check`
+//! here as it ships. The first such test (`test_zero_assertion_self_check`,
+//! scrap-rs#30) lands with the zero-assertion detector; agent-24 will add
+//! `test_tautological_self_check` atop this module when scrap-rs#24 ships;
+//! #25 / #26 / #27 follow with `test_no_op_io_self_check`,
+//! `test_surface_only_io_self_check`, `test_large_example_self_check`.
+//!
+//! Why this lives in `crates/scrap4rs/tests/` rather than `crates/scrap-core/tests/`:
+//! scrap-core deps deny AST libraries; the self-check needs to parse real
+//! Rust source via `SynTestParser`. This is the cleanest cross-port
+//! integration surface — scrap-core's detectors consume `ParsedTest`,
+//! scrap4rs's parser produces it, and the self-check exercises the full
+//! parser-to-detector stack on the workspace's own source.
+//!
+//! Why scrap-core's source isn't included: detectors live in scrap-core
+//! and walking that tree would create a circular semantic dependency
+//! (the detector grading its own implementation). scrap4rs's source
+//! (the parser adapter + thin main) is the right dogfood surface.
+//!
+//! Self-check expectation: every test fn in `crates/scrap4rs/src/`
+//! includes explicit `assert*!` macros or implicit-assertion sources
+//! (`should_panic`, runner shells) or `.unwrap()`/`.expect()` chains —
+//! so the zero-assertion detector should NEVER fire. A non-zero finding
+//! count is a real regression: either scrap4rs's source has acquired a
+//! genuinely zero-assertion test (fix the test) OR the detector has a
+//! false positive (fix the detector). Either way, the test names the
+//! offending fixture so the next step is clear.
+
+use scrap_core::adapters::source::fs::FsWalker;
+use scrap_core::cli::config::DetectorConfig;
+use scrap_core::detectors::zero_assertion;
+use scrap_core::domain::config::AnalysisConfig;
+use scrap_core::domain::types::{FilePath, SourceRoot};
+use scrap_core::ports::parser::TestParserPort;
+use scrap_core::ports::source::SourcePort;
+use scrap4rs::parser::SynTestParser;
+
+/// Walk `crates/scrap4rs/src/`, parse every `.rs` file via `SynTestParser`,
+/// and return the projected `ParsedTest`s. Skips files that fail to parse
+/// (none expected on a clean tree; would surface as a separate test
+/// regression if it happened).
+fn parse_scrap4rs_src() -> Vec<scrap_core::domain::parsed::ParsedTest> {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let src_root = manifest_dir.join("src");
+    let cfg = AnalysisConfig::new(
+        SourceRoot::new(&src_root),
+        Vec::new(),
+        vec!["rs".to_string()],
+        true,
+    );
+    let walker = FsWalker::try_new(cfg).expect("walker construction");
+    let outcome = walker.discover_test_files().expect("source walk");
+
+    let parser = SynTestParser::new();
+    let mut all_tests = Vec::new();
+    for file_path in &outcome.files {
+        // FsWalker returns paths relative to `AnalysisConfig::src` (per
+        // its docstring: "Emitted file paths are relative to
+        // `AnalysisConfig::src` so reports and snapshots are stable
+        // across machines"). Reading from disk requires the absolute
+        // path; we keep the FilePath stamp on `ParsedTest::identity`
+        // relative so test names don't include `/Users/...` prefixes.
+        let abs = src_root.join(file_path.as_path());
+        let source =
+            std::fs::read_to_string(&abs).unwrap_or_else(|e| panic!("read {}: {e}", abs.display()));
+        let parsed = parser
+            .parse_test_source(&source, &FilePath::new(file_path.as_path()))
+            .unwrap_or_else(|e| panic!("parse {file_path}: {e:?}"));
+        all_tests.extend(parsed.tests);
+    }
+    all_tests
+}
+
+#[test]
+fn test_zero_assertion_self_check() {
+    // CQO FOLD-REQUIRED pattern (memory `feedback_pristine-test-output`):
+    // collect all offending findings BEFORE asserting, so the failure
+    // names every offender at once. One-fixture-fails-stops-the-loop
+    // hides regressions from downstream agentic loops.
+    let tests = parse_scrap4rs_src();
+    assert!(
+        !tests.is_empty(),
+        "self-check guard: expected to find at least one #[test] fn in crates/scrap4rs/src/; \
+         got zero — either the walker regressed or scrap4rs has no tests",
+    );
+
+    let cfg = DetectorConfig::default();
+    let mut offenders: Vec<String> = Vec::new();
+    for parsed in &tests {
+        if zero_assertion::detect(parsed, &cfg).is_some() {
+            offenders.push(format!(
+                "{file}::{name}",
+                file = parsed.identity.file_path,
+                name = parsed.identity.qualified_name.as_str(),
+            ));
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "zero-assertion self-check failed: {n} test(s) in crates/scrap4rs/src/ trigger the detector:\n  - {list}\n\
+         \nEither the test is genuinely smelly (add assertions / implicit source / .unwrap()) \
+         or the detector has a false positive (fix the detector + add a runner-shell fixture).",
+        n = offenders.len(),
+        list = offenders.join("\n  - "),
+    );
+}
