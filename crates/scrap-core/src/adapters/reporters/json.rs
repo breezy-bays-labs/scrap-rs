@@ -390,6 +390,7 @@ mod tests {
                     Severity::High,
                     Actionability::AutoRefactor,
                     penalty,
+                    None,
                 )],
             )
         }
