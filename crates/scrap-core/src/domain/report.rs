@@ -221,6 +221,7 @@ mod tests {
                 severity,
                 Actionability::AutoRefactor,
                 penalty,
+                None,
             )],
         )
     }
