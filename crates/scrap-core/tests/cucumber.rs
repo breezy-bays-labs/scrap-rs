@@ -57,6 +57,9 @@ mod json_reporter_steps;
 #[path = "cucumber_steps/detectors_zero_assertion.rs"]
 mod detectors_zero_assertion_steps;
 
+#[path = "cucumber_steps/tautological.rs"]
+mod tautological_steps;
+
 // ─── World ──────────────────────────────────────────────────────────
 
 /// Per-scenario state. Cucumber-rs constructs a fresh `World` for each
@@ -83,8 +86,13 @@ pub struct World {
     pub envelope_findings: Vec<Finding>,
     pub envelope_output: Option<Vec<u8>>,
     pub envelope_output_alt: Option<Vec<u8>>,
-    /// scrap-rs#30 zero-assertion detector fields — populated by
-    /// `cucumber_steps::detectors_zero_assertion` step defs.
+    /// Shared per-detector cucumber-scenario state — populated by every
+    /// detector's step file (`cucumber_steps::detectors_zero_assertion`
+    /// at scrap-rs#30, `cucumber_steps::tautological` at scrap-rs#24,
+    /// future detector step files at scrap-rs#25/#26/#27). The fields
+    /// reset per-scenario (cucumber re-instantiates `World` via
+    /// `Default`), so different detector scenarios can't collide on
+    /// these slots within a single run.
     pub parsed_test: Option<ParsedTest>,
     pub detector_config: Option<DetectorConfig>,
     pub detect_result: Option<Option<Finding>>,

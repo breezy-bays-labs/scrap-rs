@@ -1,0 +1,21 @@
+---
+source: crates/scrap4rs/tests/parser_snapshots.rs
+expression: file
+---
+path: tests/fixtures/runner_shells/tautological_inside_proptest.rs
+tests:
+  - identity:
+      file_path: tests/fixtures/runner_shells/tautological_inside_proptest.rs
+      qualified_name: it
+      span:
+        start_line: 19
+        end_line: 25
+    attributes:
+      - name: test
+        raw: ~
+    assertions: []
+    body_line_count: 5
+    implicit_assertion_sources:
+      - proptest
+    opt_outs: []
+diagnostics: []

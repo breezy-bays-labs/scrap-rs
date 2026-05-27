@@ -295,6 +295,47 @@ fn then_test_has_implicit_assertion_source(w: &mut World, test_name: String, var
     );
 }
 
+// ─── Tautological-assertion structural-fact inspection (scrap-rs#24) ──
+
+#[then(regex = r#"^test "([^"]+)" assertion (\d+) has single_arg_value Bool\((true|false)\)$"#)]
+fn then_assertion_single_arg_value_bool(
+    w: &mut World,
+    test_name: String,
+    index: usize,
+    val: String,
+) {
+    use scrap_core::domain::literal_value::LiteralValue;
+    let test = find_test(assert_ok(w), &test_name);
+    let assertion = test.assertions.get(index).unwrap_or_else(|| {
+        panic!(
+            "test {test_name:?} has only {} assertions; index {index} OOB",
+            test.assertions.len()
+        )
+    });
+    let expected = LiteralValue::Bool(val == "true");
+    assert_eq!(
+        assertion.single_arg_value.as_ref(),
+        Some(&expected),
+        "test {test_name:?} assertion {index} single_arg_value mismatch",
+    );
+}
+
+#[then(regex = r#"^test "([^"]+)" assertion (\d+) has arguments_identical (true|false)$"#)]
+fn then_assertion_arguments_identical(w: &mut World, test_name: String, index: usize, val: String) {
+    let test = find_test(assert_ok(w), &test_name);
+    let assertion = test.assertions.get(index).unwrap_or_else(|| {
+        panic!(
+            "test {test_name:?} has only {} assertions; index {index} OOB",
+            test.assertions.len()
+        )
+    });
+    let expected = val == "true";
+    assert_eq!(
+        assertion.arguments_identical, expected,
+        "test {test_name:?} assertion {index} arguments_identical mismatch",
+    );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────
 
 #[tokio::main(flavor = "current_thread")]

@@ -8,9 +8,9 @@
 //!
 //! Module skeleton (lands as detector PRs ship):
 //! - `zero_assertion.rs` — body has no assert*!/`should_panic`/etc.
-//!   and no implicit-assertion source (P13)
-//! - `tautological_assertion.rs` — `assert!(true)`, `assert_eq!(x, x)`,
-//!   literal-vs-literal compare (P14)
+//!   and no implicit-assertion source (P13) — scrap-rs#30
+//! - [`tautological_assertion`] — `assert!(true)`, `assert_eq!(x, x)`,
+//!   literal-vs-literal compare (P14) — scrap-rs#24
 //! - `no_op_io.rs` — body is `let _ = ...;` with no follow-up check (P15)
 //! - `surface_only_io.rs` — `*.exists()` post-create without read-back (P16)
 //! - `large_example.rs` — body exceeds configured line threshold (P17)
@@ -19,4 +19,5 @@
 //! inherits them via the linkage; only the parser adapter is
 //! language-specific.
 
+pub mod tautological_assertion;
 pub mod zero_assertion;

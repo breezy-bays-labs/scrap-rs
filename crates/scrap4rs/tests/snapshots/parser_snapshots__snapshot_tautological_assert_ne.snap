@@ -1,0 +1,26 @@
+---
+source: crates/scrap4rs/tests/parser_snapshots.rs
+expression: file
+---
+path: tests/fixtures/true_positives/tautological_assert_ne.rs
+tests:
+  - identity:
+      file_path: tests/fixtures/true_positives/tautological_assert_ne.rs
+      qualified_name: assert_ne_x_x_is_tautological
+      span:
+        start_line: 16
+        end_line: 20
+    attributes:
+      - name: test
+        raw: ~
+    assertions:
+      - name: assert_ne
+        raw_args: "x , x"
+        span:
+          start_line: 19
+          end_line: 19
+        arguments_identical: true
+    body_line_count: 3
+    implicit_assertion_sources: []
+    opt_outs: []
+diagnostics: []

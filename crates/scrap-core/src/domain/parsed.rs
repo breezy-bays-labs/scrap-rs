@@ -189,12 +189,14 @@ pub struct ParsedAssertion {
     /// **Whitespace caveat:** `TokenStream::to_string()` *normalizes*
     /// whitespace — `assert_eq!(1, 1)` produces
     /// `Some("1 , 1".to_string())`, NOT `Some("1, 1".to_string())`.
-    /// Source-byte fidelity is NOT preserved; detectors comparing
-    /// `raw_args` for equality (e.g. the v0.1 tautological-assertion
-    /// detector at scrap-rs#24, which classifies `assert_eq!(x, x)`)
-    /// must account for the normalization. The Rust parser ships
-    /// the tokens it received from `syn`; tautology classification
-    /// happens detector-side.
+    /// Source-byte fidelity is NOT preserved. The Semantic Facts
+    /// pattern (scrap-rs#24) avoids the normalization pitfall for the
+    /// `tautological-assertion` detector by parsing the tokens
+    /// *upstream* in `scrap4rs::parser::tautology::extract_tautology_facts`
+    /// and exposing typed predicates (`arguments_identical`,
+    /// `single_arg_value`) on this struct — detectors read those
+    /// predicates rather than re-parsing `raw_args`. `raw_args` stays
+    /// as a debugging breadcrumb / future-detector escape hatch.
     ///
     /// `Some("")` would only appear if a macro accepted whitespace-
     /// only tokens, which the v0.1 set does not.
@@ -202,18 +204,55 @@ pub struct ParsedAssertion {
     pub raw_args: Option<String>,
     /// Source span of the assertion call.
     pub span: Span,
+    /// `true` when the assertion macro's tokens parse as exactly two
+    /// comma-separated expressions whose token-stream stringifications
+    /// are byte-equal. Drives the `assert_eq!(x, x)` / `assert_ne!(x, x)`
+    /// half of the `tautological-assertion` detector (scrap-rs#24).
+    ///
+    /// **False on all single-arg, three-or-more-arg, and non-`Expr`
+    /// token shapes.** Locked at v0.1 to *token-string equality*
+    /// (option (a) per pipeline shape doc) — `assert_eq!(x, x.clone())`
+    /// is NOT identical (token streams differ), and `assert_eq!(0, 0_u32)`
+    /// is NOT identical either (different suffix bytes). v0.3+ may
+    /// promote to structural AST equality.
+    ///
+    /// Populated by the parser adapter (Rust:
+    /// `scrap4rs::parser::tautology::extract_tautology_facts`);
+    /// detectors in `scrap-core::detectors` read this field.
+    pub arguments_identical: bool,
+    /// `Some(LiteralValue)` when the assertion macro's tokens parse as
+    /// a single literal expression whose kind is modeled by
+    /// [`crate::domain::literal_value::LiteralValue`]. `None` for
+    /// multi-arg macros, non-literal single args, or empty tokens.
+    /// Drives the `assert!(true)` half of the `tautological-assertion`
+    /// detector (scrap-rs#24) — `Some(LiteralValue::Bool(true))` fires
+    /// the smell; `Some(LiteralValue::Bool(false))` deliberately does
+    /// NOT (Uncle Bob convention; deliberate-failure tests carry
+    /// informational value).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub single_arg_value: Option<crate::domain::literal_value::LiteralValue>,
 }
 
 impl ParsedAssertion {
     /// Canonical constructor. Detector PRs that add semantic-fact fields
-    /// (e.g. `is_tautological`, `arguments_identical`) extend this
-    /// signature additively.
+    /// extend this signature additively; the v0.1 surface is
+    /// `(name, raw_args, span, arguments_identical, single_arg_value)`
+    /// — see scrap-rs#24 for the addition of the two trailing typed
+    /// predicates.
     #[must_use]
-    pub fn new(name: impl Into<String>, raw_args: Option<String>, span: Span) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        raw_args: Option<String>,
+        span: Span,
+        arguments_identical: bool,
+        single_arg_value: Option<crate::domain::literal_value::LiteralValue>,
+    ) -> Self {
         Self {
             name: name.into(),
             raw_args,
             span,
+            arguments_identical,
+            single_arg_value,
         }
     }
 }
@@ -288,6 +327,8 @@ mod tests {
                 "assert_eq",
                 Some("1, 1".into()),
                 Span::new(2, 2),
+                false,
+                None,
             )],
             3,
             Vec::new(),
@@ -400,11 +441,20 @@ mod tests {
 
     #[test]
     fn parsed_assertion_wire_keys() {
-        // Always-present keys (raw_args is conditional via
-        // skip_serializing_if; tested separately below).
-        let json =
-            serde_json::to_value(ParsedAssertion::new("assert_eq", None, Span::new(2, 2))).unwrap();
-        for key in ["name", "span"] {
+        // Always-present keys (raw_args + single_arg_value are
+        // conditional via skip_serializing_if; tested separately
+        // below). arguments_identical IS always present — `false` is
+        // the natural default and the absence-vs-false distinction
+        // carries no detector semantics.
+        let json = serde_json::to_value(ParsedAssertion::new(
+            "assert_eq",
+            None,
+            Span::new(2, 2),
+            false,
+            None,
+        ))
+        .unwrap();
+        for key in ["name", "span", "arguments_identical"] {
             assert!(json.get(key).is_some(), "missing wire key: {key}");
         }
         // `raw_args` MUST NOT appear when None — preserves bytewise
@@ -414,6 +464,11 @@ mod tests {
             json.get("raw_args").is_none(),
             "raw_args should be omitted when None (skip_serializing_if)",
         );
+        // Same skip rule for `single_arg_value`.
+        assert!(
+            json.get("single_arg_value").is_none(),
+            "single_arg_value should be omitted when None (skip_serializing_if)",
+        );
     }
 
     #[test]
@@ -422,11 +477,55 @@ mod tests {
             "assert_eq",
             Some("1, 1".into()),
             Span::new(2, 2),
+            false,
+            None,
         ))
         .unwrap();
         assert_eq!(
             json.get("raw_args"),
             Some(&serde_json::Value::String("1, 1".into())),
+        );
+    }
+
+    #[test]
+    fn parsed_assertion_arguments_identical_true_round_trips() {
+        let pa = ParsedAssertion::new("assert_eq", None, Span::new(2, 2), true, None);
+        let json = serde_json::to_value(&pa).unwrap();
+        assert_eq!(
+            json.get("arguments_identical"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        let back: ParsedAssertion = serde_json::from_value(json).unwrap();
+        assert_eq!(back, pa);
+    }
+
+    #[test]
+    fn parsed_assertion_single_arg_value_some_bool_true_round_trips() {
+        use crate::domain::literal_value::LiteralValue;
+        let pa = ParsedAssertion::new(
+            "assert",
+            Some("true".into()),
+            Span::new(3, 3),
+            false,
+            Some(LiteralValue::Bool(true)),
+        );
+        let json = serde_json::to_value(&pa).unwrap();
+        // Wire shape: { kind: "bool", value: true }.
+        assert_eq!(
+            json.get("single_arg_value"),
+            Some(&serde_json::json!({"kind": "bool", "value": true})),
+        );
+        let back: ParsedAssertion = serde_json::from_value(json).unwrap();
+        assert_eq!(back, pa);
+    }
+
+    #[test]
+    fn parsed_assertion_single_arg_value_none_omits_key() {
+        let pa = ParsedAssertion::new("assert", None, Span::new(3, 3), false, None);
+        let json = serde_json::to_value(&pa).unwrap();
+        assert!(
+            json.get("single_arg_value").is_none(),
+            "single_arg_value should be omitted when None",
         );
     }
 

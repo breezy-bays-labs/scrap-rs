@@ -19,6 +19,7 @@ tests:
         span:
           start_line: 14
           end_line: 14
+        arguments_identical: true
     body_line_count: 2
     implicit_assertion_sources:
       - pretty_assertions

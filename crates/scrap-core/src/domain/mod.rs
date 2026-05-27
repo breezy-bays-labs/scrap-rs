@@ -23,6 +23,7 @@
 //! - `opt_outs` — `OptOut` enum (lands with scrap-rs#12)
 //! - `assertion_sources` — `AssertionSource` enum + `recognise()` (folds in scrap-rs#4 surface via scrap-rs#12)
 //! - `behavioral_fact` — `BehavioralFact` enum (folds in scrap-rs#25's projection surface via scrap-rs#30; first variant `ResultAsserted`)
+//! - `literal_value` — `LiteralValue` enum carrying typed `assert!`-argument facts (lands with scrap-rs#24; consumed by the `tautological-assertion` detector via `ParsedAssertion::single_arg_value: Option<LiteralValue>`)
 //!
 //! Module roster (planned, not yet implemented):
 //! - `score` — saturating-curve helpers (v0.3+ per kickstart plan §3)
@@ -32,6 +33,7 @@ pub mod behavioral_fact;
 pub mod classification;
 pub mod config;
 pub mod finding;
+pub mod literal_value;
 pub mod opt_outs;
 pub mod parsed;
 pub mod report;

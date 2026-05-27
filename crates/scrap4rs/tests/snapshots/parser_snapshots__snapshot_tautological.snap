@@ -19,11 +19,16 @@ tests:
         span:
           start_line: 13
           end_line: 13
+        arguments_identical: false
+        single_arg_value:
+          kind: bool
+          value: true
       - name: assert_eq
         raw_args: "1 , 1"
         span:
           start_line: 14
           end_line: 14
+        arguments_identical: true
     body_line_count: 3
     implicit_assertion_sources: []
     opt_outs: []
