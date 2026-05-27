@@ -32,6 +32,7 @@ use cucumber::{given, then, when};
 use scrap_core::cli::config::DetectorConfig;
 use scrap_core::detectors::zero_assertion;
 use scrap_core::domain::assertion_sources::AssertionSource;
+use scrap_core::domain::classification::{Actionability, Severity};
 use scrap_core::domain::finding::Finding;
 use scrap_core::domain::parsed::{ParsedAssertion, ParsedTest};
 use scrap_core::domain::smell::SmellCategory;
@@ -144,20 +145,18 @@ fn assert_result_is_none(w: &mut World) {
     regex = r"^the result is `Some\(Finding\)` with category `zero_assertion`, severity `high`, actionability `auto_refactor`, and penalty (\d+)$"
 )]
 fn assert_finding_full_shape(w: &mut World, expected_penalty: u32) {
+    // Direct enum comparisons (CodeRabbit nitpick 2026-05-27 on PR #82):
+    // brittleness of `format!("{:?}", smell.severity) == "High"` was that
+    // a future `#[derive(Debug)]` reshape (or a `Debug` impl override)
+    // could silently change the string without changing the semantic
+    // variant. Direct `==` on the enum variants is correct + faster +
+    // doesn't tie the test to Debug formatting choices.
     let finding = detect_outcome(w).expect("expected Some(Finding)");
     assert_eq!(finding.smells.len(), 1, "expected exactly one Smell");
     let smell = &finding.smells[0];
     assert_eq!(smell.category, SmellCategory::ZeroAssertion);
-    assert_eq!(
-        format!("{:?}", smell.severity),
-        "High",
-        "expected severity == High",
-    );
-    assert_eq!(
-        format!("{:?}", smell.actionability),
-        "AutoRefactor",
-        "expected actionability == AutoRefactor",
-    );
+    assert_eq!(smell.severity, Severity::High);
+    assert_eq!(smell.actionability, Actionability::AutoRefactor);
     assert_eq!(smell.penalty, expected_penalty);
 }
 

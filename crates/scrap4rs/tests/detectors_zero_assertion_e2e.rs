@@ -78,3 +78,38 @@ fn e2e_zero_assertion_does_not_trigger_on_runner_shells() {
         unexpected_triggers.join("\n  - "),
     );
 }
+
+#[test]
+fn e2e_zero_assertion_does_not_trigger_on_behavioral_facts() {
+    // Cross-validate the BehavioralFact::ResultAsserted suppression
+    // path against each panic-chain method-ident fixture. Same
+    // collect-then-assert pattern (CQO FOLD-REQUIRED) for stderr clarity.
+    //
+    // Adding a new panic-chain method-ident to `PANIC_CHAIN_METHOD_NAMES`
+    // (`crates/scrap4rs/src/parser/body.rs`) should land alongside a
+    // new fixture here so this list stays exhaustive.
+    let fixtures = [
+        "tests/fixtures/behavioral_facts/unwrap_chain.rs",
+        "tests/fixtures/behavioral_facts/expect_chain.rs",
+        "tests/fixtures/behavioral_facts/unwrap_err_chain.rs",
+        "tests/fixtures/behavioral_facts/expect_err_chain.rs",
+    ];
+
+    let mut unexpected_triggers: Vec<String> = Vec::new();
+    for f in fixtures {
+        for parsed in parse_fixture(f) {
+            if detect(&parsed, &DetectorConfig::default()).is_some() {
+                unexpected_triggers.push(format!(
+                    "{f}::{name}",
+                    name = parsed.identity.qualified_name.as_str(),
+                ));
+            }
+        }
+    }
+
+    assert!(
+        unexpected_triggers.is_empty(),
+        "zero-assertion fired on behavioral_facts fixtures that should suppress it:\n  - {}",
+        unexpected_triggers.join("\n  - "),
+    );
+}

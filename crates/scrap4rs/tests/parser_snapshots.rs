@@ -135,6 +135,18 @@ fn snapshot_expect_chain() {
     insta::assert_yaml_snapshot!(file);
 }
 
+#[test]
+fn snapshot_unwrap_err_chain() {
+    let file = parse_fixture("tests/fixtures/behavioral_facts/unwrap_err_chain.rs");
+    insta::assert_yaml_snapshot!(file);
+}
+
+#[test]
+fn snapshot_expect_err_chain() {
+    let file = parse_fixture("tests/fixtures/behavioral_facts/expect_err_chain.rs");
+    insta::assert_yaml_snapshot!(file);
+}
+
 // ─── S3.1 snapshots: error-recovery fixtures ─────────────────────────
 //
 // These fixtures are syntactically invalid Rust — they exist to

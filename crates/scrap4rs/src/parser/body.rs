@@ -46,6 +46,21 @@ const ASSERTION_MACRO_NAMES: &[&str] = &[
     "todo",
 ];
 
+/// Set of method-call idents that the body walker treats as the
+/// explicit-panic-is-the-assertion pattern. Matched against
+/// `syn::ExprMethodCall::method` (an `Ident`); each fires
+/// `BehavioralFact::ResultAsserted`.
+///
+/// v0.1 recognises both the happy-path forms (`.unwrap()` / `.expect(...)`)
+/// AND the error-path forms (`.unwrap_err()` / `.expect_err(...)`). The
+/// `*_err` siblings are canonical Rust "assert this failed" idioms on
+/// `Result`; without them, a test like
+/// `let _ = parse_invalid_input().unwrap_err();` produces a
+/// false-positive zero-assertion finding (gemini MEDIUM 2026-05-27 on
+/// PR #82). v0.3+ may layer in finer-grained variants (`.unwrap_or_else`,
+/// `.unwrap_unchecked`, etc.) if recall/precision data indicates.
+const PANIC_CHAIN_METHOD_NAMES: &[&str] = &["unwrap", "expect", "unwrap_err", "expect_err"];
+
 /// Per-test body walker. Constructed fresh in `extract_parsed_test`,
 /// drained via the field accessors after the body visit completes.
 pub(crate) struct BodyVisitor {
@@ -177,10 +192,12 @@ impl<'ast> Visit<'ast> for BodyVisitor {
 
     /// Method-call recognition for behavioral-fact projection.
     ///
-    /// Recognises `.unwrap()` and `.expect(...)` chains anywhere in the
-    /// body, projecting them as `BehavioralFact::ResultAsserted`. The
-    /// `BTreeSet` dedupes naturally — multiple `.unwrap()` calls in the
-    /// same body produce one fact entry.
+    /// Recognises the v0.1 panic-chain method-call idioms in
+    /// [`PANIC_CHAIN_METHOD_NAMES`] (`.unwrap()` / `.expect(...)` happy
+    /// path + `.unwrap_err()` / `.expect_err(...)` error path) anywhere
+    /// in the body, projecting each as `BehavioralFact::ResultAsserted`.
+    /// The `BTreeSet` dedupes naturally — multiple panic-chain calls in
+    /// the same body produce one fact entry.
     ///
     /// **DOES** call `visit::visit_expr_method_call(self, node)` —
     /// method-call chains nest naturally (`x.unwrap().unwrap()`), and
@@ -200,7 +217,10 @@ impl<'ast> Visit<'ast> for BodyVisitor {
     /// (`s.ident == "cucumber"`) and at `attributes.rs::is_test_fn`
     /// (`seg.ident == name`).
     fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
-        if node.method == "unwrap" || node.method == "expect" {
+        if PANIC_CHAIN_METHOD_NAMES
+            .iter()
+            .any(|&name| node.method == name)
+        {
             self.behavioral_facts.insert(BehavioralFact::ResultAsserted);
         }
         syn::visit::visit_expr_method_call(self, node);
@@ -593,6 +613,31 @@ mod tests {
         // the receiver chain and still fires on the terminal .unwrap().
         let src = "fn it() { let _ = std::iter::repeat(1u32).take(1).next().unwrap(); }";
         let item = parse_test_fn(src);
+        let mut visitor = BodyVisitor::new();
+        visitor.drive(&item.block);
+        assert_eq!(visitor.behavioral_facts, expected_only_result_asserted());
+    }
+
+    #[test]
+    fn body_visitor_recognises_unwrap_err_chain() {
+        // `let _ = x.unwrap_err();` — canonical "assert this is Err" idiom
+        // on Result. v0.1 recognises the error-path siblings to .unwrap()
+        // alongside the happy path (gemini MEDIUM 2026-05-27 fold-in).
+        let item =
+            parse_test_fn("fn it() { let x: Result<u32, ()> = Err(()); let _ = x.unwrap_err(); }");
+        let mut visitor = BodyVisitor::new();
+        visitor.drive(&item.block);
+        assert_eq!(visitor.behavioral_facts, expected_only_result_asserted());
+    }
+
+    #[test]
+    fn body_visitor_recognises_expect_err_chain() {
+        // `let _ = x.expect_err("msg");` — the message-carrying error-path
+        // sibling to `.expect(...)`. Recognised by the v0.1 panic-chain
+        // ident set (gemini MEDIUM 2026-05-27 fold-in).
+        let item = parse_test_fn(
+            "fn it() { let x: Result<u32, ()> = Err(()); let _ = x.expect_err(\"expected Err\"); }",
+        );
         let mut visitor = BodyVisitor::new();
         visitor.drive(&item.block);
         assert_eq!(visitor.behavioral_facts, expected_only_result_asserted());
