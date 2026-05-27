@@ -43,6 +43,7 @@ fn build_finding(path: &str, name: &str, penalty: u32) -> Finding {
                 Severity::High,
                 Actionability::AutoRefactor,
                 penalty,
+                None,
             )],
         )
     }
