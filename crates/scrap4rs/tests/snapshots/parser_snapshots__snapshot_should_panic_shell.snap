@@ -1,6 +1,5 @@
 ---
 source: crates/scrap4rs/tests/parser_snapshots.rs
-assertion_line: 121
 expression: file
 ---
 path: tests/fixtures/runner_shells/should_panic_shell.rs
@@ -21,4 +20,6 @@ tests:
     implicit_assertion_sources:
       - should_panic
     opt_outs: []
+    behavioral_facts:
+      - result_asserted
 diagnostics: []

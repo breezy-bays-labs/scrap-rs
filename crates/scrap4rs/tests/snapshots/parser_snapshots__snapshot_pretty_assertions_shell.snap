@@ -1,6 +1,5 @@
 ---
 source: crates/scrap4rs/tests/parser_snapshots.rs
-assertion_line: 90
 expression: file
 ---
 path: tests/fixtures/runner_shells/pretty_assertions_shell.rs
@@ -24,4 +23,5 @@ tests:
     implicit_assertion_sources:
       - pretty_assertions
     opt_outs: []
+    behavioral_facts: []
 diagnostics: []

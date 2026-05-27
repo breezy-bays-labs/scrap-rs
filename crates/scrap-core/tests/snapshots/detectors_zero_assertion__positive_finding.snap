@@ -1,0 +1,22 @@
+---
+source: crates/scrap-core/tests/detectors_zero_assertion.rs
+expression: finding
+---
+test:
+  file_path: crates/foo/src/bar.rs
+  qualified_name: "foo::bar::tests::it_does_a_thing"
+  span:
+    start_line: 1
+    end_line: 5
+smells:
+  - category: zero_assertion
+    severity: high
+    actionability: auto_refactor
+    ai_actionability_message: "Add assertions for the function's observable effects."
+    penalty: 10
+    span:
+      start_line: 1
+      end_line: 5
+scrap_score: 10
+exceeds_threshold: false
+opt_outs: []

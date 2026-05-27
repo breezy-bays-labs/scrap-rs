@@ -2,21 +2,21 @@
 source: crates/scrap4rs/tests/parser_snapshots.rs
 expression: file
 ---
-path: tests/fixtures/runner_shells/kani_shell.rs
+path: tests/fixtures/behavioral_facts/unwrap_err_chain.rs
 tests:
   - identity:
-      file_path: tests/fixtures/runner_shells/kani_shell.rs
+      file_path: tests/fixtures/behavioral_facts/unwrap_err_chain.rs
       qualified_name: it
       span:
-        start_line: 8
-        end_line: 12
+        start_line: 13
+        end_line: 17
     attributes:
       - name: test
         raw: ~
     assertions: []
     body_line_count: 3
-    implicit_assertion_sources:
-      - kani
+    implicit_assertion_sources: []
     opt_outs: []
-    behavioral_facts: []
+    behavioral_facts:
+      - result_asserted
 diagnostics: []

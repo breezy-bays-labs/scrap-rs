@@ -29,9 +29,10 @@
 use cucumber::{World as _, gherkin, given, then, when};
 use scrap_core::adapters::source::fs::FsWalker;
 use scrap_core::adapters::source::memory::MemorySource;
-use scrap_core::cli::config::{ConfigError, FileConfig};
+use scrap_core::cli::config::{ConfigError, DetectorConfig, FileConfig};
 use scrap_core::domain::config::AnalysisConfig;
 use scrap_core::domain::finding::Finding;
+use scrap_core::domain::parsed::ParsedTest;
 use scrap_core::domain::source::{DiscoveryOutcome, SourceDiagnostic, SourceDiagnosticKind};
 use scrap_core::domain::types::{FilePath, SourceRoot};
 use scrap_core::ports::source::{SourceError, SourcePort};
@@ -52,6 +53,9 @@ mod config_steps;
 
 #[path = "cucumber_steps/json_reporter.rs"]
 mod json_reporter_steps;
+
+#[path = "cucumber_steps/detectors_zero_assertion.rs"]
+mod detectors_zero_assertion_steps;
 
 // ─── World ──────────────────────────────────────────────────────────
 
@@ -79,6 +83,11 @@ pub struct World {
     pub envelope_findings: Vec<Finding>,
     pub envelope_output: Option<Vec<u8>>,
     pub envelope_output_alt: Option<Vec<u8>>,
+    /// scrap-rs#30 zero-assertion detector fields — populated by
+    /// `cucumber_steps::detectors_zero_assertion` step defs.
+    pub parsed_test: Option<ParsedTest>,
+    pub detector_config: Option<DetectorConfig>,
+    pub detect_result: Option<Option<Finding>>,
 }
 
 // ─── Background ─────────────────────────────────────────────────────

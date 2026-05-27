@@ -2,21 +2,21 @@
 source: crates/scrap4rs/tests/parser_snapshots.rs
 expression: file
 ---
-path: tests/fixtures/runner_shells/cucumber_shell.rs
+path: tests/fixtures/behavioral_facts/expect_chain.rs
 tests:
   - identity:
-      file_path: tests/fixtures/runner_shells/cucumber_shell.rs
+      file_path: tests/fixtures/behavioral_facts/expect_chain.rs
       qualified_name: it
       span:
         start_line: 11
-        end_line: 14
+        end_line: 15
     attributes:
       - name: test
         raw: ~
     assertions: []
-    body_line_count: 2
-    implicit_assertion_sources:
-      - cucumber
+    body_line_count: 3
+    implicit_assertion_sources: []
     opt_outs: []
-    behavioral_facts: []
+    behavioral_facts:
+      - result_asserted
 diagnostics: []

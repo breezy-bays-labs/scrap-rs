@@ -18,3 +18,5 @@
 //! All detectors live in `scrap-core` so every adapter binary
 //! inherits them via the linkage; only the parser adapter is
 //! language-specific.
+
+pub mod zero_assertion;

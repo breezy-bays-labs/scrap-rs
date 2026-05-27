@@ -166,6 +166,11 @@ pub(crate) fn extract_parsed_test(
     let mut implicit_assertion_sources = body_visitor.implicit_assertion_sources;
     implicit_assertion_sources.extend(implicit_sources_from_attributes(item));
 
+    // Behavioral facts populated by `BodyVisitor::visit_expr_method_call`
+    // (`.unwrap()` / `.expect()` chains → `BehavioralFact::ResultAsserted`).
+    // BTreeSet dedupes naturally so multiple chains produce one fact entry.
+    let behavioral_facts = body_visitor.behavioral_facts;
+
     ParsedTest::new(
         TestIdentity::new(file_path.clone(), qualified_name, identity_span),
         attributes,
@@ -173,6 +178,7 @@ pub(crate) fn extract_parsed_test(
         body_line_count,
         implicit_assertion_sources,
         opt_outs,
+        behavioral_facts,
     )
 }
 
