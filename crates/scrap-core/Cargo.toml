@@ -50,11 +50,17 @@ ignore = { workspace = true }
 # `<file>:<line>` context to `ConfigError::InvalidGlob` (subsumes
 # scrap-rs#34). scrap4ts (v0.6+) inherits this loader unchanged.
 toml = { workspace = true }
+# `serde_json` powers the JSON envelope reporter at
+# `adapters/reporters/json.rs` (scrap-rs#14). `serde_json::to_writer_pretty`
+# emits the v0.1 envelope; `serde_json::Error` is the reporter's return
+# type (wraps writer I/O errors via `Error::io`). Promoted from
+# dev-dependencies in scrap-rs#14 — was only used by snapshot tests
+# until the reporter landed.
+serde_json = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
 proptest = { workspace = true }
-serde_json = { workspace = true }
 # Compile-time `assert_obj_safe!` smoke checks for port traits — fails to
 # compile if a future edit introduces a non-object-safe method (e.g. `Self: Sized`,
 # generic methods, `&mut self` requirement on a port trait).

@@ -1,0 +1,101 @@
+---
+source: crates/scrap-core/tests/wire_envelope_snapshot.rs
+expression: pretty
+---
+{
+  "schema_version": 1,
+  "tool": "scrap4rs",
+  "tool_version": "0.1.0",
+  "language": "rust",
+  "timestamp": "2026-05-26T00:00:00Z",
+  "threshold_mode": "default",
+  "result": {
+    "files": [
+      {
+        "file_path": "crates/foo/src/bar.rs",
+        "findings": [
+          {
+            "test": {
+              "file_path": "crates/foo/src/bar.rs",
+              "qualified_name": "foo::bar::tests::it_does_a_thing",
+              "span": {
+                "start_line": 42,
+                "end_line": 51
+              }
+            },
+            "smells": [
+              {
+                "category": "zero_assertion",
+                "severity": "high",
+                "actionability": "auto_refactor",
+                "ai_actionability_message": "Add assertions for the function's observable effects.",
+                "penalty": 10
+              }
+            ],
+            "scrap_score": 10.0,
+            "exceeds_threshold": false,
+            "opt_outs": []
+          }
+        ]
+      }
+    ],
+    "summary": {
+      "total_tests": 412,
+      "total_files": 38,
+      "exceeding_threshold": 1,
+      "by_smell": {
+        "zero_assertion": 1
+      },
+      "by_severity": {
+        "high": 1
+      },
+      "max_scrap_score": 10.0,
+      "average_scrap_score": 0.024
+    },
+    "passed": false
+  },
+  "view": {
+    "spec": {
+      "only_failing": false
+    },
+    "eligible_count": 1,
+    "truncated": false,
+    "shown": [
+      {
+        "test": {
+          "file_path": "crates/foo/src/bar.rs",
+          "qualified_name": "foo::bar::tests::it_does_a_thing",
+          "span": {
+            "start_line": 42,
+            "end_line": 51
+          }
+        },
+        "smells": [
+          {
+            "category": "zero_assertion",
+            "severity": "high",
+            "actionability": "auto_refactor",
+            "ai_actionability_message": "Add assertions for the function's observable effects.",
+            "penalty": 10
+          }
+        ],
+        "scrap_score": 10.0,
+        "exceeds_threshold": false,
+        "opt_outs": []
+      }
+    ],
+    "shown_summary": {
+      "total_tests": 1,
+      "total_files": 1,
+      "exceeding_threshold": 0,
+      "by_smell": {
+        "zero_assertion": 1
+      },
+      "by_severity": {
+        "high": 1
+      },
+      "max_scrap_score": 10.0,
+      "average_scrap_score": 10.0
+    }
+  }
+}
