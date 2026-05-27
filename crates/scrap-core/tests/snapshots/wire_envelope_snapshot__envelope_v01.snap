@@ -56,7 +56,6 @@ expression: pretty
   },
   "view": {
     "spec": {
-      "top": null,
       "only_failing": false
     },
     "eligible_count": 1,

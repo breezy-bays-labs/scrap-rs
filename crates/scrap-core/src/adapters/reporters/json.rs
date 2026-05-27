@@ -120,12 +120,18 @@ pub struct EmitOptions {
 /// produced `view.shown`.
 ///
 /// Mirrors `EmitOptions` field-for-field for v0.1. The wire shape
-/// uses `Option<usize>` for `top` (serializes the `NonZeroUsize` as a
-/// plain integer; `None` → `null`).
+/// uses serde's default `Option<NonZeroUsize>` serialization (plain
+/// integer when `Some`, OMITTED via `skip_serializing_if` when
+/// `None`) per ADR D2's `Option<T>` policy: optional fields use
+/// `#[serde(skip_serializing_if = "Option::is_none")]` so the
+/// no-filter case produces a byte-identical wire shape to "feature
+/// compiled but unused".
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ViewSpec {
-    /// Echo of `EmitOptions::top` — `null` when no truncation.
-    #[serde(serialize_with = "serialize_nonzero")]
+    /// Echo of `EmitOptions::top` — omitted from the wire when no
+    /// truncation. `Some(n)` emits as the plain integer `n` per
+    /// serde's default `NonZeroUsize` Serialize impl.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub top: Option<NonZeroUsize>,
     /// Echo of `EmitOptions::only_failing`.
     pub only_failing: bool,
@@ -321,10 +327,9 @@ fn build_view<'a>(report: &'a Report, options: &EmitOptions) -> ViewBlock<'a> {
     // eligible_count = post-filter, pre-truncate.
     let eligible_count = filtered.len();
 
-    // Truncate.
-    if let Some(top) = options.top
-        && filtered.len() > top.get()
-    {
+    // Truncate. `Vec::truncate` is a no-op when `n >= len`, so the
+    // length guard is unnecessary — drop it for readability.
+    if let Some(top) = options.top {
         filtered.truncate(top.get());
     }
 
@@ -344,25 +349,11 @@ fn build_view<'a>(report: &'a Report, options: &EmitOptions) -> ViewBlock<'a> {
     }
 }
 
-/// Custom serializer for `Option<NonZeroUsize>` — emits the inner
-/// `usize` value (or `null`). Avoids serde's default `Option<NonZero*>`
-/// serializer pulling in a wrapper. Keeps the `view.spec.top` wire
-/// shape as a plain integer.
-///
-/// `&Option<T>` signature is mandated by serde's
-/// `#[serde(serialize_with = ...)]` callback convention — clippy's
-/// `ref_option` and `trivially_copy_pass_by_ref` lints both fire on
-/// this signature but serde does not accept the alternatives.
-#[allow(clippy::ref_option, clippy::trivially_copy_pass_by_ref)]
-fn serialize_nonzero<S>(value: &Option<NonZeroUsize>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    match value {
-        Some(n) => serializer.serialize_some(&n.get()),
-        None => serializer.serialize_none(),
-    }
-}
+// (No custom `Option<NonZeroUsize>` serializer needed — serde's
+// default Serialize impl on `NonZeroUsize` already emits the inner
+// primitive, and `skip_serializing_if = "Option::is_none"` on the
+// field omits the key entirely when `None`. Dropped on bot review;
+// see PR #77 disposition comment.)
 
 // ────────────────────────────────────────────────────────────────────
 // Unit tests — focus on `build_view()` semantics (CABINET MUST-FIX
@@ -571,12 +562,18 @@ mod tests {
     }
 
     #[test]
-    fn view_spec_top_none_serializes_as_null() {
+    fn view_spec_top_none_omitted_via_skip_serializing_if() {
         let spec = ViewSpec {
             top: None,
             only_failing: false,
         };
         let value = serde_json::to_value(&spec).unwrap();
-        assert!(value["top"].is_null(), "top=None serializes as null");
+        let obj = value.as_object().expect("spec serializes as object");
+        assert!(
+            !obj.contains_key("top"),
+            "top=None must be omitted via skip_serializing_if (ADR D2 Option<T> policy); got: {value}",
+        );
+        // only_failing remains present (NOT an Option).
+        assert_eq!(value["only_failing"], false);
     }
 }

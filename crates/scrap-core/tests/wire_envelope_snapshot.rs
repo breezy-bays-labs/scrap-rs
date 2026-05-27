@@ -272,6 +272,14 @@ fn forward_compat_delta_present_empty_round_trips() {
     // v0.4 "delta-was-run-but-no-changes" wire shape today's empty
     // DeltaBlock would produce. Round-trip via Value and assert `{}`
     // stays `{}` (NOT collapsed to null, NOT expanded to anything).
+    //
+    // Note: the literal includes `"top": null` even though today's
+    // live emitter omits the key via `skip_serializing_if` (post bot
+    // review on PR #77). The `Value` round-trip is shape-tolerant by
+    // design — third-party producers that emit a redundant
+    // `"top": null` should still parse cleanly. This is a
+    // forward-compat ASSURANCE: removing a key from the live emit
+    // path doesn't reject incoming envelopes that still carry it.
     let literal = r#"{
   "schema_version": 1,
   "tool": "scrap4rs",
@@ -487,13 +495,21 @@ fn view_block_keys_pinned() {
 
 #[test]
 fn view_spec_keys_pinned() {
+    // Construct with `top = Some(...)` so the `skip_serializing_if`
+    // doesn't elide the field; this test pins the wire-key spelling
+    // for BOTH spec fields. The omit-via-skip behavior for `top: None`
+    // is pinned separately in
+    // `json::tests::view_spec_top_none_omitted_via_skip_serializing_if`.
     let report = fixture_report();
     let meta = test_meta();
     let mut buf = Vec::new();
     emit(
         &report,
         &meta,
-        &EmitOptions::default(),
+        &EmitOptions {
+            top: Some(NonZeroUsize::new(1).unwrap()),
+            only_failing: false,
+        },
         FIXED_TIMESTAMP,
         ThresholdMode::Default,
         &mut buf,
