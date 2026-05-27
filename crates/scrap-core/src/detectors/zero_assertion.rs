@@ -141,6 +141,10 @@ mod tests {
             "assert_eq",
             Some("1, 1".into()),
             Span::new(2, 2),
+            // scrap-rs#24 — non-tautological assertion in this
+            // zero-assertion-detector fixture; defaults are correct.
+            false,
+            None,
         ));
         pt
     }
@@ -275,8 +279,13 @@ mod tests {
     fn detect_returns_none_when_all_three_suppression_branches_populated() {
         // Defense-in-depth: explicit + implicit + behavioral all populated.
         let mut pt = smelly_test();
-        pt.assertions
-            .push(ParsedAssertion::new("assert", None, Span::new(2, 2)));
+        pt.assertions.push(ParsedAssertion::new(
+            "assert",
+            None,
+            Span::new(2, 2),
+            false,
+            None,
+        ));
         pt.implicit_assertion_sources
             .push(AssertionSource::ShouldPanic);
         pt.behavioral_facts.insert(BehavioralFact::ResultAsserted);
@@ -326,6 +335,10 @@ mod tests {
                                 u32::try_from(i).unwrap_or(0) + 1,
                                 u32::try_from(i).unwrap_or(0) + 1,
                             ),
+                            // scrap-rs#24 — zero-assertion proptest uses
+                            // non-tautological assertions; defaults stand.
+                            false,
+                            None,
                         )
                     })
                     .collect();
@@ -426,7 +439,7 @@ mod tests {
             // (a) push an assertion.
             let mut pt_a = pt.clone();
             pt_a.assertions
-                .push(ParsedAssertion::new("assert", None, Span::new(1, 1)));
+                .push(ParsedAssertion::new("assert", None, Span::new(1, 1), false, None));
             prop_assert!(detect(&pt_a, &cfg).is_none(), "adding an assertion must suppress");
 
             // (b) push an implicit source.

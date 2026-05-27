@@ -29,4 +29,5 @@ tests:
     implicit_assertion_sources:
       - should_panic
     opt_outs: []
+    behavioral_facts: []
 diagnostics: []

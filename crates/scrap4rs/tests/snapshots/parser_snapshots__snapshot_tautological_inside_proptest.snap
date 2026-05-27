@@ -18,4 +18,5 @@ tests:
     implicit_assertion_sources:
       - proptest
     opt_outs: []
+    behavioral_facts: []
 diagnostics: []

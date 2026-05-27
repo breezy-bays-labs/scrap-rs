@@ -74,6 +74,12 @@ fn parsed_test_with_assert_eq(w: &mut World) {
         "assert_eq",
         Some("1, 1".into()),
         Span::new(2, 2),
+        // `arguments_identical` + `single_arg_value` added to
+        // `ParsedAssertion::new` at scrap-rs#24. This zero-assertion
+        // fixture uses a non-tautological assertion, so both default
+        // to `false` / `None`.
+        false,
+        None,
     ));
     w.parsed_test = Some(pt);
 }

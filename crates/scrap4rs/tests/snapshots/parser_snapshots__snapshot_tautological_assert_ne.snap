@@ -23,4 +23,5 @@ tests:
     body_line_count: 3
     implicit_assertion_sources: []
     opt_outs: []
+    behavioral_facts: []
 diagnostics: []
