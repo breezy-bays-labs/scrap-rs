@@ -53,8 +53,10 @@ use syn::{Expr, ExprLit, Lit, Token, parse2};
 ///   comma-separated [`syn::Expr`] elements whose
 ///   [`quote::ToTokens::to_token_stream`] output is byte-equal.
 /// - `single_arg_value = Some(LiteralValue)` iff the tokens parse as a
-///   single [`syn::Expr::Lit`] whose inner [`syn::Lit`] is recognised
-///   by [`literal_to_value`].
+///   single [`syn::Expr::Lit`] whose inner `syn::Lit` is recognised
+///   by [`literal_to_value`]. (`syn::Lit` is left unlinked: rustdoc
+///   refuses to disambiguate the bare name because `syn` exports both
+///   a `Lit` enum and a `Lit` macro under the same path.)
 ///
 /// Both predicates default to their "no signal" forms on any parse
 /// failure or shape mismatch (`false` / `None` respectively). The
@@ -93,7 +95,7 @@ pub(crate) fn extract_tautology_facts(tokens: &TokenStream) -> (bool, Option<Lit
     (false, None)
 }
 
-/// Project a [`syn::Lit`] into a [`LiteralValue`] variant. Always
+/// Project a `syn::Lit` into a [`LiteralValue`] variant. Always
 /// returns *some* variant — recognised kinds (`Bool`/`Int`/`Str`/`Char`)
 /// map directly; everything else falls through the `Verbatim` escape
 /// hatch. The caller (`extract_tautology_facts`) wraps the result in
