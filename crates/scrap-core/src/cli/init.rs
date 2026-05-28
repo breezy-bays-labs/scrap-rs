@@ -88,7 +88,14 @@ pub fn handle_init_with_io<W: Write>(
         });
     }
 
-    let detection = detect_src_layout();
+    // Detect layout relative to the config path's parent (PR #91
+    // Gemini HIGH fix). `config_path.parent()` returns `None` for
+    // bare-filename paths (e.g. `Path::new("scrap4rs.toml")`) — in
+    // that case the empty path is equivalent to "current directory"
+    // for `Path::join`/`is_dir` semantics, matching the prior CWD
+    // behavior for the common bare-filename caller path.
+    let base_dir = config_path.parent().unwrap_or_else(|| Path::new(""));
+    let detection = detect_src_layout(base_dir);
     let content = render_config(meta, &detection);
 
     fs::write(config_path, &content).map_err(|source| InitError::Io {
@@ -128,16 +135,20 @@ pub(crate) struct SrcDetection {
     pub is_fallback: bool,
 }
 
-/// Auto-detect the source directory. `src/` wins; `crates/`
-/// second; otherwise fall back to `"src"` with `is_fallback = true`
-/// so the generator stamps a hint comment.
-pub(crate) fn detect_src_layout() -> SrcDetection {
-    if Path::new("src").is_dir() {
+/// Auto-detect the source directory relative to `base_dir`. `src/`
+/// wins; `crates/` second; otherwise fall back to `"src"` with
+/// `is_fallback = true` so the generator stamps a hint comment.
+///
+/// Takes `base_dir` as a parameter so detection runs against the
+/// target directory (typically `config_path.parent()`) rather than
+/// the process CWD (PR #91 Gemini HIGH fix).
+pub(crate) fn detect_src_layout(base_dir: &Path) -> SrcDetection {
+    if base_dir.join("src").is_dir() {
         SrcDetection {
             src_path: "src".to_string(),
             is_fallback: false,
         }
-    } else if Path::new("crates").is_dir() {
+    } else if base_dir.join("crates").is_dir() {
         SrcDetection {
             src_path: "crates".to_string(),
             is_fallback: false,
@@ -230,64 +241,50 @@ mod tests {
         }
     }
 
-    /// Scope-guarded chdir + tempdir RAII guard. Captures the
-    /// process cwd on construction, chdirs into the tempdir, and
-    /// restores cwd on Drop (even on panic) per
-    /// `feedback_pristine-test-output`. Mirrors the `PermissionGuard`
-    /// pattern in `cli/config.rs::tests` for the chmod analog.
-    ///
-    /// `cargo test` runs tests on a single thread by default in some
-    /// runners; nextest parallelizes per-test. Tests that mutate
-    /// process cwd MUST serialize via this guard or risk other
-    /// tests racing on the mutated cwd. We accept that risk for the
-    /// `detect_src_layout` tests because (a) they're scoped to this
-    /// module and (b) they construct their own tempdirs inside the
-    /// guard. The kernel cwd mutation is the unavoidable cost of
-    /// testing `Path::new("src").is_dir()` semantics.
-    struct CwdGuard {
-        original: std::path::PathBuf,
-        _tempdir: tempfile::TempDir,
-    }
-
-    impl CwdGuard {
-        fn enter() -> Self {
-            let tempdir = tempfile::tempdir().expect("tempdir creation");
-            let original = std::env::current_dir().expect("current_dir");
-            std::env::set_current_dir(tempdir.path()).expect("chdir to tempdir");
-            Self {
-                original,
-                _tempdir: tempdir,
-            }
-        }
-    }
-
-    impl Drop for CwdGuard {
-        fn drop(&mut self) {
-            // Best-effort restore — ignore failure so panics in the
-            // test body propagate cleanly.
-            let _ = std::env::set_current_dir(&self.original);
-        }
-    }
+    // No CwdGuard needed: PR #91 Gemini HIGH fix made
+    // `detect_src_layout(base_dir)` parameterized. Every test below
+    // uses a per-test tempdir as the `base_dir` arg, so concurrent
+    // nextest runners never race on process cwd.
 
     // ── detect_src_layout ────────────────────────────────────────────
 
     #[test]
     fn detect_src_layout_prefers_src_over_crates() {
-        let _guard = CwdGuard::enter();
-        std::fs::create_dir("src").unwrap();
-        std::fs::create_dir("crates").unwrap();
-        let det = detect_src_layout();
+        let tempdir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tempdir.path().join("src")).unwrap();
+        std::fs::create_dir(tempdir.path().join("crates")).unwrap();
+        let det = detect_src_layout(tempdir.path());
         assert_eq!(det.src_path, "src");
         assert!(!det.is_fallback);
     }
 
     #[test]
     fn detect_src_layout_falls_back_when_neither_exists() {
-        let _guard = CwdGuard::enter();
+        let tempdir = tempfile::tempdir().unwrap();
         // Empty tempdir — no src/, no crates/.
-        let det = detect_src_layout();
+        let det = detect_src_layout(tempdir.path());
         assert_eq!(det.src_path, "src");
         assert!(det.is_fallback);
+    }
+
+    #[test]
+    fn detect_src_layout_finds_crates_when_only_crates_exists() {
+        let tempdir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tempdir.path().join("crates")).unwrap();
+        let det = detect_src_layout(tempdir.path());
+        assert_eq!(det.src_path, "crates");
+        assert!(!det.is_fallback);
+    }
+
+    #[test]
+    fn detect_src_layout_empty_base_dir_is_cwd_relative() {
+        // PR #91 — `Path::new("")` is the conventional CWD-relative
+        // base when `config_path.parent()` returns None for a bare
+        // filename. Sanity-check the empty path doesn't panic; the
+        // detection result depends on the test runner cwd so we just
+        // assert the call returns a valid struct.
+        let det = detect_src_layout(Path::new(""));
+        assert!(!det.src_path.is_empty());
     }
 
     // ── render_config ───────────────────────────────────────────────
@@ -353,12 +350,12 @@ mod tests {
 
     #[test]
     fn handle_init_with_io_writes_default_in_empty_tempdir() {
-        let _guard = CwdGuard::enter();
+        let tempdir = tempfile::tempdir().unwrap();
+        let path = tempdir.path().join("test-adapter.toml");
         let meta = fixture_meta();
-        let path = Path::new("test-adapter.toml");
         let mut stderr: Vec<u8> = Vec::new();
-        handle_init_with_io(false, &meta, path, &mut stderr).unwrap();
-        let contents = std::fs::read_to_string(path).unwrap();
+        handle_init_with_io(false, &meta, &path, &mut stderr).unwrap();
+        let contents = std::fs::read_to_string(&path).unwrap();
         assert!(contents.contains("src = \"src\""));
         assert!(contents.contains("# threshold_mode = \"default\""));
         let stderr_str = String::from_utf8(stderr).unwrap();
@@ -370,46 +367,48 @@ mod tests {
 
     #[test]
     fn handle_init_with_io_bails_when_exists_without_force() {
-        let _guard = CwdGuard::enter();
-        let path = Path::new("test-adapter.toml");
-        std::fs::write(path, "legacy = true\n").unwrap();
+        let tempdir = tempfile::tempdir().unwrap();
+        let path = tempdir.path().join("test-adapter.toml");
+        std::fs::write(&path, "legacy = true\n").unwrap();
         let meta = fixture_meta();
         let mut stderr: Vec<u8> = Vec::new();
-        let err = handle_init_with_io(false, &meta, path, &mut stderr)
+        let err = handle_init_with_io(false, &meta, &path, &mut stderr)
             .expect_err("must bail without --force");
         match err {
             InitError::Exists { path: p } => {
-                assert_eq!(p, path.to_path_buf());
+                assert_eq!(p, path);
             }
             other => panic!("expected InitError::Exists, got {other:?}"),
         }
         // File content unchanged.
-        let contents = std::fs::read_to_string(path).unwrap();
+        let contents = std::fs::read_to_string(&path).unwrap();
         assert_eq!(contents, "legacy = true\n");
     }
 
     #[test]
     fn handle_init_with_io_overwrites_with_force() {
-        let _guard = CwdGuard::enter();
-        let path = Path::new("test-adapter.toml");
-        std::fs::write(path, "legacy = true\n").unwrap();
+        let tempdir = tempfile::tempdir().unwrap();
+        let path = tempdir.path().join("test-adapter.toml");
+        std::fs::write(&path, "legacy = true\n").unwrap();
         let meta = fixture_meta();
         let mut stderr: Vec<u8> = Vec::new();
-        handle_init_with_io(true, &meta, path, &mut stderr).unwrap();
-        let contents = std::fs::read_to_string(path).unwrap();
+        handle_init_with_io(true, &meta, &path, &mut stderr).unwrap();
+        let contents = std::fs::read_to_string(&path).unwrap();
         assert!(!contents.contains("legacy = true"));
         assert!(contents.contains("src = \"src\""));
     }
 
     #[test]
     fn handle_init_with_io_detects_crates_layout() {
-        let _guard = CwdGuard::enter();
-        std::fs::create_dir("crates").unwrap();
+        let tempdir = tempfile::tempdir().unwrap();
+        // Create crates/ relative to the tempdir (the base_dir
+        // computed from config_path.parent()).
+        std::fs::create_dir(tempdir.path().join("crates")).unwrap();
+        let path = tempdir.path().join("test-adapter.toml");
         let meta = fixture_meta();
-        let path = Path::new("test-adapter.toml");
         let mut stderr: Vec<u8> = Vec::new();
-        handle_init_with_io(false, &meta, path, &mut stderr).unwrap();
-        let contents = std::fs::read_to_string(path).unwrap();
+        handle_init_with_io(false, &meta, &path, &mut stderr).unwrap();
+        let contents = std::fs::read_to_string(&path).unwrap();
         assert!(
             contents.contains("src = \"crates\""),
             "crates/ detection failed; got:\n{contents}",
@@ -423,20 +422,14 @@ mod tests {
         // key that FileConfig doesn't recognize, deny_unknown_fields
         // trips here. This test pins the "init's output is loadable"
         // contract.
-        let _guard = CwdGuard::enter();
+        let tempdir = tempfile::tempdir().unwrap();
+        let path = tempdir.path().join("test-adapter.toml");
         let meta = fixture_meta();
-        let path = Path::new("test-adapter.toml");
         let mut stderr: Vec<u8> = Vec::new();
-        handle_init_with_io(false, &meta, path, &mut stderr).unwrap();
-        // Use absolute path so load_config is independent of cwd
-        // (CwdGuard could restore cwd before load_config fires if
-        // the test panics inside load_config; absolute path
-        // sidesteps that).
-        let abs = std::fs::canonicalize(path).unwrap();
-        let loaded = load_config(&abs)
+        handle_init_with_io(false, &meta, &path, &mut stderr).unwrap();
+        let loaded = load_config(&path)
             .expect("init's generated TOML must load via load_config without error");
-        // src is set per detection (default = "src" in this empty
-        // tempdir → fallback path).
+        // src is set per detection (empty tempdir → fallback path).
         assert_eq!(loaded.src.as_deref(), Some(Path::new("src")));
     }
 

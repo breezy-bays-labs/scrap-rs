@@ -79,17 +79,6 @@ fn config_abs_path(w: &mut World) -> PathBuf {
     ensure_tempdir(w).join("test-adapter.toml")
 }
 
-/// Defer-style guard used inside `run_with_cwd` — restores cwd on
-/// Drop (panic-safe). Hoisted to module-level per
-/// `clippy::items_after_statements`.
-struct CwdRestore(PathBuf);
-
-impl Drop for CwdRestore {
-    fn drop(&mut self) {
-        let _ = std::env::set_current_dir(&self.0);
-    }
-}
-
 // ─── Given steps ────────────────────────────────────────────────────
 
 #[given(regex = r"^a working directory with no existing `test-adapter\.toml`$")]
@@ -126,26 +115,18 @@ fn given_dir_with_malformed_config(w: &mut World) {
 // ─── When steps — `<tool> init` family ──────────────────────────────
 //
 // Uses `handle_init_with_io` (public per scrap-rs#21 W5; absolute
-// path; no cwd mutation). For the auto-detect-layout scenarios, the
-// step temporarily chdirs into the tempdir UNDER A LOCK because
-// `detect_src_layout` reads cwd-relative `Path::new("src")` /
-// `Path::new("crates")`. The lock is the `World` slot's mere
-// presence — see harness comment.
+// path; NO cwd mutation). Per PR #91 Gemini HIGH fix,
+// `handle_init_with_io` now resolves `detect_src_layout` relative to
+// `config_path.parent()`, so the prior chdir + Mutex<()> serialization
+// was eliminated — auto-detect-layout scenarios drop straight through
+// without cwd ceremony.
 
 #[when(regex = r"^the user runs `<tool> init`$")]
 fn when_init_no_force(w: &mut World) {
     let path = config_abs_path(w);
     let meta = fixture_meta();
-    // detect_src_layout reads cwd; for `init` (default) we want it
-    // to NOT find src/crates so the fallback path fires. The
-    // tempdir is empty by default so chdir + detect is safe IFF
-    // we serialize. Per `handle_init_with_io` docstring, callers
-    // should ensure cwd is stable across the call; we mutate-and-
-    // restore the cwd via a process-wide guard.
     let mut stderr: Vec<u8> = Vec::new();
-    let result = run_with_cwd(w, |_w| {
-        init::handle_init_with_io(false, &meta, &path, &mut stderr)
-    });
+    let result = init::handle_init_with_io(false, &meta, &path, &mut stderr);
     w.init_result = Some(result);
     w.cli_stderr = Some(stderr);
 }
@@ -155,9 +136,7 @@ fn when_init_with_force(w: &mut World) {
     let path = config_abs_path(w);
     let meta = fixture_meta();
     let mut stderr: Vec<u8> = Vec::new();
-    let result = run_with_cwd(w, |_w| {
-        init::handle_init_with_io(true, &meta, &path, &mut stderr)
-    });
+    let result = init::handle_init_with_io(true, &meta, &path, &mut stderr);
     w.init_result = Some(result);
     w.cli_stderr = Some(stderr);
     // `init --force` succeeds — exit code 0 (cabinet MF-2 scenario).
@@ -166,34 +145,6 @@ fn when_init_with_force(w: &mut World) {
     } else {
         w.cli_exit_code = Some(2);
     }
-}
-
-/// Run `f` with the process cwd temporarily set to the world's
-/// tempdir. cwd is restored before returning (panic-safe via inner
-/// `with_cwd_lock` guard). Required because `detect_src_layout`
-/// reads cwd-relative `Path::new("src")`.
-///
-/// Serialized via the `CLI_CWD_MUTEX` so concurrent scenarios don't
-/// race on the global cwd.
-fn run_with_cwd<F, R>(w: &mut World, f: F) -> R
-where
-    F: FnOnce(&mut World) -> R,
-{
-    use std::sync::Mutex;
-    static CLI_CWD_MUTEX: Mutex<()> = Mutex::new(());
-    let _guard = CLI_CWD_MUTEX
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-    let tempdir_path = ensure_tempdir(w);
-    let original = std::env::current_dir().expect("current_dir");
-    std::env::set_current_dir(&tempdir_path).expect("chdir to tempdir");
-
-    // Use a defer-style guard to restore cwd even on panic. Struct
-    // hoisted to module-level per clippy::items_after_statements.
-    let _restore = CwdRestore(original);
-
-    f(w)
 }
 
 // ─── When steps — `<tool> --help` / `--version` / `--format bogus` ──
