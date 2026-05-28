@@ -958,6 +958,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "scrap-examples"
+version = "0.1.0"
+dependencies = [
+ "scrap-core",
+ "scrap4rs",
+ "serde_json",
+]
+
+[[package]]
 name = "scrap4rs"
 version = "0.1.0"
 dependencies = [
