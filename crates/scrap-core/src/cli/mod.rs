@@ -47,6 +47,7 @@ pub mod error;
 pub mod init;
 
 use std::io;
+use std::io::Write as _;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -72,7 +73,9 @@ use crate::ports::source::SourcePort;
 
 /// Output format selector. Wraps [`crate::cli::dispatch::FormatArg`]
 /// so domain code stays clap-free; `From<FormatArgClap>` bridges at
-/// the dispatch boundary.
+/// the dispatch boundary. `ValueEnum` gives kebab-case parsing
+/// (`github-annotations`) + the canonical name for error messages,
+/// consumed by [`FormatSpec`]'s `FromStr`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum FormatArgClap {
     /// Nested JSON envelope per `adr-nested-json-envelope`.
@@ -81,8 +84,12 @@ pub enum FormatArgClap {
     Stdout,
     /// Markdown — NOT yet implemented (tracked: scrap-rs#15).
     Markdown,
-    /// SARIF 2.1.0 — NOT yet implemented (tracked: scrap-rs#17).
+    /// SARIF 2.1.0 — GitHub Code Scanning + IDE SARIF viewers.
     Sarif,
+    /// GitHub Actions inline `::warning` annotations (peer format to
+    /// SARIF per scrap-rs#17 D1; canonical usage
+    /// `--format sarif:results.sarif,github-annotations`).
+    GithubAnnotations,
 }
 
 impl From<FormatArgClap> for FormatArg {
@@ -92,8 +99,53 @@ impl From<FormatArgClap> for FormatArg {
             FormatArgClap::Stdout => FormatArg::Stdout,
             FormatArgClap::Markdown => FormatArg::Markdown,
             FormatArgClap::Sarif => FormatArg::Sarif,
+            FormatArgClap::GithubAnnotations => FormatArg::GithubAnnotations,
         }
     }
+}
+
+/// One requested output: a format and an optional file destination.
+///
+/// Parsed from `FORMAT` (write to stdout) or `FORMAT:FILE` (write to
+/// the named file). `--format` accepts a comma-separated list of these
+/// so one analysis pass can fan out to multiple sinks — the shape
+/// composite CI workflows need (e.g.
+/// `sarif:results.sarif,github-annotations`: SARIF to a file for
+/// `upload-sarif`, annotations to stdout for the runner). Mirrors
+/// crap-rs#276's multi-format-with-per-sink model (scrap-rs#17 D1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormatSpec {
+    /// The output format.
+    pub format: FormatArg,
+    /// Destination file. `None` = stdout.
+    pub output: Option<PathBuf>,
+}
+
+impl std::str::FromStr for FormatSpec {
+    type Err = String;
+
+    fn from_str(spec: &str) -> Result<Self, Self::Err> {
+        let (fmt_str, output) = match spec.split_once(':') {
+            Some((f, path)) if !path.is_empty() => (f, Some(PathBuf::from(path))),
+            Some((_, _)) => return Err(format!("empty file path in `--format {spec}`")),
+            None => (spec, None),
+        };
+        // `ValueEnum::from_str` gives case-insensitive kebab-case
+        // parsing (`github-annotations`) — single source of truth for
+        // the format-name spellings (no second hand-maintained table).
+        let format_clap = FormatArgClap::from_str(fmt_str, true)
+            .map_err(|e| format!("invalid format `{fmt_str}`: {e}"))?;
+        Ok(FormatSpec {
+            format: format_clap.into(),
+            output,
+        })
+    }
+}
+
+/// Clap value parser for one comma-separated `--format` entry —
+/// delegates to [`FormatSpec`]'s `FromStr`.
+fn parse_format_spec(s: &str) -> Result<FormatSpec, String> {
+    s.parse()
 }
 
 /// Shell name for completion script generation. Maps to either
@@ -171,16 +223,35 @@ pub struct InputArgs {
     pub config: Option<PathBuf>,
 }
 
-/// `--format` + `--threshold-mode` + `--no-fail` — what the
-/// analyzer's output looks like + how the gate behaves.
+/// `--format` + `--annotation-limit` + `--threshold-mode` +
+/// `--no-fail` — what the analyzer's output looks like + how the gate
+/// behaves.
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Output")]
 pub struct OutputArgs {
-    /// Output format — `json`, `stdout`, `markdown`, or `sarif`.
-    /// Markdown + SARIF are tracked under scrap-rs#15 / scrap-rs#17
-    /// and currently exit with a "not yet implemented" message.
-    #[arg(short, long, value_enum, default_value_t = FormatArgClap::Stdout)]
-    pub format: FormatArgClap,
+    /// Output format(s) — `FORMAT` (to stdout) or `FORMAT:FILE`,
+    /// comma-separated for multiple sinks. Formats: `json`, `stdout`,
+    /// `sarif`, `github-annotations` (`markdown` is tracked under
+    /// scrap-rs#15 and currently exits "not yet implemented"). At most
+    /// one entry may target stdout. Canonical CI usage:
+    /// `--format sarif:results.sarif,github-annotations`.
+    #[arg(
+        short,
+        long,
+        value_name = "SPEC",
+        value_delimiter = ',',
+        default_value = "stdout",
+        value_parser = parse_format_spec,
+    )]
+    pub format: Vec<FormatSpec>,
+
+    /// Cap on the number of `::warning` lines the `github-annotations`
+    /// format emits per run (a trailing `::notice` names the dropped
+    /// count). Range `1..=100`; `0` and values past 100 are rejected
+    /// at parse time. Default 10 (GitHub Actions silently drops
+    /// annotations past ~10 per step). Ignored by every other format.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..=100))]
+    pub annotation_limit: Option<u32>,
 
     /// Threshold mode for the gate verdict. Wire-only at v0.1
     /// (scrap-rs#75 lands the real `Report.passed` computation).
@@ -479,6 +550,15 @@ where
     }
 
     if !cli.display.quiet {
+        // Guard: at most one format may target stdout (two would
+        // interleave indistinguishably and corrupt a `> file` redirect
+        // — e.g. SARIF + annotations both on stdout). Validated before
+        // any reporter runs so the error is clean.
+        if let Err(msg) = validate_format_destinations(&cli.output.format) {
+            eprintln!("error: {msg}");
+            return ExitCode::from(2);
+        }
+
         let emit_options = crate::adapters::reporters::json::EmitOptions {
             top: cli.filter.top.map(|n| {
                 // n: NonZeroU32 → NonZeroUsize. usize is always ≥ u32 on
@@ -491,16 +571,23 @@ where
             }),
             only_failing: cli.filter.only_failing,
         };
-        if let Err(e) = render_format(
-            cli.output.format.into(),
-            &output.report,
-            meta,
-            &emit_options,
-            bootstrap_val.effective.threshold_mode,
-            &mut io::stdout(),
-        ) {
-            handle_dispatch_error(&e);
-            return ExitCode::from(2);
+        // Default 10 per the `github-annotations` per-step UI cap; CLI
+        // flag wins. Honored only by the github-annotations format.
+        let annotation_limit = cli.output.annotation_limit.unwrap_or(10) as usize;
+
+        // Fan out: each spec writes to its own sink (a file, or stdout).
+        for spec in &cli.output.format {
+            if let Err(e) = emit_to_sink(
+                spec,
+                &output.report,
+                meta,
+                &emit_options,
+                bootstrap_val.effective.threshold_mode,
+                annotation_limit,
+            ) {
+                handle_dispatch_error(&e);
+                return ExitCode::from(2);
+            }
         }
     }
 
@@ -704,6 +791,93 @@ fn handle_dispatch_error(err: &DispatchError) {
     }
 }
 
+/// Validate that at most one [`FormatSpec`] targets stdout.
+///
+/// Two stdout sinks would interleave indistinguishably and corrupt a
+/// `> results.sarif` redirect (e.g. SARIF JSON spliced with `::warning`
+/// lines). A single stdout sink alongside any number of file sinks is
+/// unambiguous and is the shape composite CI workflows need
+/// (`sarif:results.sarif,github-annotations`). Mirrors crap-rs#276's
+/// `validate_format_destinations` (scrap-rs#17 D1).
+///
+/// # Errors
+///
+/// Returns a human-readable message naming the colliding stdout
+/// formats when more than one spec omits a file destination.
+fn validate_format_destinations(specs: &[FormatSpec]) -> Result<(), String> {
+    if specs.len() > 1 {
+        let stdout_formats: Vec<&'static str> = specs
+            .iter()
+            .filter(|s| s.output.is_none())
+            .map(|s| format_arg_kebab(s.format))
+            .collect();
+        if stdout_formats.len() > 1 {
+            return Err(format!(
+                "multi-format `--format` allows at most one stdout entry (the rest must specify a file, e.g. `sarif:results.sarif`); stdout entries: {}",
+                stdout_formats.join(", "),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// User-facing kebab-case name for a [`FormatArg`] (matches the
+/// `--format X` CLI surface), used in the stdout-collision error
+/// message. Sourced from the `FormatArgClap` `ValueEnum` registry so
+/// the spelling stays in lock-step with the parser.
+fn format_arg_kebab(arg: FormatArg) -> &'static str {
+    match arg {
+        FormatArg::Json => "json",
+        FormatArg::Stdout => "stdout",
+        FormatArg::Markdown => "markdown",
+        FormatArg::Sarif => "sarif",
+        FormatArg::GithubAnnotations => "github-annotations",
+    }
+}
+
+/// Render one [`FormatSpec`] to its sink — a file (when `spec.output`
+/// is `Some`) or stdout (when `None`). File I/O failures and the
+/// reporter's own errors both surface as [`DispatchError`].
+///
+/// # Errors
+///
+/// Returns [`DispatchError::Io`] on file create/write failure, or the
+/// reporter's own `DispatchError` (`Json` / `NotImplemented`).
+fn emit_to_sink(
+    spec: &FormatSpec,
+    report: &crate::domain::report::Report,
+    meta: &AdapterMeta,
+    emit_options: &crate::adapters::reporters::json::EmitOptions,
+    threshold_mode: ThresholdMode,
+    annotation_limit: usize,
+) -> Result<(), DispatchError> {
+    match &spec.output {
+        Some(path) => {
+            let file = std::fs::File::create(path).map_err(DispatchError::Io)?;
+            let mut writer = io::BufWriter::new(file);
+            render_format(
+                spec.format,
+                report,
+                meta,
+                emit_options,
+                threshold_mode,
+                annotation_limit,
+                &mut writer,
+            )?;
+            writer.flush().map_err(DispatchError::Io)
+        }
+        None => render_format(
+            spec.format,
+            report,
+            meta,
+            emit_options,
+            threshold_mode,
+            annotation_limit,
+            &mut io::stdout(),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -747,7 +921,126 @@ mod tests {
     #[test]
     fn format_defaults_to_stdout() {
         let cli = parse(&[]).unwrap();
-        assert_eq!(cli.output.format, FormatArgClap::Stdout);
+        assert_eq!(cli.output.format.len(), 1, "default is a single spec");
+        assert_eq!(cli.output.format[0].format, FormatArg::Stdout);
+        assert!(
+            cli.output.format[0].output.is_none(),
+            "default stdout spec has no file sink",
+        );
+    }
+
+    #[test]
+    fn format_parses_single_format_to_stdout_sink() {
+        let cli = parse(&["--format", "sarif"]).unwrap();
+        assert_eq!(cli.output.format.len(), 1);
+        assert_eq!(cli.output.format[0].format, FormatArg::Sarif);
+        assert!(cli.output.format[0].output.is_none());
+    }
+
+    #[test]
+    fn format_parses_format_with_file_sink() {
+        let cli = parse(&["--format", "sarif:results.sarif"]).unwrap();
+        assert_eq!(cli.output.format[0].format, FormatArg::Sarif);
+        assert_eq!(
+            cli.output.format[0].output.as_deref(),
+            Some(std::path::Path::new("results.sarif")),
+        );
+    }
+
+    #[test]
+    fn format_parses_comma_separated_multi_sink() {
+        // Canonical CI shape: SARIF to a file, annotations to stdout.
+        let cli = parse(&["--format", "sarif:results.sarif,github-annotations"]).unwrap();
+        assert_eq!(cli.output.format.len(), 2);
+        assert_eq!(cli.output.format[0].format, FormatArg::Sarif);
+        assert_eq!(
+            cli.output.format[0].output.as_deref(),
+            Some(std::path::Path::new("results.sarif")),
+        );
+        assert_eq!(cli.output.format[1].format, FormatArg::GithubAnnotations);
+        assert!(cli.output.format[1].output.is_none());
+    }
+
+    #[test]
+    fn format_empty_file_path_rejected() {
+        let err = parse(&["--format", "sarif:"]).expect_err("empty file path rejects");
+        assert!(
+            err.to_string().contains("empty file path"),
+            "expected empty-file-path error; got: {err}",
+        );
+    }
+
+    #[test]
+    fn format_unknown_format_rejected() {
+        let err = parse(&["--format", "bogus"]).expect_err("unknown format rejects");
+        assert!(
+            err.to_string().contains("invalid format"),
+            "expected invalid-format error; got: {err}",
+        );
+    }
+
+    #[test]
+    fn annotation_limit_defaults_to_none_and_parses_in_range() {
+        let cli = parse(&[]).unwrap();
+        assert!(cli.output.annotation_limit.is_none(), "default is None");
+        let cli = parse(&["--annotation-limit", "25"]).unwrap();
+        assert_eq!(cli.output.annotation_limit, Some(25));
+    }
+
+    #[test]
+    fn annotation_limit_zero_rejected() {
+        let err = parse(&["--annotation-limit", "0"]).expect_err("0 below range 1..=100");
+        assert!(err.to_string().contains("invalid value"));
+    }
+
+    #[test]
+    fn annotation_limit_above_100_rejected() {
+        let err = parse(&["--annotation-limit", "101"]).expect_err("101 above range 1..=100");
+        assert!(err.to_string().contains("invalid value"));
+    }
+
+    #[test]
+    fn validate_format_destinations_rejects_two_stdout_sinks() {
+        // Two formats both targeting stdout (no file) must be rejected.
+        let specs = vec![
+            FormatSpec {
+                format: FormatArg::Sarif,
+                output: None,
+            },
+            FormatSpec {
+                format: FormatArg::GithubAnnotations,
+                output: None,
+            },
+        ];
+        let err = validate_format_destinations(&specs).expect_err("two stdout sinks reject");
+        assert!(err.contains("at most one stdout entry"), "got: {err}");
+        assert!(err.contains("sarif"), "names colliding formats; got: {err}");
+        assert!(err.contains("github-annotations"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_format_destinations_allows_one_stdout_plus_files() {
+        // One stdout sink + any number of file sinks is unambiguous.
+        let specs = vec![
+            FormatSpec {
+                format: FormatArg::Sarif,
+                output: Some(PathBuf::from("results.sarif")),
+            },
+            FormatSpec {
+                format: FormatArg::GithubAnnotations,
+                output: None,
+            },
+        ];
+        assert!(validate_format_destinations(&specs).is_ok());
+    }
+
+    #[test]
+    fn validate_format_destinations_allows_single_stdout_spec() {
+        let specs = vec![FormatSpec {
+            format: FormatArg::Stdout,
+            output: None,
+        }];
+        assert!(validate_format_destinations(&specs).is_ok());
     }
 
     #[test]
@@ -897,9 +1190,8 @@ mod tests {
 
     #[test]
     fn format_arg_clap_round_trips_to_dispatch_format_arg() {
-        // 4-arm match; one roundtrip per variant. Tests use the
-        // `From` impl to flip every enum member so coverage hits all
-        // branches.
+        // One roundtrip per variant. Tests use the `From` impl to flip
+        // every enum member so coverage hits all branches.
         assert_eq!(FormatArg::from(FormatArgClap::Json), FormatArg::Json);
         assert_eq!(FormatArg::from(FormatArgClap::Stdout), FormatArg::Stdout);
         assert_eq!(
@@ -907,6 +1199,10 @@ mod tests {
             FormatArg::Markdown,
         );
         assert_eq!(FormatArg::from(FormatArgClap::Sarif), FormatArg::Sarif);
+        assert_eq!(
+            FormatArg::from(FormatArgClap::GithubAnnotations),
+            FormatArg::GithubAnnotations,
+        );
     }
 
     // ── load_file_config (PR #91 CRAP fix) ────────────────────────────
@@ -1023,7 +1319,11 @@ mod tests {
                 config: None,
             },
             output: OutputArgs {
-                format: FormatArgClap::Stdout,
+                format: vec![FormatSpec {
+                    format: FormatArg::Stdout,
+                    output: None,
+                }],
+                annotation_limit: None,
                 threshold_mode: None,
                 no_fail: false,
             },
