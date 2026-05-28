@@ -478,7 +478,7 @@ mod tests {
         let test = TestIdentity::new(
             FilePath::new(path),
             QualifiedName::new(name),
-            Span::new(5, 15),
+            Span::new(5, 15, 1, 1),
         );
         if penalty == 0 {
             Finding::new(test, vec![])
@@ -502,7 +502,7 @@ mod tests {
         let test = TestIdentity::new(
             FilePath::new(path),
             QualifiedName::new(name),
-            Span::new(5, 15),
+            Span::new(5, 15, 1, 1),
         );
         let smells = (0..n)
             .map(|_| {
@@ -524,7 +524,7 @@ mod tests {
         let test = TestIdentity::new(
             FilePath::new(path),
             QualifiedName::new(name),
-            Span::new(5, 15),
+            Span::new(5, 15, 1, 1),
         );
         Finding::new(
             test,
@@ -740,7 +740,7 @@ mod tests {
                 "a.rs",
                 "a::tests::t",
                 10,
-                Span::new(42, 42),
+                Span::new(42, 42, 1, 1),
             )],
         )]);
         let output = render_smell(&report, &TableOptions::default());
@@ -1324,7 +1324,7 @@ mod tests {
             let test = TestIdentity::new(
                 FilePath::new("a.rs"),
                 QualifiedName::new("a::tests::t_high"),
-                Span::new(10, 18),
+                Span::new(10, 18, 1, 1),
             );
             let mut f = Finding::new(
                 test,
@@ -1343,7 +1343,7 @@ mod tests {
             let test = TestIdentity::new(
                 FilePath::new("b.rs"),
                 QualifiedName::new("b::tests::t_low"),
-                Span::new(5, 9),
+                Span::new(5, 9, 1, 1),
             );
             Finding::new(
                 test,
@@ -1360,7 +1360,7 @@ mod tests {
             let test = TestIdentity::new(
                 FilePath::new("b.rs"),
                 QualifiedName::new("b::tests::t_zero"),
-                Span::new(12, 14),
+                Span::new(12, 14, 1, 1),
             );
             Finding::new(test, vec![])
         };

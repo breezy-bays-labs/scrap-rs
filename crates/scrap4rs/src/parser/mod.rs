@@ -25,7 +25,7 @@ use syn::{Ident, ItemFn};
 
 use self::attributes::{extract_attributes, extract_opt_outs, implicit_sources_from_attributes};
 use self::body::BodyVisitor;
-use self::spans::{compute_body_line_count, line_to_u32, span_from_spanned};
+use self::spans::{column_to_u32_1based, compute_body_line_count, line_to_u32, span_from_spanned};
 use self::visitor::TestVisitor;
 
 /// Zero-sized parser adapter implementing
@@ -84,13 +84,18 @@ impl TestParserPort for SynTestParser {
 fn parse_error_from_syn_error(err: &syn::Error) -> ParseError {
     let message = err.to_string();
     let syn_span = err.span();
-    // Reuse `spans::line_to_u32` for the saturating cast — single
-    // source of truth for `LineColumn::line: usize` → `u32`.
-    // (Gemini #56 helper reuse.)
-    let start_line = line_to_u32(syn_span.start().line);
-    let end_line = line_to_u32(syn_span.end().line);
+    // Reuse `spans::line_to_u32` / `column_to_u32_1based` for the
+    // saturating casts — single source of truth for
+    // `LineColumn::{line,column}: usize` → `u32` (and the 0→1-based
+    // column shift). (Gemini #56 helper reuse.)
+    let start = syn_span.start();
+    let end = syn_span.end();
+    let start_line = line_to_u32(start.line);
+    let end_line = line_to_u32(end.line);
+    let start_column = column_to_u32_1based(start.column);
+    let end_column = column_to_u32_1based(end.column);
 
-    // Span::new debug-asserts start <= end and a 1-based line range.
+    // Span::new debug-asserts a well-ordered line+column range.
     // Guard against both:
     //   - start_line == 0: proc-macro2's "no usable span info" sentinel.
     //   - end_line < start_line: defensive; shouldn't happen for
@@ -98,7 +103,7 @@ fn parse_error_from_syn_error(err: &syn::Error) -> ParseError {
     let span = if start_line == 0 || end_line < start_line {
         None
     } else {
-        Some(Span::new(start_line, end_line))
+        Some(Span::new(start_line, end_line, start_column, end_column))
     };
 
     ParseError::Syntax { message, span }

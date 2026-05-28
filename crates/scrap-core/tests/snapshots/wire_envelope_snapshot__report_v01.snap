@@ -1,6 +1,5 @@
 ---
-source: crates/scrap4rs/tests/wire_envelope_snapshot.rs
-assertion_line: 65
+source: crates/scrap-core/tests/wire_envelope_snapshot.rs
 expression: pretty
 ---
 {
@@ -25,7 +24,9 @@ expression: pretty
             "file_path": "crates/foo/src/bar.rs",
             "qualified_name": "foo::bar::tests::it_does_a_thing",
             "span": {
+              "end_column": 1,
               "end_line": 51,
+              "start_column": 1,
               "start_line": 42
             }
           }

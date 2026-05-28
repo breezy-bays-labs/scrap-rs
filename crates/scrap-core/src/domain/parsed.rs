@@ -320,13 +320,13 @@ mod tests {
             TestIdentity::new(
                 FilePath::new("a.rs"),
                 QualifiedName::new("a::tests::t"),
-                Span::new(1, 4),
+                Span::new(1, 4, 1, 1),
             ),
             vec![ParsedAttribute::new("ignore", Some("\"flaky\"".into()))],
             vec![ParsedAssertion::new(
                 "assert_eq",
                 Some("1, 1".into()),
-                Span::new(2, 2),
+                Span::new(2, 2, 1, 1),
                 false,
                 None,
             )],
@@ -343,7 +343,7 @@ mod tests {
             vec![sample_test()],
             vec![ParseDiagnostic::new(
                 ParseDiagnosticKind::UnsupportedAttribute,
-                Some(Span::new(1, 1)),
+                Some(Span::new(1, 1, 1, 1)),
                 "unrecognized attribute foo",
             )],
         )
@@ -414,7 +414,7 @@ mod tests {
             TestIdentity::new(
                 FilePath::new("a.rs"),
                 QualifiedName::new("a::tests::t"),
-                Span::new(1, 4),
+                Span::new(1, 4, 1, 1),
             ),
             Vec::new(),
             Vec::new(),
@@ -449,7 +449,7 @@ mod tests {
         let json = serde_json::to_value(ParsedAssertion::new(
             "assert_eq",
             None,
-            Span::new(2, 2),
+            Span::new(2, 2, 1, 1),
             false,
             None,
         ))
@@ -476,7 +476,7 @@ mod tests {
         let json = serde_json::to_value(ParsedAssertion::new(
             "assert_eq",
             Some("1, 1".into()),
-            Span::new(2, 2),
+            Span::new(2, 2, 1, 1),
             false,
             None,
         ))
@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn parsed_assertion_arguments_identical_true_round_trips() {
-        let pa = ParsedAssertion::new("assert_eq", None, Span::new(2, 2), true, None);
+        let pa = ParsedAssertion::new("assert_eq", None, Span::new(2, 2, 1, 1), true, None);
         let json = serde_json::to_value(&pa).unwrap();
         assert_eq!(
             json.get("arguments_identical"),
@@ -505,7 +505,7 @@ mod tests {
         let pa = ParsedAssertion::new(
             "assert",
             Some("true".into()),
-            Span::new(3, 3),
+            Span::new(3, 3, 1, 1),
             false,
             Some(LiteralValue::Bool(true)),
         );
@@ -521,7 +521,7 @@ mod tests {
 
     #[test]
     fn parsed_assertion_single_arg_value_none_omits_key() {
-        let pa = ParsedAssertion::new("assert", None, Span::new(3, 3), false, None);
+        let pa = ParsedAssertion::new("assert", None, Span::new(3, 3, 1, 1), false, None);
         let json = serde_json::to_value(&pa).unwrap();
         assert!(
             json.get("single_arg_value").is_none(),
@@ -533,7 +533,7 @@ mod tests {
     fn parse_diagnostic_wire_keys() {
         let json = serde_json::to_value(ParseDiagnostic::new(
             ParseDiagnosticKind::Syntax,
-            Some(Span::new(1, 1)),
+            Some(Span::new(1, 1, 1, 1)),
             "msg",
         ))
         .unwrap();

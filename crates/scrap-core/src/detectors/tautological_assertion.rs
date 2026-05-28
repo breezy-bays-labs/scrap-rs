@@ -120,7 +120,7 @@ mod tests {
         TestIdentity::new(
             FilePath::new("a.rs"),
             QualifiedName::new("a::tests::t"),
-            Span::new(10, 20),
+            Span::new(10, 20, 1, 1),
         )
     }
 
@@ -133,7 +133,7 @@ mod tests {
         parsed_with_assertions(vec![ParsedAssertion::new(
             "assert",
             None,
-            Span::new(15, 15),
+            Span::new(15, 15, 1, 1),
             arguments_identical,
             single_arg_value,
         )])
@@ -227,15 +227,15 @@ mod tests {
     #[test]
     fn detect_aggregates_multiple_tautological_assertions() {
         let parsed = parsed_with_assertions(vec![
-            ParsedAssertion::new("assert_eq", None, Span::new(11, 11), true, None),
+            ParsedAssertion::new("assert_eq", None, Span::new(11, 11, 1, 1), true, None),
             ParsedAssertion::new(
                 "assert",
                 None,
-                Span::new(12, 12),
+                Span::new(12, 12, 1, 1),
                 false,
                 Some(LiteralValue::Bool(true)),
             ),
-            ParsedAssertion::new("assert_ne", None, Span::new(13, 13), true, None),
+            ParsedAssertion::new("assert_ne", None, Span::new(13, 13, 1, 1), true, None),
         ]);
         let finding = detect(&parsed).expect("Some(Finding)");
         assert_eq!(finding.smells.len(), 3);
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn detect_emitted_smell_carries_assertion_span() {
-        let assertion_span = Span::new(42, 42);
+        let assertion_span = Span::new(42, 42, 1, 1);
         let parsed = parsed_with_assertions(vec![ParsedAssertion::new(
             "assert",
             None,
@@ -269,12 +269,12 @@ mod tests {
     #[test]
     fn detect_each_smell_in_aggregate_carries_its_own_span() {
         let parsed = parsed_with_assertions(vec![
-            ParsedAssertion::new("assert_eq", None, Span::new(11, 11), true, None),
-            ParsedAssertion::new("assert_eq", None, Span::new(22, 22), true, None),
+            ParsedAssertion::new("assert_eq", None, Span::new(11, 11, 1, 1), true, None),
+            ParsedAssertion::new("assert_eq", None, Span::new(22, 22, 1, 1), true, None),
         ]);
         let finding = detect(&parsed).expect("Some(Finding)");
-        assert_eq!(finding.smells[0].span, Some(Span::new(11, 11)));
-        assert_eq!(finding.smells[1].span, Some(Span::new(22, 22)));
+        assert_eq!(finding.smells[0].span, Some(Span::new(11, 11, 1, 1)));
+        assert_eq!(finding.smells[1].span, Some(Span::new(22, 22, 1, 1)));
     }
 
     // ── Explicit non-responsibilities (pipeline-side at scrap-rs#72)
@@ -293,7 +293,7 @@ mod tests {
             vec![ParsedAssertion::new(
                 "assert_eq",
                 None,
-                Span::new(15, 15),
+                Span::new(15, 15, 1, 1),
                 true,
                 None,
             )],
@@ -317,7 +317,7 @@ mod tests {
             vec![ParsedAssertion::new(
                 "assert",
                 None,
-                Span::new(15, 15),
+                Span::new(15, 15, 1, 1),
                 false,
                 Some(LiteralValue::Bool(true)),
             )],
@@ -353,7 +353,7 @@ mod tests {
             (1u32..1000, 0u32..100),
         )
             .prop_map(|(name, ident, val, (start, len))| {
-                ParsedAssertion::new(name, None, Span::new(start, start + len), ident, val)
+                ParsedAssertion::new(name, None, Span::new(start, start + len, 1, 1), ident, val)
             })
     }
 

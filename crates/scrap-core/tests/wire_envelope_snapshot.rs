@@ -68,7 +68,7 @@ fn fixture_report() -> Report {
     let test = TestIdentity::new(
         FilePath::new("crates/foo/src/bar.rs"),
         QualifiedName::new("foo::bar::tests::it_does_a_thing"),
-        Span::new(42, 51),
+        Span::new(42, 51, 1, 1),
     );
     let smell = Smell::new(
         SmellCategory::ZeroAssertion,
@@ -554,7 +554,7 @@ fn diagnostics_block_keys_pinned() {
         )],
         parse: vec![ParseDiagnostic::new(
             scrap_core::domain::parsed::ParseDiagnosticKind::UnsupportedAttribute,
-            Some(Span::new(1, 1)),
+            Some(Span::new(1, 1, 1, 1)),
             "recovered",
         )],
     };

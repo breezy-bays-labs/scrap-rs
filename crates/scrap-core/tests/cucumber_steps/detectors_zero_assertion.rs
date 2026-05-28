@@ -51,7 +51,7 @@ fn smelly_test() -> ParsedTest {
         TestIdentity::new(
             FilePath::new("a.rs"),
             QualifiedName::new("a::tests::t"),
-            Span::new(1, 5),
+            Span::new(1, 5, 1, 1),
         ),
         Vec::new(),
         Vec::new(),
@@ -73,7 +73,7 @@ fn parsed_test_with_assert_eq(w: &mut World) {
     pt.assertions.push(ParsedAssertion::new(
         "assert_eq",
         Some("1, 1".into()),
-        Span::new(2, 2),
+        Span::new(2, 2, 1, 1),
         // `arguments_identical` + `single_arg_value` added to
         // `ParsedAssertion::new` at scrap-rs#24. This zero-assertion
         // fixture uses a non-tautological assertion, so both default

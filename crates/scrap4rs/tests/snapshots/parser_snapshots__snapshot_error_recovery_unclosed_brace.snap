@@ -1,6 +1,5 @@
 ---
 source: crates/scrap4rs/tests/parser_snapshots.rs
-assertion_line: 155
 expression: err
 ---
 Syntax {
@@ -9,6 +8,8 @@ Syntax {
         Span {
             start_line: 11,
             end_line: 11,
+            start_column: 20,
+            end_column: 20,
         },
     ),
 }

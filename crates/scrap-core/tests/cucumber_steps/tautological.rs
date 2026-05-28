@@ -33,7 +33,7 @@ fn fixture_identity() -> TestIdentity {
     TestIdentity::new(
         FilePath::new("a.rs"),
         QualifiedName::new("a::tests::t"),
-        Span::new(10, 20),
+        Span::new(10, 20, 1, 1),
     )
 }
 
@@ -64,7 +64,7 @@ fn make_assertion(
     ParsedAssertion::new(
         "assert",
         None,
-        Span::new(line, line),
+        Span::new(line, line, 1, 1),
         arguments_identical,
         single_arg_value,
     )

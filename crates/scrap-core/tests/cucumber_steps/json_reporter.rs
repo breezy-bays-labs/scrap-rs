@@ -31,7 +31,7 @@ fn build_finding(path: &str, name: &str, penalty: u32) -> Finding {
     let test = TestIdentity::new(
         FilePath::new(path),
         QualifiedName::new(name),
-        Span::new(1, 5),
+        Span::new(1, 5, 1, 1),
     );
     if penalty == 0 {
         Finding::new(test, vec![])
