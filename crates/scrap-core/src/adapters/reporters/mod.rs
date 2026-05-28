@@ -17,10 +17,10 @@
 //!
 //! Module roster (live):
 //! - [`json`] — v0.1 nested JSON envelope (`scrap-rs#14`).
+//! - [`table`] — v0.1 comfy-table terminal reporter (`scrap-rs#16`).
 //!
 //! Module roster (planned):
 //! - `markdown` — GFM table reporter (`scrap-rs#15`).
-//! - `stdout` — comfy-table terminal reporter (`scrap-rs#16`).
 //! - `sarif` — SARIF 2.1.0 GitHub Code Scanning (`scrap-rs#17`).
 //! - `scorecard_row` — mokumo `Row::TestSmell` producer (v0.2).
 //!
@@ -31,3 +31,4 @@
 //! constraints.
 
 pub mod json;
+pub mod table;
