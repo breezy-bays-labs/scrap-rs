@@ -143,40 +143,71 @@ fn render_smell_rows<W: std::io::Write>(
         .set_header(vec!["file:line", "Smell", "Severity", "Penalty", "Score"]);
 
     let top_limit = options.top.map(NonZeroUsize::get);
-    let mut rows_emitted: usize = 0;
-
-    'outer: for file in &report.files {
-        for finding in &file.findings {
-            // tracked: SF-1 — 1-LOC duplication with render_finding_rows
-            if options.only_failing && finding.scrap_score == 0.0 {
-                continue;
-            }
-            for smell in &finding.smells {
-                let line = smell
-                    .span
-                    .map_or(finding.test.span.start_line, |s| s.start_line);
-                let file_line = format!("{}:{}", finding.test.file_path, line);
-
-                let severity_text = format!("{:?}", smell.severity);
-                let severity_cell = severity_cell(severity_text, smell.severity, options.use_color);
-
-                table.add_row(vec![
-                    Cell::new(file_line),
-                    Cell::new(smell.category.as_wire_str()),
-                    severity_cell,
-                    Cell::new(smell.penalty.to_string()),
-                    Cell::new(format_score(finding.scrap_score)),
-                ]);
-
-                rows_emitted += 1;
-                if Some(rows_emitted) == top_limit {
-                    break 'outer;
-                }
-            }
-        }
+    for row in iter_smell_rows(report, options).take(top_limit.unwrap_or(usize::MAX)) {
+        table.add_row(row);
     }
 
     writeln!(writer, "{table}")
+}
+
+/// Flatten `report.files → findings → smells` into per-row `Vec<Cell>`
+/// values, skipping zero-score findings when `options.only_failing`.
+///
+/// Extracted from `render_smell_rows` to keep the parent under the
+/// crap4rs cognitive-complexity threshold (15) — the triple-nested
+/// `for/for/for` + the labelled `break 'outer` is the entire CC cost.
+/// Returning an `Iterator<Item = Vec<Cell>>` lets the parent express
+/// `--top` as `.take(n)` and the body collapses to a single `for row`
+/// loop.
+///
+/// tracked: SF-1 from /plan close cabinet — `if options.only_failing
+/// && finding.scrap_score == 0.0 { continue; }` is 1 LOC of
+/// duplication with `iter_finding_rows`; kept inline. Lift to
+/// `Report::filter_view()` only if a 3rd reporter recurs the same
+/// shape.
+fn iter_smell_rows<'a>(
+    report: &'a Report,
+    options: &'a TableOptions,
+) -> impl Iterator<Item = Vec<Cell>> + 'a {
+    report
+        .files
+        .iter()
+        .flat_map(|file| file.findings.iter())
+        .filter(|finding| !(options.only_failing && finding.scrap_score == 0.0))
+        .flat_map(move |finding| {
+            finding
+                .smells
+                .iter()
+                .map(move |smell| build_smell_row(finding, smell, options.use_color))
+        })
+}
+
+/// Build the five `Cell`s for one row under `RowGrouping::Smell`.
+///
+/// Extracted from `render_smell_rows` so the nesting-heavy outer
+/// function (file → finding → smell loops + `--top` short-circuit)
+/// stays under the crap4rs cognitive-complexity threshold (15). The
+/// per-row cell construction is straight-line: no branches except the
+/// `map_or` line-fallback closure.
+///
+/// Column layout per D-COL-SMELL-1: `file:line`, `Smell`, `Severity`,
+/// `Penalty`, `Score`.
+fn build_smell_row(
+    finding: &crate::domain::finding::Finding,
+    smell: &crate::domain::smell::Smell,
+    use_color: bool,
+) -> Vec<Cell> {
+    let line = smell
+        .span
+        .map_or(finding.test.span.start_line, |s| s.start_line);
+    let file_line = format!("{}:{}", finding.test.file_path, line);
+    vec![
+        Cell::new(file_line),
+        Cell::new(smell.category.as_wire_str()),
+        severity_cell(smell.severity, use_color),
+        Cell::new(smell.penalty.to_string()),
+        Cell::new(format_score(finding.scrap_score)),
+    ]
 }
 
 /// Format a `scrap_score` for the Score column.
@@ -196,7 +227,19 @@ fn format_score(score: f64) -> String {
 /// `Cell::fg` only renders inside a `Table` — that's why this helper
 /// is here (the footer needs different handling — see W5
 /// `write_footer`).
-fn severity_cell(text: String, severity: Severity, use_color: bool) -> Cell {
+///
+/// Takes `Severity` directly so the cell text comes from a static
+/// `&'static str` table — no `format!("{:?}", ..)` heap allocation per
+/// rendered row. Per Gemini Code Assist review on PR #88
+/// (`PRRT_kwDOSTlgZs6FRRMD` / `PRRT_kwDOSTlgZs6FRRL9`, 2026-05-27):
+/// equivalent text bytes ("High"/"Moderate"/"Low" — same as `Debug`),
+/// fewer allocations.
+fn severity_cell(severity: Severity, use_color: bool) -> Cell {
+    let text = match severity {
+        Severity::High => "High",
+        Severity::Moderate => "Moderate",
+        Severity::Low => "Low",
+    };
     let cell = Cell::new(text);
     if !use_color {
         return cell;
@@ -230,42 +273,71 @@ fn render_finding_rows<W: std::io::Write>(
         .set_header(vec!["File", "Test", "Smells", "Score", "Pass/Fail"]);
 
     let top_limit = options.top.map(NonZeroUsize::get);
-    let mut rows_emitted: usize = 0;
-
-    'outer: for file in &report.files {
-        for finding in &file.findings {
-            // tracked: SF-1 — 1-LOC duplication with render_smell_rows
-            if options.only_failing && finding.scrap_score == 0.0 {
-                continue;
-            }
-            let smells_text = finding
-                .smells
-                .iter()
-                .map(|s| s.category.as_wire_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let pass_fail = if finding.exceeds_threshold {
-                "FAIL"
-            } else {
-                "PASS"
-            };
-
-            table.add_row(vec![
-                Cell::new(finding.test.file_path.to_string()),
-                Cell::new(finding.test.qualified_name.as_str()),
-                Cell::new(smells_text),
-                Cell::new(format_score(finding.scrap_score)),
-                Cell::new(pass_fail),
-            ]);
-
-            rows_emitted += 1;
-            if Some(rows_emitted) == top_limit {
-                break 'outer;
-            }
-        }
+    for row in iter_finding_rows(report, options).take(top_limit.unwrap_or(usize::MAX)) {
+        table.add_row(row);
     }
 
     writeln!(writer, "{table}")
+}
+
+/// Flatten `report.files → findings` into per-row `Vec<Cell>` values,
+/// skipping zero-score findings when `options.only_failing`.
+///
+/// Sibling to `iter_smell_rows`; both extracted to keep the parent
+/// render fns under the crap4rs cognitive-complexity threshold (15).
+/// `options` is in the signature for parity with `iter_smell_rows`
+/// (both reporters consume `only_failing`); the unused `use_color`
+/// path stays in the parent's `--top` plumbing layer.
+///
+/// tracked: SF-1 — duplicated `if options.only_failing && ...` shape
+/// with `iter_smell_rows`; kept inline per cabinet CAO SF-1 verdict.
+fn iter_finding_rows<'a>(
+    report: &'a Report,
+    options: &'a TableOptions,
+) -> impl Iterator<Item = Vec<Cell>> + 'a {
+    report
+        .files
+        .iter()
+        .flat_map(|file| file.findings.iter())
+        .filter(|finding| !(options.only_failing && finding.scrap_score == 0.0))
+        .map(build_finding_row)
+}
+
+/// Build the five `Cell`s for one row under `RowGrouping::Finding`.
+///
+/// Extracted from `render_finding_rows` so the outer function (file →
+/// finding nesting + `--top` short-circuit) stays under the crap4rs
+/// cognitive-complexity threshold (15). The smells-text join is
+/// constructed via `fold` (single allocation, per Gemini Code Assist
+/// review `PRRT_kwDOSTlgZs6FRRME` on PR #88, 2026-05-27) instead of
+/// `.collect::<Vec<_>>().join(", ")`; output bytes are identical.
+///
+/// Column layout per D-COL-FINDING-1: `File`, `Test`, `Smells`,
+/// `Score`, `Pass/Fail`.
+fn build_finding_row(finding: &crate::domain::finding::Finding) -> Vec<Cell> {
+    let smells_text = finding
+        .smells
+        .iter()
+        .map(|s| s.category.as_wire_str())
+        .fold(String::new(), |mut acc, s| {
+            if !acc.is_empty() {
+                acc.push_str(", ");
+            }
+            acc.push_str(s);
+            acc
+        });
+    let pass_fail = if finding.exceeds_threshold {
+        "FAIL"
+    } else {
+        "PASS"
+    };
+    vec![
+        Cell::new(finding.test.file_path.to_string()),
+        Cell::new(finding.test.qualified_name.as_str()),
+        Cell::new(smells_text),
+        Cell::new(format_score(finding.scrap_score)),
+        Cell::new(pass_fail),
+    ]
 }
 
 // ────────────────────────────────────────────────────────────────────
