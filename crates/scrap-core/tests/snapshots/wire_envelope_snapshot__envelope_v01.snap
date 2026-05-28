@@ -20,7 +20,9 @@ expression: pretty
               "qualified_name": "foo::bar::tests::it_does_a_thing",
               "span": {
                 "start_line": 42,
-                "end_line": 51
+                "end_line": 51,
+                "start_column": 1,
+                "end_column": 1
               }
             },
             "smells": [
@@ -67,7 +69,9 @@ expression: pretty
           "qualified_name": "foo::bar::tests::it_does_a_thing",
           "span": {
             "start_line": 42,
-            "end_line": 51
+            "end_line": 51,
+            "start_column": 1,
+            "end_column": 1
           }
         },
         "smells": [

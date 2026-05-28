@@ -31,7 +31,7 @@ fn smelly_test() -> ParsedTest {
         TestIdentity::new(
             FilePath::new("crates/foo/src/bar.rs"),
             QualifiedName::new("foo::bar::tests::it_does_a_thing"),
-            Span::new(1, 5),
+            Span::new(1, 5, 1, 1),
         ),
         Vec::new(),
         Vec::new(),

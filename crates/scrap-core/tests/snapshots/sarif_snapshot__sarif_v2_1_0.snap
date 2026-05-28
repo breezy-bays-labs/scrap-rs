@@ -1,0 +1,153 @@
+---
+source: crates/scrap-core/tests/sarif_snapshot.rs
+expression: pretty
+---
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "test-adapter",
+          "version": "0.1.0",
+          "informationUri": "https://example.invalid/test-adapter",
+          "rules": [
+            {
+              "id": "zero_assertion",
+              "name": "ZeroAssertion",
+              "shortDescription": {
+                "text": "Test exercises the system under test but never asserts on the result."
+              },
+              "fullDescription": {
+                "text": "The test body invokes the code under test but contains no assertion (and no implicit-assertion source such as proptest, quickcheck, cucumber, trybuild, insta, kani, or #[should_panic]). A passing run proves only that the code did not panic — add assertions for the function's observable effects."
+              },
+              "helpUri": "https://example.invalid/test-adapter#rules"
+            },
+            {
+              "id": "tautological_assertion",
+              "name": "TautologicalAssertion",
+              "shortDescription": {
+                "text": "Assertion is structurally incapable of failing."
+              },
+              "fullDescription": {
+                "text": "An assertion such as assert!(true), assert_eq!(x, x), or a literal-vs-literal comparison can never fail and therefore conveys no information. Replace the tautology with an assertion that exercises the actual behavior under test."
+              },
+              "helpUri": "https://example.invalid/test-adapter#rules"
+            },
+            {
+              "id": "no_op_io",
+              "name": "NoOpIo",
+              "shortDescription": {
+                "text": "I/O is performed but its result is discarded."
+              },
+              "fullDescription": {
+                "text": "The test performs I/O (file open/read, HTTP request, etc.) whose result is bound to `_` or otherwise discarded with no follow-up check. Inspect or assert on the data returned by the I/O call so the test verifies behavior rather than mere execution."
+              },
+              "helpUri": "https://example.invalid/test-adapter#rules"
+            },
+            {
+              "id": "surface_only_io",
+              "name": "SurfaceOnlyIo",
+              "shortDescription": {
+                "text": "Test asserts only on I/O surface metadata, not the payload."
+              },
+              "fullDescription": {
+                "text": "The test asserts only on surface-level metadata of an I/O operation (a status code, file existence) without inspecting the substantive payload. Assert on the returned data, not just that the operation appeared to occur."
+              },
+              "helpUri": "https://example.invalid/test-adapter#rules"
+            },
+            {
+              "id": "large_example",
+              "name": "LargeExample",
+              "shortDescription": {
+                "text": "Test body exceeds the configured line threshold."
+              },
+              "fullDescription": {
+                "text": "The test body is longer than the configured line threshold, a signal that it tests multiple behaviors at once or carries heavy inline setup. Split it into focused examples or extract setup helpers so each test has a single reason to fail."
+              },
+              "helpUri": "https://example.invalid/test-adapter#rules"
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "zero_assertion",
+          "level": "error",
+          "message": {
+            "text": "Add assertions for the function's observable effects."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "crates/foo/src/bar.rs"
+                },
+                "region": {
+                  "startLine": 42,
+                  "endLine": 51,
+                  "startColumn": 5,
+                  "endColumn": 2
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "testIdentity": "crates/foo/src/bar.rs:zero_assertion:foo::bar::tests::it_does_a_thing"
+          }
+        },
+        {
+          "ruleId": "tautological_assertion",
+          "level": "error",
+          "message": {
+            "text": "Replace the tautology with an assertion that can actually fail."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "crates/foo/src/bar.rs"
+                },
+                "region": {
+                  "startLine": 45,
+                  "endLine": 45,
+                  "startColumn": 9,
+                  "endColumn": 25
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "testIdentity": "crates/foo/src/bar.rs:tautological_assertion:foo::bar::tests::it_does_a_thing"
+          }
+        },
+        {
+          "ruleId": "surface_only_io",
+          "level": "warning",
+          "message": {
+            "text": "Assert on the substantive payload, not just the response status."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "crates/foo/src/baz.rs"
+                },
+                "region": {
+                  "startLine": 10,
+                  "endLine": 18,
+                  "startColumn": 5,
+                  "endColumn": 7
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "testIdentity": "crates/foo/src/baz.rs:surface_only_io:foo::baz::tests::reads_a_file"
+          }
+        }
+      ]
+    }
+  ]
+}

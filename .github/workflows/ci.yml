@@ -339,35 +339,6 @@ jobs:
           fi
           echo "scrap-core source is adapter-name-pure (only grandfathered tracked: scrap-rs#37 line allowed)"
 
-  span-purity:
-    name: scrap-core Span no-columns purity (v0.1 — tracked scrap-rs#17)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    # The Span type is intentionally line-only at v0.1 (no columns).
-    # Columns land additively with the SARIF reporter (#17). This grep
-    # gate makes the decision structurally un-violable rather than only
-    # documented in a Span docstring.
-    # tracked: scrap-rs#17 — promote/extend Span to include columns when
-    # the SARIF reporter PR lands (per ~/.claude/rules/exclusions.md).
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-      - name: Reject column fields on Span
-        # Static pattern, no untrusted-input interpolation. Targets the
-        # Span type's home file directly (not a recursive grep) since
-        # the rule is specifically about the v0.1 line-only contract of
-        # crate::domain::types::Span. Catches struct fields named
-        # start_col / end_col / start_column / end_column and any
-        # `column:` field declaration.
-        run: |
-          set -euo pipefail
-          if grep -rE '\b(start_col|end_col|start_column|end_column|column:)\b' crates/scrap-core/src/domain/types.rs; then
-            echo "::error::Span columns are deferred to v0.2 / scrap-rs#17"
-            exit 1
-          fi
-          echo "scrap-core Span is column-free per v0.1 scope"
-
   docs:
     name: cargo doc (warnings as errors)
     runs-on: ubuntu-latest

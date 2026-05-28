@@ -34,36 +34,54 @@ impl std::fmt::Display for InvertedSpan {
 
 impl std::error::Error for InvertedSpan {}
 
-/// 1-based inclusive line range into a source file.
+/// 1-based inclusive line + column range into a source file.
 ///
-/// Columns are intentionally omitted for v0.1 — every detector operates
-/// on whole-test-body granularity. SARIF reporters that need columns can
-/// extend the wire envelope additively at v0.2 without breaking
-/// `schema_version: 1`.
+/// All four coordinates are required `u32`, 1-based. `start_line` /
+/// `end_line` bound the inclusive line range; `start_column` /
+/// `end_column` bound the inclusive column range (1-based, never 0 —
+/// adapters convert from any 0-based source coordinate at the parser
+/// boundary). Columns landed additively with the SARIF reporter
+/// (scrap-rs#17) and do NOT bump the wire envelope's `schema_version`
+/// per [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md)
+/// D2 additive-field rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Span {
     /// 1-based inclusive line where the span begins.
     pub start_line: u32,
     /// 1-based inclusive line where the span ends.
     pub end_line: u32,
+    /// 1-based inclusive column where the span begins.
+    pub start_column: u32,
+    /// 1-based inclusive column where the span ends.
+    pub end_column: u32,
 }
 
 impl Span {
     /// Construct a span over the inclusive line range `[start_line,
-    /// end_line]`. Caller is responsible for `start_line <= end_line`;
-    /// detectors emit spans pulled directly from `syn::spanned::Spanned`,
-    /// which always produces well-ordered ranges. A `debug_assert!`
-    /// catches inverted ranges in dev/test builds; release builds rely
-    /// on the `line_count` saturating arithmetic.
+    /// end_line]` and column range `[start_column, end_column]`. Caller
+    /// is responsible for well-ordered input; detectors emit spans
+    /// pulled directly from `syn::spanned::Spanned`, which always
+    /// produces well-ordered ranges. A `debug_assert!` catches inverted
+    /// ranges in dev/test builds; release builds rely on the
+    /// `line_count` saturating arithmetic.
+    ///
+    /// The ordering invariant is line-primary, column-secondary: a span
+    /// is well-ordered when `start_line < end_line`, or when
+    /// `start_line == end_line` and `start_column <= end_column`. The
+    /// `debug_assert!` permits a same-line span whose columns are equal
+    /// (a zero-width point) and rejects only a same-line span whose end
+    /// column precedes its start column.
     #[must_use]
-    pub fn new(start_line: u32, end_line: u32) -> Self {
+    pub fn new(start_line: u32, end_line: u32, start_column: u32, end_column: u32) -> Self {
         debug_assert!(
-            start_line <= end_line,
-            "Span::new: inverted range {start_line}..{end_line} (use Span::try_new for fallible construction)",
+            start_line < end_line || (start_line == end_line && start_column <= end_column),
+            "Span::new: inverted range {start_line}:{start_column}..{end_line}:{end_column} (use Span::try_new for fallible construction)",
         );
         Self {
             start_line,
             end_line,
+            start_column,
+            end_column,
         }
     }
 
@@ -72,10 +90,23 @@ impl Span {
     /// caller cannot guarantee well-ordered input (e.g., reconstructing
     /// spans from external LSP positions or baseline-diff replay).
     ///
+    /// Per scrap-rs#17 D3, the fallible check is line-only: column
+    /// ordering is NOT validated here (a same-line span with inverted
+    /// columns is a pathological synthetic-span artifact, not a
+    /// reconstructed-from-external-source condition `try_new` guards
+    /// against). Columns are stored verbatim. The line-primary
+    /// `debug_assert!` in [`Span::new`] is the dev/test-build column
+    /// guard.
+    ///
     /// # Errors
     ///
     /// Returns `Err(InvertedSpan)` if `start_line > end_line`.
-    pub fn try_new(start_line: u32, end_line: u32) -> Result<Self, InvertedSpan> {
+    pub fn try_new(
+        start_line: u32,
+        end_line: u32,
+        start_column: u32,
+        end_column: u32,
+    ) -> Result<Self, InvertedSpan> {
         if start_line > end_line {
             Err(InvertedSpan {
                 start_line,
@@ -85,6 +116,8 @@ impl Span {
             Ok(Self {
                 start_line,
                 end_line,
+                start_column,
+                end_column,
             })
         }
     }
@@ -254,21 +287,47 @@ mod tests {
 
     #[test]
     fn span_line_count_basic() {
-        assert_eq!(Span::new(1, 1).line_count(), 1);
-        assert_eq!(Span::new(10, 19).line_count(), 10);
+        assert_eq!(Span::new(1, 1, 1, 1).line_count(), 1);
+        assert_eq!(Span::new(10, 19, 1, 1).line_count(), 10);
     }
 
     #[test]
     fn span_serializes_snake_case() {
-        let span = Span::new(42, 51);
+        let span = Span::new(42, 51, 5, 12);
         let json = serde_json::to_value(span).unwrap();
         assert_eq!(json["start_line"], 42);
         assert_eq!(json["end_line"], 51);
+        assert_eq!(json["start_column"], 5);
+        assert_eq!(json["end_column"], 12);
+    }
+
+    #[test]
+    fn span_new_carries_columns() {
+        let span = Span::new(3, 7, 4, 9);
+        assert_eq!(span.start_column, 4);
+        assert_eq!(span.end_column, 9);
+    }
+
+    #[test]
+    fn span_new_same_line_equal_columns_is_zero_width_point() {
+        // A zero-width point (same line, same column) is well-ordered —
+        // the debug_assert permits it (no panic).
+        let span = Span::new(5, 5, 7, 7);
+        assert_eq!(span.start_column, span.end_column);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "inverted range")]
+    fn span_new_same_line_inverted_columns_panics_in_debug() {
+        // Same line, end_column < start_column: rejected by the
+        // line-primary column-secondary debug_assert.
+        let _ = Span::new(5, 5, 12, 4);
     }
 
     #[test]
     fn span_try_new_rejects_inverted_range() {
-        let err = Span::try_new(10, 5).unwrap_err();
+        let err = Span::try_new(10, 5, 1, 1).unwrap_err();
         assert_eq!(err.start_line, 10);
         assert_eq!(err.end_line, 5);
         assert_eq!(err.to_string(), "inverted span: start_line 10 > end_line 5");
@@ -276,8 +335,27 @@ mod tests {
 
     #[test]
     fn span_try_new_accepts_equal_lines() {
-        let span = Span::try_new(7, 7).unwrap();
+        let span = Span::try_new(7, 7, 1, 8).unwrap();
         assert_eq!(span.line_count(), 1);
+        assert_eq!(span.start_column, 1);
+        assert_eq!(span.end_column, 8);
+    }
+
+    #[test]
+    fn span_try_new_does_not_validate_column_order() {
+        // D3: try_new is line-only — a same-line span with inverted
+        // columns is accepted and stored verbatim (not an error).
+        let span = Span::try_new(4, 4, 20, 3).unwrap();
+        assert_eq!(span.start_column, 20);
+        assert_eq!(span.end_column, 3);
+    }
+
+    #[test]
+    fn span_round_trips_columns_through_json() {
+        let span = Span::new(2, 9, 6, 14);
+        let json = serde_json::to_value(span).unwrap();
+        let back: Span = serde_json::from_value(json).unwrap();
+        assert_eq!(back, span);
     }
 
     #[test]
@@ -324,9 +402,12 @@ mod tests {
         fn span_line_count_is_end_minus_start_plus_one(
             start in 1u32..1_000_000,
             len in 0u32..10_000,
+            start_column in 1u32..1_000,
+            col_len in 0u32..1_000,
         ) {
             let end = start + len;
-            prop_assert_eq!(Span::new(start, end).line_count(), len + 1);
+            let end_column = start_column + col_len;
+            prop_assert_eq!(Span::new(start, end, start_column, end_column).line_count(), len + 1);
         }
 
         #[test]
@@ -335,18 +416,38 @@ mod tests {
             len in 1u32..10_000,
         ) {
             let start = end + len;
-            // start > end: must reject.
-            prop_assert!(Span::try_new(start, end).is_err());
+            // start > end: must reject (line-only check).
+            prop_assert!(Span::try_new(start, end, 1, 1).is_err());
         }
 
         #[test]
         fn span_try_new_accepts_well_ordered(
             start in 1u32..1_000_000,
             len in 0u32..10_000,
+            start_column in 1u32..1_000,
+            col_len in 0u32..1_000,
         ) {
             let end = start + len;
-            let span = Span::try_new(start, end).unwrap();
+            let end_column = start_column + col_len;
+            let span = Span::try_new(start, end, start_column, end_column).unwrap();
             prop_assert_eq!(span.line_count(), len + 1);
+            prop_assert_eq!(span.start_column, start_column);
+            prop_assert_eq!(span.end_column, end_column);
+        }
+
+        #[test]
+        fn span_columns_round_trip_through_json(
+            start in 1u32..1_000_000,
+            len in 0u32..10_000,
+            start_column in 1u32..1_000,
+            col_len in 0u32..1_000,
+        ) {
+            let end = start + len;
+            let end_column = start_column + col_len;
+            let span = Span::new(start, end, start_column, end_column);
+            let json = serde_json::to_value(span).unwrap();
+            let back: Span = serde_json::from_value(json).unwrap();
+            prop_assert_eq!(back, span);
         }
     }
 }

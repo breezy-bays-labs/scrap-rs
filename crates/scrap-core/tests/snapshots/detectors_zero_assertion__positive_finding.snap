@@ -8,6 +8,8 @@ test:
   span:
     start_line: 1
     end_line: 5
+    start_column: 1
+    end_column: 1
 smells:
   - category: zero_assertion
     severity: high
@@ -17,6 +19,8 @@ smells:
     span:
       start_line: 1
       end_line: 5
+      start_column: 1
+      end_column: 1
 scrap_score: 10
 exceeds_threshold: false
 opt_outs: []

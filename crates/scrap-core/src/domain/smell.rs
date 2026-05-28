@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn smell_new_carries_supplied_span() {
-        let span = Span::new(7, 9);
+        let span = Span::new(7, 9, 1, 1);
         let s = Smell::new(
             SmellCategory::TautologicalAssertion,
             Severity::High,
@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn smell_with_message_carries_supplied_span() {
-        let span = Span::new(42, 51);
+        let span = Span::new(42, 51, 1, 1);
         let s = Smell::with_message(
             SmellCategory::LargeExample,
             Severity::Moderate,
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn smell_serde_round_trip_with_some_span_emits_field() {
-        let span = Span::new(7, 9);
+        let span = Span::new(7, 9, 1, 1);
         let s = Smell::new(
             SmellCategory::ZeroAssertion,
             Severity::High,
@@ -344,7 +344,7 @@ mod tests {
             if none {
                 None
             } else {
-                Some(Span::try_new(start, start + len).expect("well-ordered by construction"))
+                Some(Span::try_new(start, start + len, 1, 1).expect("well-ordered by construction"))
             }
         }
     }

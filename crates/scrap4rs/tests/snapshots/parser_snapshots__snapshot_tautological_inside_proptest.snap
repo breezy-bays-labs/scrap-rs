@@ -10,6 +10,8 @@ tests:
       span:
         start_line: 19
         end_line: 25
+        start_column: 1
+        end_column: 1
     attributes:
       - name: test
         raw: ~

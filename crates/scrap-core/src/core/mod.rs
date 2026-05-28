@@ -463,7 +463,7 @@ mod tests {
                     let identity = TestIdentity::new(
                         path.clone(),
                         QualifiedName::new("tests::it_smells"),
-                        Span::new(1, 5),
+                        Span::new(1, 5, 1, 1),
                     );
                     Ok(ParsedTestFile::new(
                         path.clone(),
@@ -481,7 +481,7 @@ mod tests {
                 }
                 MockMode::AlwaysSyntaxErr => Err(ParseError::Syntax {
                     message: "unexpected token".into(),
-                    span: Some(Span::new(3, 3)),
+                    span: Some(Span::new(3, 3, 1, 1)),
                 }),
             }
         }

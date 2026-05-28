@@ -377,7 +377,7 @@ mod tests {
         let test = TestIdentity::new(
             FilePath::new(path),
             QualifiedName::new(name),
-            Span::new(1, 5),
+            Span::new(1, 5, 1, 1),
         );
         if penalty == 0 {
             // Zero-score finding: no smells, so scrap_score = 0.0.

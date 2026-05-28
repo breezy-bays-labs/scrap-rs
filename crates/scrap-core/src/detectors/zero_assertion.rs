@@ -122,7 +122,7 @@ mod tests {
             TestIdentity::new(
                 FilePath::new("a.rs"),
                 QualifiedName::new("a::tests::t"),
-                Span::new(1, 5),
+                Span::new(1, 5, 1, 1),
             ),
             Vec::new(),
             Vec::new(),
@@ -140,7 +140,7 @@ mod tests {
         pt.assertions.push(ParsedAssertion::new(
             "assert_eq",
             Some("1, 1".into()),
-            Span::new(2, 2),
+            Span::new(2, 2, 1, 1),
             // scrap-rs#24 — non-tautological assertion in this
             // zero-assertion-detector fixture; defaults are correct.
             false,
@@ -282,7 +282,7 @@ mod tests {
         pt.assertions.push(ParsedAssertion::new(
             "assert",
             None,
-            Span::new(2, 2),
+            Span::new(2, 2, 1, 1),
             false,
             None,
         ));
@@ -334,6 +334,8 @@ mod tests {
                             Span::new(
                                 u32::try_from(i).unwrap_or(0) + 1,
                                 u32::try_from(i).unwrap_or(0) + 1,
+                                1,
+                                1,
                             ),
                             // scrap-rs#24 — zero-assertion proptest uses
                             // non-tautological assertions; defaults stand.
@@ -363,7 +365,7 @@ mod tests {
                     TestIdentity::new(
                         FilePath::new("a.rs"),
                         QualifiedName::new("a::tests::t"),
-                        Span::new(1, 5),
+                        Span::new(1, 5, 1, 1),
                     ),
                     Vec::new(),
                     assertions,
@@ -439,7 +441,7 @@ mod tests {
             // (a) push an assertion.
             let mut pt_a = pt.clone();
             pt_a.assertions
-                .push(ParsedAssertion::new("assert", None, Span::new(1, 1), false, None));
+                .push(ParsedAssertion::new("assert", None, Span::new(1, 1, 1, 1), false, None));
             prop_assert!(detect(&pt_a, &cfg).is_none(), "adding an assertion must suppress");
 
             // (b) push an implicit source.

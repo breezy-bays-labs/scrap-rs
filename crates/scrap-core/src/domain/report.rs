@@ -212,7 +212,7 @@ mod tests {
         let test = TestIdentity::new(
             FilePath::new(file),
             QualifiedName::new("a::tests::t"),
-            Span::new(1, 5),
+            Span::new(1, 5, 1, 1),
         );
         Finding::new(
             test,
@@ -302,7 +302,7 @@ mod tests {
         let mut f3_test = TestIdentity::new(
             FilePath::new("b.rs"),
             QualifiedName::new("b::tests::u"),
-            Span::new(2, 6),
+            Span::new(2, 6, 1, 1),
         );
         // Build a finding with no smells (scrap_score = 0).
         let _ = &mut f3_test;

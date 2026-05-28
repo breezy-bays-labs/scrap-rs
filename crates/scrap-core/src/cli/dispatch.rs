@@ -23,7 +23,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::adapter_meta::AdapterMeta;
-use crate::adapters::reporters::{json, stdout};
+use crate::adapters::reporters::{github_annotations, json, sarif, stdout};
 use crate::core::{AnalyzeError, AnalyzeOutput};
 use crate::domain::report::Report;
 use crate::domain::threshold::ThresholdMode;
@@ -54,8 +54,14 @@ pub enum FormatArg {
     Stdout,
     /// Markdown — NOT yet implemented (tracked: scrap-rs#15).
     Markdown,
-    /// SARIF 2.1.0 — NOT yet implemented (tracked: scrap-rs#17).
+    /// SARIF 2.1.0 — routes to `adapters::reporters::sarif::emit`
+    /// (GitHub Code Scanning + IDE SARIF viewers).
     Sarif,
+    /// GitHub Actions inline annotations — routes to
+    /// `adapters::reporters::github_annotations::emit` (`::warning`
+    /// workflow commands intercepted from stdout by the runner). A
+    /// peer format to SARIF per scrap-rs#17 D1.
+    GithubAnnotations,
 }
 
 /// Errors produced by [`render_format`]. The CLI surface unwraps
@@ -82,17 +88,21 @@ pub enum DispatchError {
 }
 
 /// Reporter dispatch — routes `(format, report, options, ...)` to
-/// the right `reporters::*::emit` / `format_*` fn.
+/// the right `reporters::*::emit` / `format_*` fn, writing bytes to
+/// `writer` (the per-spec sink: a file or stdout).
 ///
 /// `--format json` → `json::emit` (writes `serde_json` bytes).
 /// `--format stdout` → `stdout::format_stdout` (writes plain text).
+/// `--format sarif` → `sarif::emit` (SARIF 2.1.0 JSON, scrap-rs#17).
+/// `--format github-annotations` → `github_annotations::emit`
+///   (`::warning` workflow commands, capped at `annotation_limit`).
 /// `--format markdown` → `DispatchError::NotImplemented` (#15).
-/// `--format sarif` → `DispatchError::NotImplemented` (#17).
 ///
 /// `EmitOptions` (`top` + `only_failing`) is consumed by `json::emit`;
-/// the stdout reporter ignores it at v0.1 (cabinet U24 — silent
-/// no-op accepted; the warning lands with scrap-rs#16 when stdout
-/// becomes comfy-table).
+/// the stdout / sarif / github-annotations reporters are gate
+/// translations — they ignore view-shaping flags (SARIF and
+/// annotations must reflect the truthful gate, not a display choice).
+/// `annotation_limit` is honored only by `github-annotations`.
 ///
 /// # Errors
 ///
@@ -103,6 +113,7 @@ pub fn render_format<W: Write>(
     meta: &AdapterMeta,
     options: &json::EmitOptions,
     threshold_mode: ThresholdMode,
+    annotation_limit: usize,
     writer: &mut W,
 ) -> Result<(), DispatchError> {
     match format {
@@ -117,16 +128,17 @@ pub fn render_format<W: Write>(
                 .write_all(rendered.as_bytes())
                 .map_err(DispatchError::Io)?;
         }
+        FormatArg::Sarif => {
+            sarif::emit(report, meta, writer).map_err(DispatchError::Json)?;
+        }
+        FormatArg::GithubAnnotations => {
+            github_annotations::emit(report, meta, annotation_limit, writer)
+                .map_err(DispatchError::Io)?;
+        }
         FormatArg::Markdown => {
             return Err(DispatchError::NotImplemented {
                 format: "markdown",
                 tracking_issue: "scrap-rs#15",
-            });
-        }
-        FormatArg::Sarif => {
-            return Err(DispatchError::NotImplemented {
-                format: "sarif",
-                tracking_issue: "scrap-rs#17",
             });
         }
     }
@@ -323,6 +335,7 @@ mod tests {
             &meta,
             &opts,
             ThresholdMode::Default,
+            10,
             &mut buf,
         )
         .unwrap();
@@ -349,6 +362,7 @@ mod tests {
             &meta,
             &opts,
             ThresholdMode::Default,
+            10,
             &mut buf,
         )
         .unwrap();
@@ -372,6 +386,7 @@ mod tests {
             &meta,
             &opts,
             ThresholdMode::Default,
+            10,
             &mut buf,
         )
         .expect_err("markdown returns NotImplemented");
@@ -388,26 +403,52 @@ mod tests {
     }
 
     #[test]
-    fn render_format_sarif_returns_not_implemented_with_issue_17() {
+    fn render_format_sarif_routes_to_emit_and_writes_sarif_json() {
         let report = empty_report();
         let meta = fixture_meta();
         let opts = json::EmitOptions::default();
         let mut buf: Vec<u8> = Vec::new();
-        let err = render_format(
+        render_format(
             FormatArg::Sarif,
             &report,
             &meta,
             &opts,
             ThresholdMode::Default,
+            10,
             &mut buf,
         )
-        .expect_err("sarif returns NotImplemented");
-        match err {
-            DispatchError::NotImplemented { tracking_issue, .. } => {
-                assert_eq!(tracking_issue, "scrap-rs#17");
-            }
-            other => panic!("expected NotImplemented, got {other:?}"),
-        }
+        .expect("sarif emit succeeds");
+        let s = String::from_utf8(buf).unwrap();
+        assert!(
+            s.contains("\"version\": \"2.1.0\""),
+            "sarif emit must produce SARIF 2.1.0; got: {s}",
+        );
+        assert!(
+            s.contains("\"name\": \"test-adapter\""),
+            "driver.name must come from AdapterMeta::tool_name; got: {s}",
+        );
+    }
+
+    #[test]
+    fn render_format_github_annotations_routes_to_emit() {
+        // Empty report → no warnings, but the call must succeed (and
+        // the reporter is wired, not NotImplemented).
+        let report = empty_report();
+        let meta = fixture_meta();
+        let opts = json::EmitOptions::default();
+        let mut buf: Vec<u8> = Vec::new();
+        render_format(
+            FormatArg::GithubAnnotations,
+            &report,
+            &meta,
+            &opts,
+            ThresholdMode::Default,
+            10,
+            &mut buf,
+        )
+        .expect("github-annotations emit succeeds");
+        // Empty report emits no lines.
+        assert!(buf.is_empty(), "empty report emits no annotations");
     }
 
     // ── exit_code_for ──────────────────────────────────────────────

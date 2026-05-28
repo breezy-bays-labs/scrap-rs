@@ -220,7 +220,11 @@ fn when_completions_zsh(w: &mut World) {
             config: None,
         },
         output: scrap_core::cli::OutputArgs {
-            format: scrap_core::cli::FormatArgClap::Stdout,
+            format: vec![scrap_core::cli::FormatSpec {
+                format: scrap_core::cli::dispatch::FormatArg::Stdout,
+                output: None,
+            }],
+            annotation_limit: None,
             threshold_mode: None,
             no_fail: false,
         },

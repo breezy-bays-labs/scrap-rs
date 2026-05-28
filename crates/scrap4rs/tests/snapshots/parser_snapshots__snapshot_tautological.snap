@@ -10,6 +10,8 @@ tests:
       span:
         start_line: 11
         end_line: 15
+        start_column: 1
+        end_column: 1
     attributes:
       - name: test
         raw: ~
@@ -19,6 +21,8 @@ tests:
         span:
           start_line: 13
           end_line: 13
+          start_column: 5
+          end_column: 17
         arguments_identical: false
         single_arg_value:
           kind: bool
@@ -28,6 +32,8 @@ tests:
         span:
           start_line: 14
           end_line: 14
+          start_column: 5
+          end_column: 20
         arguments_identical: true
     body_line_count: 3
     implicit_assertion_sources: []

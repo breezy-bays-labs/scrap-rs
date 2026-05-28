@@ -96,7 +96,7 @@ mod error_smoke {
     fn syntax_error_displays_message() {
         let err = ParseError::Syntax {
             message: "unexpected token".into(),
-            span: Some(Span::new(3, 3)),
+            span: Some(Span::new(3, 3, 1, 1)),
         };
         assert_eq!(err.to_string(), "syntax error: unexpected token");
         // No #[source] on Syntax — no underlying error to chain.

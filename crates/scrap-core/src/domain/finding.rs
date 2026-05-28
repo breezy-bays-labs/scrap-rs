@@ -76,7 +76,7 @@ mod tests {
         let test = TestIdentity::new(
             FilePath::new("a.rs"),
             QualifiedName::new("a::tests::t"),
-            Span::new(10, 20),
+            Span::new(10, 20, 1, 1),
         );
         let smells = vec![
             Smell::new(
@@ -105,7 +105,7 @@ mod tests {
         let test = TestIdentity::new(
             FilePath::new("a.rs"),
             QualifiedName::new("a::tests::t"),
-            Span::new(1, 1),
+            Span::new(1, 1, 1, 1),
         );
         let f = Finding::new(test, vec![]);
         assert_eq!(f.scrap_score, 0.0);

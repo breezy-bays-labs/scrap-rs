@@ -10,6 +10,8 @@ tests:
       span:
         start_line: 17
         end_line: 18
+        start_column: 1
+        end_column: 17
     attributes:
       - name: test
         raw: ~
@@ -24,6 +26,8 @@ tests:
       span:
         start_line: 20
         end_line: 21
+        start_column: 1
+        end_column: 24
     attributes:
       - name: test
         raw: ~
@@ -38,6 +42,8 @@ tests:
       span:
         start_line: 23
         end_line: 24
+        start_column: 1
+        end_column: 19
     attributes:
       - name: rstest
         raw: ~
@@ -52,6 +58,8 @@ tests:
       span:
         start_line: 26
         end_line: 28
+        start_column: 1
+        end_column: 25
     attributes:
       - name: test
         raw: ~
@@ -69,6 +77,8 @@ tests:
       span:
         start_line: 30
         end_line: 32
+        start_column: 1
+        end_column: 19
     attributes:
       - name: test
         raw: ~
@@ -85,6 +95,8 @@ tests:
       span:
         start_line: 34
         end_line: 36
+        start_column: 1
+        end_column: 26
     attributes:
       - name: test
         raw: ~
@@ -101,6 +113,8 @@ tests:
       span:
         start_line: 38
         end_line: 40
+        start_column: 1
+        end_column: 24
     attributes:
       - name: test
         raw: ~

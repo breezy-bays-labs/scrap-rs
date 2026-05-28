@@ -66,6 +66,9 @@ mod tautological_steps;
 #[path = "cucumber_steps/cli.rs"]
 mod cli_steps;
 
+#[path = "cucumber_steps/sarif_reporter.rs"]
+mod sarif_reporter_steps;
+
 // ─── World ──────────────────────────────────────────────────────────
 
 /// Per-scenario state. Cucumber-rs constructs a fresh `World` for each
@@ -120,6 +123,10 @@ pub struct World {
     pub cli_exit_code: Option<u8>,
     pub cli_stdout: Option<Vec<u8>>,
     pub cli_stderr: Option<Vec<u8>>,
+    /// scrap-rs#17 SARIF reporter fields — populated by
+    /// `cucumber_steps::sarif_reporter` step defs.
+    pub sarif_findings: Vec<Finding>,
+    pub sarif_output: Option<Vec<u8>>,
 }
 
 // ─── Background ─────────────────────────────────────────────────────

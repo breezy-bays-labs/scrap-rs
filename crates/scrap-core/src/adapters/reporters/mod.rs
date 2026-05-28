@@ -19,10 +19,12 @@
 //! - [`json`] — v0.1 nested JSON envelope (`scrap-rs#14`).
 //! - [`stdout`] — v0.1 plain-text reporter (`scrap-rs#21` W3).
 //! - [`table`] — v0.1 comfy-table terminal reporter (`scrap-rs#16`).
+//! - [`sarif`] — SARIF 2.1.0 GitHub Code Scanning (`scrap-rs#17`).
+//! - [`github_annotations`] — GH Actions inline `::warning` workflow
+//!   commands, a peer format to SARIF (`scrap-rs#17`).
 //!
 //! Module roster (planned):
 //! - `markdown` — GFM table reporter (`scrap-rs#15`).
-//! - `sarif` — SARIF 2.1.0 GitHub Code Scanning (`scrap-rs#17`).
 //! - `scorecard_row` — mokumo `Row::TestSmell` producer (v0.2).
 //!
 //! tracked: scrap-rs#73 — `adr-port-surface-and-domain-conventions`
@@ -31,6 +33,8 @@
 //! `crap4rs/adr-free-functions-over-reporter-trait` as load-bearing
 //! constraints.
 
+pub mod github_annotations;
 pub mod json;
+pub mod sarif;
 pub mod stdout;
 pub mod table;

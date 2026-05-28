@@ -124,7 +124,7 @@ mod tests {
         let test = TestIdentity::new(
             FilePath::new("crates/foo/src/bar.rs"),
             QualifiedName::new("foo::tests::it_smells"),
-            Span::new(42, 51),
+            Span::new(42, 51, 1, 1),
         );
         let smell = Smell::new(
             SmellCategory::ZeroAssertion,
