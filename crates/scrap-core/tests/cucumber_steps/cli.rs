@@ -20,7 +20,7 @@
 //! bypassing the cwd-relative behavior of `handle_init`. This also
 //! keeps the test stdout/stderr clean (no chdir-related noise).
 //!
-//! **Completions test**: dispatch_subcommand hardcodes `io::stdout()`
+//! **Completions test**: `dispatch_subcommand` hardcodes `io::stdout()`
 //! for the completions writer. The step def replicates the dispatch
 //! shape but passes `&mut Vec<u8>` so the buffer is captureable
 //! without subprocess fork (cabinet S2 fold — the writer-parameterized
@@ -36,7 +36,7 @@ use scrap_core::adapter_meta::AdapterMeta;
 use scrap_core::cli::{Cli, Command, ShellArg, dispatch_subcommand, init};
 use std::path::PathBuf;
 
-/// Test-fixture AdapterMeta. Adapter-name-agnostic per the CI gate
+/// Test-fixture `AdapterMeta`. Adapter-name-agnostic per the CI gate
 /// (uses `test-adapter` placeholder). 13 fields per scrap-rs#21.
 fn fixture_meta() -> AdapterMeta {
     AdapterMeta {
@@ -77,6 +77,17 @@ fn ensure_tempdir(w: &mut World) -> PathBuf {
 /// mutated.
 fn config_abs_path(w: &mut World) -> PathBuf {
     ensure_tempdir(w).join("test-adapter.toml")
+}
+
+/// Defer-style guard used inside `run_with_cwd` — restores cwd on
+/// Drop (panic-safe). Hoisted to module-level per
+/// `clippy::items_after_statements`.
+struct CwdRestore(PathBuf);
+
+impl Drop for CwdRestore {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.0);
+    }
 }
 
 // ─── Given steps ────────────────────────────────────────────────────
@@ -178,13 +189,8 @@ where
     let original = std::env::current_dir().expect("current_dir");
     std::env::set_current_dir(&tempdir_path).expect("chdir to tempdir");
 
-    // Use a defer-style guard to restore cwd even on panic.
-    struct CwdRestore(PathBuf);
-    impl Drop for CwdRestore {
-        fn drop(&mut self) {
-            let _ = std::env::set_current_dir(&self.0);
-        }
-    }
+    // Use a defer-style guard to restore cwd even on panic. Struct
+    // hoisted to module-level per clippy::items_after_statements.
     let _restore = CwdRestore(original);
 
     f(w)
@@ -332,7 +338,8 @@ fn then_init_err_exists(w: &mut World) {
         Err(scrap_core::cli::error::InitError::Exists { path }) => {
             assert!(
                 path.to_string_lossy().contains("test-adapter.toml"),
-                "Exists.path must reference the file; got: {path:?}",
+                "Exists.path must reference the file; got: {}",
+                path.display(),
             );
         }
         other => panic!("expected InitError::Exists, got {other:?}"),
@@ -408,7 +415,7 @@ fn then_stdout_matches_version_pattern(w: &mut World) {
     let rest = &s["test-adapter ".len()..];
     let head: String = rest.chars().take(5).collect();
     assert!(
-        head.chars().filter(|c| c.is_ascii_digit()).count() >= 3,
+        head.chars().filter(char::is_ascii_digit).count() >= 3,
         "expected digit-dot-digit-dot-digit version pattern; got start: {head}",
     );
 }

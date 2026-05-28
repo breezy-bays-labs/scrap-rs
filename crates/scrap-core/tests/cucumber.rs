@@ -115,7 +115,7 @@ pub struct World {
     /// as futures within the harness's tokio runtime; process cwd is
     /// global, so mutating it would race across scenarios). The
     /// `run_with_cwd` helper in cli.rs serializes the narrow cases
-    /// where `init`'s detect_src_layout needs a chdir.
+    /// where `init`'s `detect_src_layout` needs a chdir.
     pub init_result: Option<Result<(), scrap_core::cli::error::InitError>>,
     pub cli_exit_code: Option<u8>,
     pub cli_stdout: Option<Vec<u8>>,

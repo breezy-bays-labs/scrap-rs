@@ -8,14 +8,14 @@
 //!   `cli::dispatch_subcommand` BEFORE `bootstrap` + `FsWalker::try_new`
 //!   so `init --force` recovers from a malformed config and
 //!   `completions zsh` never touches user config (cabinet MF-2 fix).
-//! - The analysis path calls `cli::bootstrap` → constructs FsWalker
-//!   with the merged AnalysisConfig → calls
+//! - The analysis path calls `cli::bootstrap` → constructs `FsWalker`
+//!   with the merged `AnalysisConfig` → calls
 //!   `cli::run<S, P>(cli, &source, &parser, &meta)` per the issue
 //!   body's verbatim 4-parameter signature (FORK-11 Option A).
 //!
 //! `SCRAP4RS_LONG_VERSION` is stamped by `build.rs` at compile time
 //! (git short hash + Hinnant civil-date `YYYY-MM-DD`) and drives the
-//! `--version` long output via the AdapterMeta literal below.
+//! `--version` long output via the `AdapterMeta` literal below.
 
 use std::process::ExitCode;
 

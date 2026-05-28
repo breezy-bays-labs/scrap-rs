@@ -2,7 +2,7 @@
 //!
 //! Sets `SCRAP4RS_LONG_VERSION` at compile time. clap picks this up
 //! via `long_version = env!("SCRAP4RS_LONG_VERSION")` from main.rs's
-//! AdapterMeta literal and displays it for `--version` (but not `-V`,
+//! `AdapterMeta` literal and displays it for `--version` (but not `-V`,
 //! which uses `version` / `CARGO_PKG_VERSION`).
 //!
 //! Output examples:
@@ -51,6 +51,10 @@ fn build_date_from_secs(secs: i64) -> String {
 }
 
 fn build_date() -> String {
+    // SystemTime::now() is always post-epoch in practice; the cast
+    // is safe within u32 boundaries (year 2106) and explicitly
+    // allowed since the wrap only matters past i64::MAX seconds.
+    #[allow(clippy::cast_possible_wrap)]
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
