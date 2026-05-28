@@ -39,8 +39,12 @@ use crate::ports::source::{SourceError, SourcePort};
 /// satisfy that constraint.
 #[derive(Debug, Clone)]
 pub struct AnalyzeOptions {
-    /// Workspace root the walker walks (post-canonicalize). Built
-    /// from CLI `--src <path>` ∨ `file_config.src` ∨ default `"src"`.
+    /// Workspace root the walker walks. Built from CLI `--src <path>`
+    /// ∨ `file_config.src` ∨ default `"src"`. When constructed via
+    /// `cli::bootstrap`, this path is best-effort canonicalized at
+    /// the merge phase (PR #91 Gemini HIGH fix) so it matches the
+    /// path the `FsWalker` was built with. Library embedders that
+    /// build this directly are responsible for canonicalization.
     pub src: PathBuf,
     /// Effective exclude globs (merged: `meta.forced_excludes` ∪
     /// `cli.filter.exclude` ∪ `file_config.exclude`). Adapter-side
@@ -155,11 +159,14 @@ pub struct AnalyzeOutput {
 /// - Walker failure ([`SourceError`]) → bubble via the `Source(_)`
 ///   variant; pipeline aborts (no `Report` to produce).
 ///
-/// **Source-root canonicalization** — `opts.src` is best-effort
-/// canonicalized once at the top so downstream code doesn't repeat
-/// the concern. Canonicalize failure (path doesn't exist) falls back
-/// to the lexical path; the walker surfaces the cleaner
-/// `Source(SourceError::Io)` if the path is genuinely missing.
+/// **Source-root canonicalization** — performed UPSTREAM in
+/// `cli::merge_effective_inputs` (PR #91 Gemini HIGH fix) so the
+/// `FsWalker` constructed in `main.rs` and the `AnalyzeOptions`
+/// threaded into this fn see the same canonicalized path. Library
+/// embedders that bypass `cli::bootstrap` must canonicalize before
+/// building `AnalyzeOptions` if they need it; canonicalize failure
+/// (path doesn't exist) falls back to the lexical path so the
+/// walker surfaces the cleaner `Source(SourceError::Io)` downstream.
 ///
 /// **Generic over `S: SourcePort + P: TestParserPort`** per the
 /// issue body's enumerated AC. Library embedders can wire a
@@ -188,12 +195,13 @@ where
     S: SourcePort,
     P: TestParserPort,
 {
-    // Best-effort canonicalize once. Fall back to lexical path if
-    // canonicalize fails (path doesn't exist yet — let downstream
-    // surface the cleaner error). NOT stored back into `opts`; POD
-    // is immutable from analyze's POV.
-    let _canonical_src = std::fs::canonicalize(&opts.src).unwrap_or_else(|_| opts.src.clone());
-
+    // Source-root canonicalization happens upstream in
+    // `cli::merge_effective_inputs` (PR #91 fix per Gemini HIGH):
+    // FsWalker is constructed in main.rs from `EffectiveInputs.src`
+    // BEFORE analyze runs, so canonicalizing here would be too late
+    // to affect the walker. Library embedders that bypass
+    // `cli::bootstrap` must canonicalize themselves before building
+    // `AnalyzeOptions` if they need it.
     let DiscoveryOutcome {
         files,
         diagnostics: mut source_diagnostics,

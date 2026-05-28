@@ -310,8 +310,11 @@ pub struct Cli {
 /// callers holding `&Bootstrap` couldn't access the field cross-crate.
 #[derive(Debug, Clone)]
 pub struct EffectiveInputs {
-    /// Source root (post-merge; pre-canonicalize). `analyze`
-    /// canonicalizes once at the top of the pipeline.
+    /// Source root (post-merge; best-effort canonicalized so
+    /// `FsWalker` and `AnalyzeOptions` see the same path —
+    /// PR #91 Gemini HIGH fix). Falls back to the lexical
+    /// path if the directory doesn't exist yet so the walker
+    /// surfaces the cleaner `Source(SourceError::Io)` downstream.
     pub src: PathBuf,
     /// Merged exclude globs (cli + `file_config`; dedup'd).
     pub exclude: Vec<String>,
@@ -621,6 +624,14 @@ fn merge_effective_inputs(
         .clone()
         .or_else(|| file_config.src.clone())
         .unwrap_or_else(|| PathBuf::from("src"));
+    // Canonicalize at the merge phase per Gemini PR #91 HIGH:
+    // FsWalker is constructed in main.rs from `EffectiveInputs.src`
+    // BEFORE `analyze()` runs, so canonicalizing inside analyze is
+    // too late to affect the walker. Best-effort: if the path
+    // doesn't exist yet, fall back to the lexical path so the
+    // walker surfaces the cleaner `Source(SourceError::Io)`
+    // downstream rather than a generic canonicalize failure here.
+    let src = std::fs::canonicalize(&src).unwrap_or(src);
 
     // Dedup-merge exclude: cli first, then file_config additions.
     let mut exclude: Vec<String> = Vec::new();
