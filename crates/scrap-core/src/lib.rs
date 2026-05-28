@@ -28,6 +28,9 @@
 //!   - [`adapters::reporters::json`] — v0.1 JSON envelope reporter (`scrap-rs#14`):
 //!     `emit()` free function + `EmitOptions`, `ViewSpec`, `ViewBlock`,
 //!     `DeltaBlock`, `DiagnosticsBlock`. Wire shape per `adr-nested-json-envelope`.
+//!   - [`adapters::reporters::table`] — v0.1 comfy-table terminal
+//!     reporter (`scrap-rs#16`): `emit()` free function + `TableOptions`
+//!     + `RowGrouping` enum. Default human-facing CLI output.
 //! - [`adapter_meta`] — `AdapterMeta` adapter-binary identity bundle
 //!   (`scrap-rs#14`); top-level placement so reporters and the future
 //!   `cli::run` consume the same type without crossing module boundaries.
