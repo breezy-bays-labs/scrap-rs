@@ -171,7 +171,7 @@ mod tests {
             out.contains("crates/foo/src/bar.rs"),
             "file path must appear; got: {out}",
         );
-        assert!(out.contains("lines 42-51"), "span must appear; got: {out}",);
+        assert!(out.contains("lines 42-51"), "span must appear; got: {out}");
         assert!(
             out.contains("zero_assertion"),
             "smell category wire string must appear; got: {out}",

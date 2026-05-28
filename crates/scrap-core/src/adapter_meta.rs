@@ -153,10 +153,6 @@ impl AdapterMeta {
     /// the meta enters scrap-core's surface — catches accidentally-
     /// empty `env!()` strings or per-adapter constant typos at
     /// first-run time in dev/test builds.
-    ///
-    /// `#[allow(dead_code)]` for the W0 commit only — the `parse_args`
-    /// caller lands in W4. Tests in this module exercise it.
-    #[allow(dead_code)] // tracked: scrap-rs#21 W4 — parse_args caller lands W4
     pub(crate) fn debug_assert_required_fields(&self) {
         debug_assert!(
             !self.tool_name.is_empty(),

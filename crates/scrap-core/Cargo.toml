@@ -62,6 +62,22 @@ serde_json = { workspace = true }
 # AGENTS.md scrap-core deps table. Shared version via
 # `[workspace.dependencies]`.
 comfy-table = { workspace = true }
+# `clap` powers the CLI surface in `cli/mod.rs` (scrap-rs#21 W4). The
+# `derive` feature drives `Parser`/`Args`/`Subcommand`/`ValueEnum`;
+# the `string` feature is required for the runtime-`argv[0]`-derived
+# `bin_name` pattern per crap-rs#161. clap_derive's proc-macro chain
+# (proc-macro2, syn, quote) enters scrap-core as a proc-macro-only
+# transitive — same shape as the pre-existing serde_derive chain;
+# ast-purity CI gate (source grep) is unaffected.
+clap = { workspace = true }
+# `clap_complete` generates shell completion scripts at runtime for
+# bash/zsh/fish/elvish/powershell. Consumed inside
+# `cli::dispatch_subcommand`'s `Completions` arm.
+clap_complete = { workspace = true }
+# `clap_complete_nushell` is a SEPARATE crate from `clap_complete` per
+# clap's modular split for less-common shells. Required for the
+# nushell variant of `--completions <SHELL>`.
+clap_complete_nushell = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
