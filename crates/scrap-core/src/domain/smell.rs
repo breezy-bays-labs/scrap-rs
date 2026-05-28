@@ -19,6 +19,10 @@ pub enum SmellCategory {
     /// Test body invokes the system under test but never asserts on the
     /// result, after recognizing implicit-assertion sources (cucumber-rs,
     /// proptest, quickcheck, trybuild, insta, kani, `should_panic`).
+    ///
+    /// See the [`zero_assertion` fixture](https://github.com/breezy-bays-labs/scrap-rs/tree/main/crates/scrap-examples/examples/zero_assertion)
+    /// for a curated bad-by-design example + the fix pattern + the
+    /// emitted JSON envelope shape.
     #[serde(rename = "zero_assertion")]
     ZeroAssertion,
     /// `assert_eq!(x, x)`, `assert!(true)`, or any equivalent shape that
