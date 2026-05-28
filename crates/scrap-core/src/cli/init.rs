@@ -76,7 +76,7 @@ pub fn handle_init(
 /// # Errors
 ///
 /// See [`InitError`].
-pub(crate) fn handle_init_with_io<W: Write>(
+pub fn handle_init_with_io<W: Write>(
     force: bool,
     meta: &AdapterMeta,
     config_path: &Path,

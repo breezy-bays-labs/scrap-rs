@@ -102,6 +102,19 @@ Every entry in `scrap4rs.toml`'s `exclude = [...]` array, every
 permanent. Quarterly grep audit. See
 `~/.claude/rules/exclusions.md` for the full rule.
 
+## Example Config
+
+`crates/scrap4rs/scrap4rs.example.toml` is a committed reference
+copy of the config schema with every detector / opt-out / override
+block commented out — read it to see the surface, then run
+`scrap4rs init` from your project root to generate your own live
+`scrap4rs.toml`. The example file is NOT loaded by the analyzer; it
+exists so contributors and downstream users can see "what does the
+schema look like?" without invoking `init`. The `.example.toml`
+naming mirrors the npm/yarn `.env.example` convention so the
+intent is unambiguous (`init` writes the live file, the example
+file documents the shape).
+
 ## Issue Discipline
 
 - Every issue gets exactly one `type:*` label

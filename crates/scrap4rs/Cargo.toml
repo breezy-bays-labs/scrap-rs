@@ -11,6 +11,13 @@ keywords = ["scrap", "testing", "quality", "static-analysis", "smell"]
 categories = ["development-tools::testing", "command-line-utilities"]
 readme = "../../README.md"
 rust-version.workspace = true
+# `build.rs` stamps `SCRAP4RS_LONG_VERSION` into the binary at compile
+# time — git short hash + Hinnant civil-date YYYY-MM-DD, no chrono
+# dep. Consumed by main.rs via env!("SCRAP4RS_LONG_VERSION") for the
+# AdapterMeta.long_version field (drives `--version` long output).
+# Lands with scrap-rs#21 W5; mirrors crap4rs/build.rs verbatim with
+# env-var rename only.
+build = "build.rs"
 
 # Binstall metadata is intentionally not wired during v0.x — see ops
 # kickstart plan §3 for the no-release-until-v1.0 policy. When v1.0

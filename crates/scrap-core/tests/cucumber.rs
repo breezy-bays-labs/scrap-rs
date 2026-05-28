@@ -63,6 +63,9 @@ mod detectors_zero_assertion_steps;
 #[path = "cucumber_steps/tautological.rs"]
 mod tautological_steps;
 
+#[path = "cucumber_steps/cli.rs"]
+mod cli_steps;
+
 // ─── World ──────────────────────────────────────────────────────────
 
 /// Per-scenario state. Cucumber-rs constructs a fresh `World` for each
@@ -106,6 +109,17 @@ pub struct World {
     pub parsed_test: Option<ParsedTest>,
     pub detector_config: Option<DetectorConfig>,
     pub detect_result: Option<Option<Finding>>,
+    /// scrap-rs#21 W5 CLI fields — populated by `cucumber_steps::cli`
+    /// step defs. Step defs use absolute paths into `World.tempdir`
+    /// to avoid cwd mutation (cucumber-rs runs scenarios concurrently
+    /// as futures within the harness's tokio runtime; process cwd is
+    /// global, so mutating it would race across scenarios). The
+    /// `run_with_cwd` helper in cli.rs serializes the narrow cases
+    /// where `init`'s detect_src_layout needs a chdir.
+    pub init_result: Option<Result<(), scrap_core::cli::error::InitError>>,
+    pub cli_exit_code: Option<u8>,
+    pub cli_stdout: Option<Vec<u8>>,
+    pub cli_stderr: Option<Vec<u8>>,
 }
 
 // ─── Background ─────────────────────────────────────────────────────
@@ -651,6 +665,12 @@ impl Drop for World {
                 let _ = std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o755));
             }
         }
+        // No cwd restoration here — scrap-rs#21 W5 CLI step defs
+        // serialize cwd mutation via a process-wide mutex inside
+        // `run_with_cwd` (cli.rs); the local CwdRestore guard there
+        // restores cwd before the lock releases, so by Drop time the
+        // cwd is already back to original (or unchanged if the
+        // scenario never touched it).
     }
 }
 

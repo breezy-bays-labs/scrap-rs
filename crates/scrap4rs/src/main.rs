@@ -1,7 +1,21 @@
-//! W4 bridge `main.rs` — satisfies `cargo check -p scrap4rs` at the
-//! W4 commit boundary per cabinet MF-3 B1. The production-quality
-//! main.rs with `env!("SCRAP4RS_LONG_VERSION")` (build.rs-stamped) +
-//! the EXAMPLES `after_help` block lands in W5 once build.rs ships.
+//! scrap4rs — Rust-source adapter binary for the scrap test-smell
+//! detector.
+//!
+//! ~60-line entry point: constructs a 13-field `AdapterMeta` literal,
+//! calls `cli::parse_args` to drive clap, then branches:
+//!
+//! - Subcommands (`init`, `completions`) dispatch via
+//!   `cli::dispatch_subcommand` BEFORE `bootstrap` + `FsWalker::try_new`
+//!   so `init --force` recovers from a malformed config and
+//!   `completions zsh` never touches user config (cabinet MF-2 fix).
+//! - The analysis path calls `cli::bootstrap` → constructs FsWalker
+//!   with the merged AnalysisConfig → calls
+//!   `cli::run<S, P>(cli, &source, &parser, &meta)` per the issue
+//!   body's verbatim 4-parameter signature (FORK-11 Option A).
+//!
+//! `SCRAP4RS_LONG_VERSION` is stamped by `build.rs` at compile time
+//! (git short hash + Hinnant civil-date `YYYY-MM-DD`) and drives the
+//! `--version` long output via the AdapterMeta literal below.
 
 use std::process::ExitCode;
 
@@ -12,10 +26,27 @@ use scrap_core::core::AnalyzeError;
 use scrap4rs::parser::SynTestParser;
 
 const ABOUT: &str = "Static test smell detector for Rust";
-const LONG_ABOUT: &str = "Detects zero-assertion, tautological, no-op-IO, surface-only-IO, and large-example smells in Rust test files (W4 bridge — full copy lands W5).";
-const AFTER_HELP: &str = "";
+const LONG_ABOUT: &str = "Detects zero-assertion, tautological, no-op-IO, surface-only-IO, and \
+                          large-example smells in Rust test files. Reads sources via syn; emits \
+                          a nested JSON envelope, markdown report, SARIF, or plain stdout summary.";
+const AFTER_HELP: &str = "\
+EXAMPLES:
+  scrap4rs --src crates/scrap-core --format json
+  scrap4rs init
+  scrap4rs --src src --format stdout --top 20 --only-failing
+  scrap4rs --exclude \"tests/**\" --exclude \"benches/**\" --format json | jq
+
+INVESTIGATION:
+  # First-run scan: keep the report short
+  scrap4rs --src . --top 20
+
+  # CI-friendly: emit JSON for downstream tooling, never block on smells
+  scrap4rs --format json --no-fail > scrap.json";
+
 const PARSE_HINT: &str = "ensure --src points at a Cargo workspace with test files";
+
 const EXTENSIONS: &[&str] = &["rs"];
+
 const DEFAULT_EXCLUDES: &[&str] = &["tests/**", "benches/**", "examples/**"];
 
 fn main() -> ExitCode {
@@ -23,11 +54,7 @@ fn main() -> ExitCode {
         tool_name: env!("CARGO_PKG_NAME"),
         language: "rust",
         tool_version: env!("CARGO_PKG_VERSION"),
-        // W4 bridge: long_version reuses tool_version because
-        // build.rs (which stamps `SCRAP4RS_LONG_VERSION`) lands in
-        // W5. The bridge keeps `cargo check -p scrap4rs` clean at
-        // this commit boundary per cabinet MF-3 B1.
-        long_version: env!("CARGO_PKG_VERSION"),
+        long_version: env!("SCRAP4RS_LONG_VERSION"),
         about: ABOUT,
         long_about: LONG_ABOUT,
         after_help: AFTER_HELP,
@@ -39,11 +66,10 @@ fn main() -> ExitCode {
         parse_hint: PARSE_HINT,
     };
     let cli = cli::parse_args(&meta);
-    // MF-2: subcommand pre-dispatch — happens BEFORE any config-file
-    // load or walker construction so `init --force` recovers from a
-    // malformed config and `completions zsh` never touches user
-    // config. `dispatch_subcommand` lives in cli/mod.rs (not
-    // dispatch.rs) per advisor placement nit.
+    // Cabinet MF-2: subcommand pre-dispatch — fires BEFORE any
+    // config-file load or walker construction so `init --force`
+    // recovers from a malformed config and `completions zsh` never
+    // touches user config.
     if cli.command.is_some() {
         return cli::dispatch_subcommand(cli, &meta);
     }
