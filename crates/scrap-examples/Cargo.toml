@@ -33,15 +33,18 @@ path = "src/lib.rs"
 # Adapter-binary's lib. scrap4rs's `src/lib.rs:18` re-exports most
 # scrap_core modules: `pub use scrap_core::{adapters, cli, core,
 # detectors, domain, ports};`. Harness imports `scrap_core::*` items
-# via this re-export per cabinet CAO SF1 (2026-05-27).
-scrap4rs = { path = "../scrap4rs" }
+# via this re-export per cabinet CAO SF1 (2026-05-27). The `version`
+# pin defeats `cargo-deny`'s wildcard-dep rule (`deny.toml:wildcards
+# = "deny"`); same pattern as `scrap4rs/Cargo.toml`'s `scrap-core`
+# entry. publish=false means the version is not load-bearing.
+scrap4rs = { path = "../scrap4rs", version = "0.1.0" }
 # tracked: scrap-rs#86 — scrap4rs/src/lib.rs:18 omits `adapter_meta`
 # from its re-export list, violating the strict-superset invariant
 # documented at scrap4rs/src/lib.rs:11. Pulled in here as a
 # workaround so the harness can construct `AdapterMeta` literals.
 # Remove this dep + switch `tests/snapshots.rs` imports to
 # `scrap4rs::adapter_meta::AdapterMeta` once scrap-rs#86 lands.
-scrap-core = { path = "../scrap-core" }
+scrap-core = { path = "../scrap-core", version = "0.1.0" }
 # `serde_json::Value` powers the round-trip diff between live
 # `emit()` output and committed `expected.json`. Per cabinet CEng SF2:
 # `serde_json::Map<String, Value>` is `BTreeMap`-backed by default
