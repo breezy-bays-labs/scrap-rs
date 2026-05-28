@@ -11,8 +11,11 @@
 //!   canonical overrides resolver. Lands across W0–W7 of
 //!   `scrap4rs/scrap-rs-20260524-config-schema` (scrap-rs#18; subsumes
 //!   scrap-rs#34).
+//! - [`error`] — `InitError` typed error surface for the `init`
+//!   subcommand (lands with scrap-rs#21 W3).
 
 pub mod config;
+pub mod error;
 
 use std::process::ExitCode;
 

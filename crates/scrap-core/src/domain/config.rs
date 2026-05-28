@@ -26,7 +26,7 @@
 //! imports from `domain::config` are preferred for new code.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -261,6 +261,78 @@ pub struct Override {
     /// (last match wins per smell key).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub detectors: BTreeMap<SmellCategory, DetectorConfig>,
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Canonical overrides resolver (last-match-wins) — RELOCATED from
+// cli/config.rs in scrap-rs#21 cabinet MF-1 fold so detectors/ +
+// core/ can call it without depending on cli/. Pure data
+// interpretation; uses globset (already in scrap-core deps).
+// ────────────────────────────────────────────────────────────────────────
+
+/// Resolves the [`DetectorConfig`] to apply for a `(path, smell)` pair,
+/// accounting for `[[overrides]]` (last-match-wins per shape R7).
+///
+/// Walks `config.overrides` in **reverse document order**; returns the
+/// first matching override's per-detector config (matched if ANY of its
+/// `r#match` globs match the path AND the override has a
+/// `DetectorConfig` for the smell). Falls back to
+/// `config.detectors.get(&smell)` (top-level per-detector config) if
+/// no override matches. Returns a reference to a `'static` default
+/// `DetectorConfig` sentinel when neither matches — the merge in
+/// scrap-rs#21 then applies the v0.1 defaults (`enabled = true`,
+/// per-smell penalty).
+///
+/// **Free function, module-level, `pub`** per orchestrator decision
+/// (2026-05-25) overriding the cabinet trio's `pub(crate)` preference.
+/// Both scrap4rs (#21) and scrap4ts (v0.6+) call this from their
+/// detector aggregator (`detectors::detect_all`) so the
+/// override-resolution rule lives in exactly one place. Not a method
+/// on `FileConfig` because that would violate ADR D8 (POD discipline
+/// — no methods beyond `Default::default()` and serde derives).
+///
+/// **Glob re-compilation**: each call re-walks the override `r#match`
+/// patterns and compiles each via `globset::Glob::new` + `.compile_matcher()`.
+/// This is a perf trade-off documented for the v0.1 surface; a future
+/// PR can pre-compile globs once at `load_config` time into a
+/// `GlobSet` stored on `Override` (would require schema change).
+/// Defensive: if a glob fails to compile here, it's silently treated
+/// as "no match" — validation in `cli::config::load_config` should
+/// have already rejected every bad pattern.
+///
+/// **MF-1 placement**: lives in `domain::config` (not `cli::config`)
+/// so `detectors::detect_all` can call it without violating
+/// adr-hexagonal-layout. `cli::config` re-exports for compat.
+///
+/// # Errors
+///
+/// (none — pure data interpretation, no I/O.)
+///
+/// # Panics
+///
+/// Never panics; glob compilation failures fall back to "no match" so
+/// the resolver remains total.
+#[must_use]
+pub fn resolve_detector_for_path<'c>(
+    config: &'c FileConfig,
+    path: &Path,
+    smell: SmellCategory,
+) -> &'c DetectorConfig {
+    static DEFAULT: std::sync::OnceLock<DetectorConfig> = std::sync::OnceLock::new();
+    for ov in config.overrides.iter().rev() {
+        let matches = ov.r#match.iter().any(|pat| {
+            globset::Glob::new(pat)
+                .ok()
+                .is_some_and(|g| g.compile_matcher().is_match(path))
+        });
+        if matches && let Some(dc) = ov.detectors.get(&smell) {
+            return dc;
+        }
+    }
+    config
+        .detectors
+        .get(&smell)
+        .unwrap_or_else(|| DEFAULT.get_or_init(DetectorConfig::default))
 }
 
 #[cfg(test)]
