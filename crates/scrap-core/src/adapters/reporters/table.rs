@@ -37,6 +37,9 @@
 //!   inline (cabinet CAO SF-1 verdict: NO LIFT). Re-evaluate if a
 //!   third reporter recurs the same shape.
 
+use crate::domain::classification::Severity;
+use crate::domain::report::Report;
+use comfy_table::{Cell, Color, ContentArrangement, Table};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
 
@@ -111,12 +114,208 @@ pub struct TableOptions {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Unit tests — types only (W2). Renderer + emit tests land in W3–W6.
+// Internal renderers — per-Smell row layout (W3)
+// ────────────────────────────────────────────────────────────────────
+
+/// Render the table contents for [`RowGrouping::Smell`] into `writer`.
+///
+/// Iterates `report.files → findings → smells` in source order;
+/// optionally filters out zero-score Findings (`options.only_failing`)
+/// and truncates the rendered row count (`options.top`).
+///
+/// `threshold_mode` is intentionally NOT a parameter — the header
+/// (W5 `write_header`) and footer (W5 `write_footer`) consume it; the
+/// row-rendering path doesn't need it. Per cabinet CAO SF-2 fold-in
+/// 2026-05-27 — keeps the internal contract tight.
+///
+/// tracked: SF-1 from /plan close cabinet — `if options.only_failing
+/// && finding.scrap_score == 0.0 { continue; }` is 1 LOC of
+/// duplication with `render_finding_rows`; kept inline. Lift to
+/// `Report::filter_view()` only if a 3rd reporter recurs the same
+/// shape.
+fn render_smell_rows<W: std::io::Write>(
+    report: &Report,
+    options: &TableOptions,
+    writer: &mut W,
+) -> std::io::Result<()> {
+    let mut table = Table::new();
+    table
+        .load_preset(comfy_table::presets::UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_width(120)
+        .set_header(vec!["file:line", "Smell", "Severity", "Penalty", "Score"]);
+
+    let top_limit = options.top.map(NonZeroUsize::get);
+    let mut rows_emitted: usize = 0;
+
+    'outer: for file in &report.files {
+        for finding in &file.findings {
+            // tracked: SF-1 — 1-LOC duplication with render_finding_rows
+            if options.only_failing && finding.scrap_score == 0.0 {
+                continue;
+            }
+            for smell in &finding.smells {
+                let line = smell
+                    .span
+                    .map_or(finding.test.span.start_line, |s| s.start_line);
+                let file_line = format!("{}:{}", finding.test.file_path, line);
+
+                let severity_text = format!("{:?}", smell.severity);
+                let severity_cell = severity_cell(severity_text, smell.severity, options.use_color);
+
+                table.add_row(vec![
+                    Cell::new(file_line),
+                    Cell::new(smell.category.as_wire_str()),
+                    severity_cell,
+                    Cell::new(smell.penalty.to_string()),
+                    Cell::new(format!("{:.0}", finding.scrap_score)),
+                ]);
+
+                rows_emitted += 1;
+                if Some(rows_emitted) == top_limit {
+                    break 'outer;
+                }
+            }
+        }
+    }
+
+    writeln!(writer, "{table}")
+}
+
+/// Style a severity-text cell. When `use_color`, sets the foreground
+/// per [`Severity`]; otherwise returns the plain cell. comfy-table's
+/// `Cell::fg` only renders inside a `Table` — that's why this helper
+/// is here (the footer needs different handling — see W5
+/// `write_footer`).
+fn severity_cell(text: String, severity: Severity, use_color: bool) -> Cell {
+    let cell = Cell::new(text);
+    if !use_color {
+        return cell;
+    }
+    let color = match severity {
+        Severity::High => Color::Red,
+        Severity::Moderate => Color::Yellow,
+        Severity::Low => Color::DarkGrey,
+    };
+    cell.fg(color)
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Unit tests — W2 (types) + W3 (render_smell_rows).
+// Renderer + emit tests land in W4–W6.
 // ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)] // exact-integer-derived scores in fixtures (mirrors json.rs)
 mod tests {
     use super::*;
+    use crate::domain::classification::{Actionability, Severity};
+    use crate::domain::finding::Finding;
+    use crate::domain::report::{FileReport, Report};
+    use crate::domain::smell::{Smell, SmellCategory};
+    use crate::domain::types::{FilePath, QualifiedName, Span, TestIdentity};
+
+    // ── Fixture helpers ────────────────────────────────────────────
+
+    /// Build a `Finding` for `path` with one Smell at `penalty`.
+    /// `penalty = 0` produces a zero-score finding (no smells).
+    fn finding_at(path: &str, name: &str, penalty: u32) -> Finding {
+        let test = TestIdentity::new(
+            FilePath::new(path),
+            QualifiedName::new(name),
+            Span::new(5, 15),
+        );
+        if penalty == 0 {
+            Finding::new(test, vec![])
+        } else {
+            Finding::new(
+                test,
+                vec![Smell::new(
+                    SmellCategory::ZeroAssertion,
+                    Severity::High,
+                    Actionability::AutoRefactor,
+                    penalty,
+                    None,
+                )],
+            )
+        }
+    }
+
+    /// Build a `Finding` with N smells at `penalty` each (constant
+    /// severity High, no per-Smell span).
+    fn finding_with_n_smells(path: &str, name: &str, penalty: u32, n: usize) -> Finding {
+        let test = TestIdentity::new(
+            FilePath::new(path),
+            QualifiedName::new(name),
+            Span::new(5, 15),
+        );
+        let smells = (0..n)
+            .map(|_| {
+                Smell::new(
+                    SmellCategory::ZeroAssertion,
+                    Severity::High,
+                    Actionability::AutoRefactor,
+                    penalty,
+                    None,
+                )
+            })
+            .collect();
+        Finding::new(test, smells)
+    }
+
+    /// Build a `Finding` with one Smell carrying the given `Some(Span)`
+    /// for `Smell.span` (per-Smell line attribution).
+    fn finding_with_smell_span(path: &str, name: &str, penalty: u32, smell_span: Span) -> Finding {
+        let test = TestIdentity::new(
+            FilePath::new(path),
+            QualifiedName::new(name),
+            Span::new(5, 15),
+        );
+        Finding::new(
+            test,
+            vec![Smell::new(
+                SmellCategory::TautologicalAssertion,
+                Severity::High,
+                Actionability::AutoRefactor,
+                penalty,
+                Some(smell_span),
+            )],
+        )
+    }
+
+    /// Wrap a list of (path, Findings) into a `Report`.
+    fn report_from(files: Vec<(&str, Vec<Finding>)>) -> Report {
+        let file_reports: Vec<FileReport> = files
+            .into_iter()
+            .map(|(path, findings)| FileReport::new(FilePath::new(path), findings))
+            .collect();
+        Report {
+            files: file_reports,
+            ..Report::default()
+        }
+    }
+
+    /// Render `render_smell_rows` to a UTF-8 string.
+    fn render_smell(report: &Report, options: &TableOptions) -> String {
+        let mut buf: Vec<u8> = Vec::new();
+        render_smell_rows(report, options, &mut buf).expect("render_smell_rows writes");
+        String::from_utf8(buf).expect("output is UTF-8")
+    }
+
+    /// Count data rows in a rendered table by scanning for `│` cell
+    /// dividers and dropping the header row. Robust against
+    /// comfy-table cosmetic changes; the snapshot tests pin exact
+    /// borders.
+    fn count_data_rows(output: &str) -> usize {
+        // Header row = the line containing the first column header text.
+        // Data rows = lines with `│` that DON'T contain the header text.
+        let header_marker = "file:line";
+        output
+            .lines()
+            .filter(|l| l.contains('│'))
+            .filter(|l| !l.contains(header_marker))
+            .count()
+    }
 
     // ── RowGrouping ────────────────────────────────────────────────
 
@@ -171,5 +370,198 @@ mod tests {
         assert!(!opts.only_failing, "default only_failing = false");
         assert!(!opts.use_color, "default use_color = false");
         assert_eq!(opts.grouping, RowGrouping::Smell);
+    }
+
+    // ── render_smell_rows ─────────────────────────────────────────
+
+    #[test]
+    fn render_smell_rows_one_finding_one_smell_renders_one_row() {
+        let report = report_from(vec![("a.rs", vec![finding_at("a.rs", "a::tests::t", 10)])]);
+        let output = render_smell(&report, &TableOptions::default());
+        assert_eq!(count_data_rows(&output), 1, "one finding → one row");
+        // Spot-check all 5 columns surfaced: file:line, smell wire str,
+        // severity, penalty, score.
+        assert!(output.contains("a.rs:5"), "file:line populated");
+        assert!(output.contains("zero_assertion"), "smell column");
+        assert!(output.contains("High"), "severity column");
+        assert!(output.contains(" 10 "), "penalty column");
+    }
+
+    #[test]
+    fn render_smell_rows_one_finding_two_smells_renders_two_rows() {
+        let report = report_from(vec![(
+            "a.rs",
+            vec![finding_with_n_smells("a.rs", "a::tests::t", 5, 2)],
+        )]);
+        let output = render_smell(&report, &TableOptions::default());
+        assert_eq!(count_data_rows(&output), 2, "two smells → two rows");
+        // Score column shows per-Finding total (5 + 5 = 10) on each row
+        // — duplication is expected per D-COL-SMELL-1.
+        // Count "10" occurrences in score-column cells (look for " 10 "
+        // padding); should appear twice.
+        let score_cell_count = output.matches(" 10 ").count();
+        assert!(
+            score_cell_count >= 2,
+            "score column shows per-Finding total on each row (got {score_cell_count})",
+        );
+    }
+
+    #[test]
+    fn render_smell_rows_uses_smell_span_when_present() {
+        let report = report_from(vec![(
+            "a.rs",
+            vec![finding_with_smell_span(
+                "a.rs",
+                "a::tests::t",
+                10,
+                Span::new(42, 42),
+            )],
+        )]);
+        let output = render_smell(&report, &TableOptions::default());
+        assert!(
+            output.contains("a.rs:42"),
+            "file:line uses Smell.span.start_line (42), not test span (5)\n{output}",
+        );
+        assert!(
+            !output.contains("a.rs:5"),
+            "test-span fallback NOT used when Smell.span is Some",
+        );
+    }
+
+    #[test]
+    fn render_smell_rows_falls_back_to_test_span_when_smell_span_none() {
+        // finding_at creates a Smell with span = None.
+        let report = report_from(vec![("a.rs", vec![finding_at("a.rs", "a::tests::t", 10)])]);
+        let output = render_smell(&report, &TableOptions::default());
+        assert!(
+            output.contains("a.rs:5"),
+            "file:line falls back to test span start (5) when Smell.span is None\n{output}",
+        );
+    }
+
+    #[test]
+    fn render_smell_rows_source_order_preserved() {
+        let report = report_from(vec![
+            ("a.rs", vec![finding_at("a.rs", "a::tests::t1", 10)]),
+            ("b.rs", vec![finding_at("b.rs", "b::tests::t2", 5)]),
+            ("c.rs", vec![finding_at("c.rs", "c::tests::t3", 7)]),
+        ]);
+        let output = render_smell(&report, &TableOptions::default());
+        let a_pos = output.find("a.rs:5").expect("a.rs row present");
+        let b_pos = output.find("b.rs:5").expect("b.rs row present");
+        let c_pos = output.find("c.rs:5").expect("c.rs row present");
+        assert!(a_pos < b_pos, "a.rs before b.rs (source order)");
+        assert!(b_pos < c_pos, "b.rs before c.rs (source order)");
+    }
+
+    #[test]
+    fn render_smell_rows_only_failing_filters_zero_score() {
+        let report = report_from(vec![
+            ("a.rs", vec![finding_at("a.rs", "a::tests::t1", 10)]),
+            ("b.rs", vec![finding_at("b.rs", "b::tests::t2", 0)]),
+            ("c.rs", vec![finding_at("c.rs", "c::tests::t3", 4)]),
+        ]);
+        let opts = TableOptions {
+            only_failing: true,
+            ..TableOptions::default()
+        };
+        let output = render_smell(&report, &opts);
+        assert_eq!(
+            count_data_rows(&output),
+            2,
+            "zero-score Finding filtered → 2 rows",
+        );
+        assert!(!output.contains("b.rs:5"), "b.rs (zero-score) absent");
+    }
+
+    #[test]
+    fn render_smell_rows_top_truncates_rows_not_findings() {
+        // Single Finding with 3 Smells; top=2 → 2 rows (mid-Finding break).
+        let report = report_from(vec![(
+            "a.rs",
+            vec![finding_with_n_smells("a.rs", "a::tests::t", 5, 3)],
+        )]);
+        let opts = TableOptions {
+            top: Some(NonZeroUsize::new(2).expect("non-zero")),
+            ..TableOptions::default()
+        };
+        let output = render_smell(&report, &opts);
+        assert_eq!(
+            count_data_rows(&output),
+            2,
+            "top=2 truncates to 2 rows (mid-Finding break acceptable)",
+        );
+    }
+
+    #[test]
+    fn render_smell_rows_empty_report_renders_zero_rows() {
+        let report = Report::default();
+        let output = render_smell(&report, &TableOptions::default());
+        assert_eq!(count_data_rows(&output), 0, "no findings → no rows");
+        // Header still present (column headers in border-rendered table).
+        assert!(
+            output.contains("file:line"),
+            "header row still rendered on empty report",
+        );
+    }
+
+    #[test]
+    fn render_smell_rows_only_failing_with_all_zero_findings_renders_zero_rows() {
+        let report = report_from(vec![
+            ("a.rs", vec![finding_at("a.rs", "a::tests::t1", 0)]),
+            ("b.rs", vec![finding_at("b.rs", "b::tests::t2", 0)]),
+        ]);
+        let opts = TableOptions {
+            only_failing: true,
+            ..TableOptions::default()
+        };
+        let output = render_smell(&report, &opts);
+        assert_eq!(
+            count_data_rows(&output),
+            0,
+            "all-zero + only_failing → 0 rows",
+        );
+    }
+
+    // ── Cabinet fold-in tests (CQO A1 + A2 absorbed at /plan close) ─
+
+    #[test]
+    fn render_smell_rows_zero_smell_finding_only_failing_false_renders_zero_rows() {
+        // Cabinet CQO A1 fold-in 2026-05-27: Finding with no Smells
+        // (zero-score) + only_failing = false → zero rows rendered
+        // (no inner loop iteration because Finding.smells is empty).
+        // Distinct from `..._all_zero_findings_...` because
+        // only_failing = false; the zero-smells-vs-zero-score
+        // boundary is structural, not filter-driven.
+        let report = report_from(vec![("a.rs", vec![finding_at("a.rs", "a::tests::t", 0)])]);
+        let opts = TableOptions::default(); // only_failing = false
+        let output = render_smell(&report, &opts);
+        assert_eq!(
+            count_data_rows(&output),
+            0,
+            "zero-smell Finding renders 0 rows under Smell grouping (no inner loop iteration)",
+        );
+    }
+
+    #[test]
+    fn render_smell_rows_top_no_truncate_when_n_gte_total_rows() {
+        // Cabinet CQO A2 fold-in 2026-05-27, mirror of json.rs
+        // `view_top_no_truncate_when_n_gte_eligible`: 3 rows + top=5
+        // → all 3 rows present; no truncation triggered.
+        let report = report_from(vec![
+            ("a.rs", vec![finding_at("a.rs", "a::tests::t1", 10)]),
+            ("b.rs", vec![finding_at("b.rs", "b::tests::t2", 10)]),
+            ("c.rs", vec![finding_at("c.rs", "c::tests::t3", 10)]),
+        ]);
+        let opts = TableOptions {
+            top: Some(NonZeroUsize::new(5).expect("non-zero")),
+            ..TableOptions::default()
+        };
+        let output = render_smell(&report, &opts);
+        assert_eq!(
+            count_data_rows(&output),
+            3,
+            "top=5 vs 3 total rows → all 3 present (no truncation)",
+        );
     }
 }
