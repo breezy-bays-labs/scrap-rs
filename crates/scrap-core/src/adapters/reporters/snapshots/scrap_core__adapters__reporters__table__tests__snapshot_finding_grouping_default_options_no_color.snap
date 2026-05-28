@@ -1,0 +1,15 @@
+---
+source: crates/scrap-core/src/adapters/reporters/table.rs
+expression: output
+---
+test-adapter 0.1.0 — 3 tests inspected, 3 findings, 1 exceeding 'default' threshold
+┌──────┬──────────────────┬────────────────┬───────┬───────────┐
+│ File ┆ Test             ┆ Smells         ┆ Score ┆ Pass/Fail │
+╞══════╪══════════════════╪════════════════╪═══════╪═══════════╡
+│ a.rs ┆ a::tests::t_high ┆ zero_assertion ┆ 10    ┆ FAIL      │
+├╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+│ b.rs ┆ b::tests::t_low  ┆ large_example  ┆ 4     ┆ PASS      │
+├╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+│ b.rs ┆ b::tests::t_zero ┆                ┆ 0     ┆ PASS      │
+└──────┴──────────────────┴────────────────┴───────┴───────────┘
+FAILED — 1 of 3 tests exceed threshold under 'default' mode
