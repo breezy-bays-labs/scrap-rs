@@ -71,6 +71,12 @@ cucumber = { workspace = true }
 # `tokio` powers the cucumber harness's async runtime. Used only
 # inside `tests/cucumber.rs`.
 tokio = { workspace = true }
+# `serde_json` parses the emitted JSON envelope back to a `Value` in
+# `tests/wire_real_name.rs` to assert scrap4rs's real shipping
+# `AdapterMeta` threads `"scrap4rs"` into the wire `tool` field
+# (scrap-rs#37 — real-name emission verification lives in the adapter
+# crate that owns the identity, not in adapter-agnostic scrap-core).
+serde_json = { workspace = true }
 
 [[test]]
 name = "cucumber"
