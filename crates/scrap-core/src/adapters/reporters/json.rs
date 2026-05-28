@@ -283,7 +283,7 @@ pub fn emit<W: std::io::Write>(
     let view = build_view(report, options);
     let envelope = JsonEnvelope {
         schema_version: 1,
-        tool: meta.tool,
+        tool: meta.tool_name,
         tool_version: meta.tool_version,
         language: meta.language,
         timestamp,
