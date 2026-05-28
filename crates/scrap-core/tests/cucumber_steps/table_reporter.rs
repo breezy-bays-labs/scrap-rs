@@ -4,11 +4,12 @@
 //! `#[given]`/`#[when]`/`#[then]` step fns globally within the test
 //! binary; mod-block split per scrap-rs#18 W5.1 SHOULD-FIX #5.
 //!
-//! The literal `"scrap4rs"` / `"scrap4ts"` / `"test-adapter"` strings
-//! here are OK because the source-only adapter-name literal purity CI
-//! gate (scrap-rs#37 / scrap-rs#52) scopes to
-//! `crates/scrap-core/src/`, NOT `tests/`. Test fixtures use the
-//! concrete adapter names for realism.
+//! These fixtures already use the NEUTRAL adapter name `test-adapter`
+//! (no `scrap4rs` / `scrap4ts` literals), which satisfies the
+//! scrap-rs#37 adapter-name literal purity CI gate — that gate scans
+//! `crates/scrap-core/` source AND tests, so scrap-core fixtures stay
+//! adapter-name-pure. Real-name emission is verified in the adapter
+//! crate that owns the identity (`crates/scrap4rs/tests/`).
 
 #![allow(clippy::needless_pass_by_value)] // cucumber step-fn convention
 
