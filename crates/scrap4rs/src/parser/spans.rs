@@ -32,9 +32,11 @@ pub(crate) fn line_to_u32(line: usize) -> u32 {
 /// column on a line is `0`, pointing AT the first character);
 /// `domain::Span` columns are **1-based inclusive**. The `+1` converts
 /// 0-based-inclusive → 1-based-inclusive (`saturating_add` so a
-/// pathological `u32::MAX` column does not wrap).
+/// pathological `u32::MAX` column does not wrap). Delegates the
+/// `usize → u32` saturating cast to [`line_to_u32`] (single source of
+/// truth for that cast across the parser).
 pub(crate) fn start_column_to_u32_1based(column: usize) -> u32 {
-    u32::try_from(column).unwrap_or(u32::MAX).saturating_add(1)
+    line_to_u32(column).saturating_add(1)
 }
 
 /// Saturating cast for an **end** column from
@@ -49,8 +51,10 @@ pub(crate) fn start_column_to_u32_1based(column: usize) -> u32 {
 /// modulo the `0`→`1` floor. The floor keeps the domain's 1-based
 /// invariant for the degenerate zero-width span at column 0 (which the
 /// synthetic-span guard in [`span_from_spanned`] also catches).
+/// Delegates the `usize → u32` saturating cast to [`line_to_u32`]
+/// (single source of truth for that cast across the parser).
 pub(crate) fn end_column_to_u32_1based(column: usize) -> u32 {
-    u32::try_from(column).unwrap_or(u32::MAX).max(1)
+    line_to_u32(column).max(1)
 }
 
 /// Project any `syn::spanned::Spanned` node into the domain's

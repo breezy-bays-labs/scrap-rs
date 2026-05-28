@@ -104,10 +104,13 @@ fn build_log(report: &Report, meta: &AdapterMeta) -> SarifLog {
         .iter()
         .flat_map(|file| file.findings.iter())
         .flat_map(|finding| {
+            // Clone the file path once per finding (not once per smell)
+            // — mirrors the optimized pattern in `github_annotations.rs`.
+            let file_path = finding.test.file_path.to_string();
             finding.smells.iter().map(move |smell| {
                 result_for_smell(
                     smell,
-                    finding.test.file_path.to_string(),
+                    file_path.clone(),
                     finding.test.qualified_name.as_str(),
                     finding.test.span,
                 )
