@@ -63,20 +63,15 @@ use std::num::NonZeroUsize;
 /// CLI override is added by scrap-rs#21 (clap `ValueEnum` derive
 /// lands in that PR — not here, because scrap-core does not yet
 /// list `clap` in its `[dependencies]`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum RowGrouping {
     /// One row per Smell — `file:line / smell / severity / penalty / score`.
+    #[default]
     Smell,
     /// One row per Finding (test) — `File / Test / Smells / Score / Pass-Fail`.
     Finding,
-}
-
-impl Default for RowGrouping {
-    fn default() -> Self {
-        Self::Smell
-    }
 }
 
 /// Display-shaping options for the table reporter.
