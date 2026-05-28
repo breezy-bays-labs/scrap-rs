@@ -961,6 +961,7 @@ dependencies = [
 name = "scrap-examples"
 version = "0.1.0"
 dependencies = [
+ "scrap-core",
  "scrap4rs",
  "serde_json",
 ]
