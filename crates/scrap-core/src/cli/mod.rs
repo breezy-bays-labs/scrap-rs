@@ -15,7 +15,9 @@
 //!   subcommand (lands with scrap-rs#21 W3).
 
 pub mod config;
+pub mod dispatch;
 pub mod error;
+pub mod init;
 
 use std::process::ExitCode;
 

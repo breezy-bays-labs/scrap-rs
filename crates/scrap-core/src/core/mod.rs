@@ -148,7 +148,7 @@ pub struct AnalyzeOutput {
 /// - Parse failure ([`ParseError::Syntax`]) → push a
 ///   [`ParseDiagnostic`] with `ParseDiagnosticKind::Syntax`, embed
 ///   the file path in the message (the wire shape doesn't carry a
-///   per-diagnostic file_path field), increment the
+///   per-diagnostic `file_path` field), increment the
 ///   all-failed-counter, continue. If every file failed to parse
 ///   AND the walker found files at all,
 ///   return `Err(AllFilesFailedToParse { total_files })`.
@@ -163,7 +163,7 @@ pub struct AnalyzeOutput {
 ///
 /// **Generic over `S: SourcePort + P: TestParserPort`** per the
 /// issue body's enumerated AC. Library embedders can wire a
-/// `MemorySource` + fake parser without forcing FsWalker / SynParser.
+/// `MemorySource` + fake parser without forcing `FsWalker` / `SynParser`.
 ///
 /// **Detector loop is a stub at v0.1** — `detect_all` returns the
 /// zero-assertion detector's findings only (scrap-rs#30 / PR #82).
@@ -409,8 +409,8 @@ mod tests {
         }
     }
 
-    /// Build a tempdir + one rust source file; return (TempDir,
-    /// FilePath to the file). TempDir kept alive by the caller via
+    /// Build a tempdir + one rust source file; return (`TempDir`,
+    /// `FilePath` to the file). `TempDir` kept alive by the caller via
     /// the returned guard.
     fn tempdir_with_one_file(content: &str) -> (tempfile::TempDir, FilePath) {
         let dir = tempfile::tempdir().unwrap();

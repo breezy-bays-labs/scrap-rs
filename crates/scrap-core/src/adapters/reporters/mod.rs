@@ -17,6 +17,7 @@
 //!
 //! Module roster (live):
 //! - [`json`] — v0.1 nested JSON envelope (`scrap-rs#14`).
+//! - [`stdout`] — v0.1 plain-text reporter (`scrap-rs#21` W3).
 //! - [`table`] — v0.1 comfy-table terminal reporter (`scrap-rs#16`).
 //!
 //! Module roster (planned):
@@ -31,4 +32,5 @@
 //! constraints.
 
 pub mod json;
+pub mod stdout;
 pub mod table;

@@ -45,7 +45,7 @@ const FIXED_TIMESTAMP: &str = "2026-05-26T00:00:00Z";
 /// literal purity CI gate (scrap-rs#37 / scrap-rs#52) scopes to
 /// `crates/scrap-core/src/`, NOT `tests/`. Test fixtures use the
 /// concrete adapter name for realism. 13-field shape per scrap-rs#21
-/// AdapterMeta expansion.
+/// `AdapterMeta` expansion.
 fn test_meta() -> AdapterMeta {
     AdapterMeta {
         tool_name: "scrap4rs",
