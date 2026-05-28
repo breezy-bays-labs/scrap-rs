@@ -211,59 +211,28 @@ where
     let mut parse_diagnostics: Vec<ParseDiagnostic> = Vec::new();
     let mut all_failed_count: u32 = 0;
 
+    // Per-file body extracted to `analyze_one_file` (PR #91 CRAP fix —
+    // dropped `analyze` CC from 17 to under threshold). The per-iter
+    // match collapses the three outcomes onto the three mutable
+    // accumulators in this scope.
     for file_path in &files {
-        // Read the file's bytes. On I/O failure, push a
-        // SourceDiagnostic::MidwalkIo (cabinet S1 — DO NOT silently
-        // swallow) and continue to the next file.
-        let source_text = match std::fs::read_to_string(file_path.as_path()) {
-            Ok(s) => s,
-            Err(e) => {
-                source_diagnostics.push(SourceDiagnostic::new(
-                    file_path.clone(),
-                    SourceDiagnosticKind::MidwalkIo,
-                    e.to_string(),
-                ));
-                continue;
+        match analyze_one_file(file_path, opts, parser) {
+            FileOutcome::Report {
+                file_report,
+                parser_diagnostics,
+            } => {
+                parse_diagnostics.extend(parser_diagnostics);
+                if let Some(fr) = file_report {
+                    file_reports.push(fr);
+                }
             }
-        };
-
-        // Parse via the adapter. On Err(ParseError::Syntax), push a
-        // ParseDiagnostic + increment the all-failed counter; the
-        // file's contribution to the report drops out entirely.
-        let parsed = match parser.parse_test_source(&source_text, file_path) {
-            Ok(p) => p,
-            Err(ParseError::Syntax { message, span }) => {
+            FileOutcome::ParseFailure(diag) => {
                 all_failed_count = all_failed_count.saturating_add(1);
-                // ParseDiagnostic doesn't carry a per-diagnostic
-                // file_path field (wire shape inherited from #14);
-                // embed the path in the message for attribution.
-                let attributed = format!("{}: {message}", file_path.as_path().display());
-                parse_diagnostics.push(ParseDiagnostic::new(
-                    ParseDiagnosticKind::Syntax,
-                    span,
-                    attributed,
-                ));
-                continue;
+                parse_diagnostics.push(diag);
             }
-        };
-
-        // Run every enabled detector against each test in the file.
-        let mut findings: Vec<Finding> = Vec::with_capacity(parsed.tests.len());
-        for parsed_test in &parsed.tests {
-            let smells = detect_all(parsed_test, &opts.config);
-            findings.push(Finding::new(parsed_test.identity.clone(), smells));
-        }
-
-        // Per-file diagnostics from the parser (e.g., partial-recovery
-        // warnings) carry over too. Attribute via the same message
-        // pattern as parse failures so the wire shape stays uniform.
-        for diag in parsed.diagnostics {
-            let attributed = format!("{}: {}", file_path.as_path().display(), diag.message);
-            parse_diagnostics.push(ParseDiagnostic::new(diag.kind, diag.span, attributed));
-        }
-
-        if !findings.is_empty() {
-            file_reports.push(FileReport::new(file_path.clone(), findings));
+            FileOutcome::ReadFailure(diag) => {
+                source_diagnostics.push(diag);
+            }
         }
     }
 
@@ -292,6 +261,107 @@ where
         source_diagnostics,
         parse_diagnostics,
     })
+}
+
+/// Outcome of `analyze_one_file` — three POD variants the parent
+/// `analyze` loop folds onto its three mutable accumulators
+/// (`file_reports`, `parse_diagnostics`, `source_diagnostics`).
+///
+/// Per PR #91 CRAP fix: extracted from the per-file body inside
+/// `analyze` to drop the parent's cyclomatic complexity below the
+/// crap4rs `default` (CC ≤ 15) threshold. The original CC was 17.
+///
+/// Variants:
+/// - `Report` — file parsed; carries a `FileReport` (omitted when
+///   the file had no findings) plus any per-file parser diagnostics
+///   (already path-attributed in the message field).
+/// - `ParseFailure` — `ParseError::Syntax` from the adapter; the
+///   parent increments `all_failed_count` and pushes the diagnostic.
+/// - `ReadFailure` — `std::fs::read_to_string` failed; parent pushes
+///   the `SourceDiagnostic::MidwalkIo` and moves on.
+enum FileOutcome {
+    Report {
+        file_report: Option<FileReport>,
+        parser_diagnostics: Vec<ParseDiagnostic>,
+    },
+    ParseFailure(ParseDiagnostic),
+    ReadFailure(SourceDiagnostic),
+}
+
+/// Read + parse + detect a single file. Returns a `FileOutcome` the
+/// caller folds onto the report's accumulators.
+///
+/// Encapsulates the three branching outcomes (read-fail, parse-fail,
+/// happy-path-with-detector-loop) so the parent `analyze` stays
+/// linear: `for path in files { match analyze_one_file(...) { ... } }`.
+///
+/// Per-file diagnostics from the parser (e.g. partial-recovery
+/// warnings) are path-attributed inline here so the parent doesn't
+/// need to know the wire-shape detail (`ParseDiagnostic.message`
+/// embeds `file_path: original_message` per wire shape inherited
+/// from #14).
+fn analyze_one_file<P>(
+    file_path: &crate::domain::types::FilePath,
+    opts: &AnalyzeOptions,
+    parser: &P,
+) -> FileOutcome
+where
+    P: TestParserPort,
+{
+    let source_text = match std::fs::read_to_string(file_path.as_path()) {
+        Ok(s) => s,
+        Err(e) => {
+            return FileOutcome::ReadFailure(SourceDiagnostic::new(
+                file_path.clone(),
+                SourceDiagnosticKind::MidwalkIo,
+                e.to_string(),
+            ));
+        }
+    };
+
+    let parsed = match parser.parse_test_source(&source_text, file_path) {
+        Ok(p) => p,
+        Err(ParseError::Syntax { message, span }) => {
+            // ParseDiagnostic doesn't carry a per-diagnostic
+            // file_path field (wire shape inherited from #14);
+            // embed the path in the message for attribution.
+            let attributed = format!("{}: {message}", file_path.as_path().display());
+            return FileOutcome::ParseFailure(ParseDiagnostic::new(
+                ParseDiagnosticKind::Syntax,
+                span,
+                attributed,
+            ));
+        }
+    };
+
+    // Run every enabled detector against each test in the file.
+    let findings: Vec<Finding> = parsed
+        .tests
+        .iter()
+        .map(|t| Finding::new(t.identity.clone(), detect_all(t, &opts.config)))
+        .collect();
+
+    // Per-file parser diagnostics — already attributed inline so
+    // the parent loop doesn't need to know the wire-shape detail.
+    let parser_diagnostics: Vec<ParseDiagnostic> = parsed
+        .diagnostics
+        .into_iter()
+        .map(|d| {
+            let attributed = format!("{}: {}", file_path.as_path().display(), d.message);
+            ParseDiagnostic::new(d.kind, d.span, attributed)
+        })
+        .collect();
+
+    let file_report = if findings.is_empty() {
+        None
+    } else {
+        Some(FileReport::new(file_path.clone(), findings))
+    };
+
+    FileOutcome::Report {
+        file_report,
+        parser_diagnostics,
+    }
 }
 
 #[cfg(test)]
