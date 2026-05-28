@@ -1233,4 +1233,98 @@ mod tests {
         assert_eq!(color_code(Color::DarkGrey), None);
         assert_eq!(color_code(Color::Reset), None);
     }
+
+    // ── Insta snapshots — no-color path only (W7, D-SNAP-1) ───────
+    //
+    // Per cabinet CQO S2 fold-in 2026-05-27: first-time snapshot
+    // bless requires eyeball against D-COL-SMELL-1 / D-COL-FINDING-1
+    // / D-HEADER-1 / D-FOOTER-1 expected layout BEFORE
+    // `cargo insta accept --unreviewed`. Subsequent re-bless on
+    // comfy-table version bumps: `cargo insta review` interactive
+    // — NEVER blind accept.
+
+    /// Snapshot fixture: 2 files, 3 Findings, mixed severity, mixed
+    /// scores. Stays small for reviewer eyeball.
+    /// - a.rs::tests::t_high — High severity, ZeroAssertion, penalty 10
+    /// - b.rs::tests::t_low  — Low severity, LargeExample, penalty 4
+    /// - b.rs::tests::t_zero — zero smells (zero score, PASS)
+    fn snapshot_fixture() -> Report {
+        let t_high = {
+            let test = TestIdentity::new(
+                FilePath::new("a.rs"),
+                QualifiedName::new("a::tests::t_high"),
+                Span::new(10, 18),
+            );
+            let mut f = Finding::new(
+                test,
+                vec![Smell::new(
+                    SmellCategory::ZeroAssertion,
+                    Severity::High,
+                    Actionability::AutoRefactor,
+                    10,
+                    None,
+                )],
+            );
+            f.exceeds_threshold = true;
+            f
+        };
+        let t_low = {
+            let test = TestIdentity::new(
+                FilePath::new("b.rs"),
+                QualifiedName::new("b::tests::t_low"),
+                Span::new(5, 9),
+            );
+            Finding::new(
+                test,
+                vec![Smell::new(
+                    SmellCategory::LargeExample,
+                    Severity::Low,
+                    Actionability::ManualSplit,
+                    4,
+                    None,
+                )],
+            )
+        };
+        let t_zero = {
+            let test = TestIdentity::new(
+                FilePath::new("b.rs"),
+                QualifiedName::new("b::tests::t_zero"),
+                Span::new(12, 14),
+            );
+            Finding::new(test, vec![])
+        };
+
+        let files = vec![
+            FileReport::new(FilePath::new("a.rs"), vec![t_high]),
+            FileReport::new(FilePath::new("b.rs"), vec![t_low, t_zero]),
+        ];
+        let mut report = Report {
+            files,
+            ..Report::default()
+        };
+        report.summary.total_tests = 3;
+        report.summary.total_files = 2;
+        report.summary.exceeding_threshold = 1;
+        report.passed = false;
+        report
+    }
+
+    #[test]
+    fn snapshot_smell_grouping_default_options_no_color() {
+        let report = snapshot_fixture();
+        let opts = TableOptions::default(); // grouping = Smell, no color
+        let output = render_emit(&report, &opts, ThresholdMode::Default);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_finding_grouping_default_options_no_color() {
+        let report = snapshot_fixture();
+        let opts = TableOptions {
+            grouping: RowGrouping::Finding,
+            ..TableOptions::default()
+        };
+        let output = render_emit(&report, &opts, ThresholdMode::Default);
+        insta::assert_snapshot!(output);
+    }
 }
