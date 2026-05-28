@@ -295,7 +295,7 @@ fn good_rs_does_not_trigger() {
             .expect("fixture directory has a valid UTF-8 name");
         let good_path = fixture_dir.join("good.rs");
         if !good_path.is_file() {
-            unexpected_triggers.push(format!("fixture: {fixture_name} — missing good.rs",));
+            unexpected_triggers.push(format!("fixture: {fixture_name} — missing good.rs"));
             continue;
         }
         let relative_path = format!("crates/scrap-examples/examples/{fixture_name}/good.rs");
