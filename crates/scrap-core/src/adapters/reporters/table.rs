@@ -1119,4 +1119,118 @@ mod tests {
             "threshold mode 'strict' in header: {header}",
         );
     }
+
+    // ── ANSI escape verification (W6) ─────────────────────────────
+
+    #[test]
+    fn emit_use_color_true_emits_ansi_escapes_in_output() {
+        // Fixture with a High-severity smell → severity column gets
+        // Red (ANSI code 31) when use_color = true.
+        let report = report_with_summary(
+            vec![("a.rs", vec![finding_at("a.rs", "a::tests::t", 10)])],
+            1,
+            1,
+            false,
+        );
+        let opts = TableOptions {
+            use_color: true,
+            ..TableOptions::default()
+        };
+        let output = render_emit(&report, &opts, ThresholdMode::Default);
+        assert!(
+            output.contains("\x1b["),
+            "use_color=true emits ANSI escape sequences",
+        );
+        // Severity High → Red foreground in cell. comfy-table renders
+        // Red as `\x1b[38;5;9m` (the bright red 256-color form) or
+        // `\x1b[31m` (basic 8-color form). Don't pin which encoding;
+        // just verify SOME escape sequence is present.
+    }
+
+    #[test]
+    fn emit_use_color_false_emits_no_ansi_escapes() {
+        let report = report_with_summary(
+            vec![("a.rs", vec![finding_at("a.rs", "a::tests::t", 10)])],
+            1,
+            1,
+            false,
+        );
+        let opts = TableOptions {
+            use_color: false,
+            ..TableOptions::default()
+        };
+        let output = render_emit(&report, &opts, ThresholdMode::Default);
+        assert!(
+            !output.contains("\x1b["),
+            "use_color=false emits no ANSI escape sequences",
+        );
+    }
+
+    #[test]
+    fn emit_footer_passed_use_color_true_contains_green_escape() {
+        // report.passed = true → footer verdict colored green
+        // (color_code(Color::Green) = Some(32)).
+        let report = report_with_summary(vec![], 0, 0, true);
+        let opts = TableOptions {
+            use_color: true,
+            ..TableOptions::default()
+        };
+        let output = render_emit(&report, &opts, ThresholdMode::Default);
+        let footer = output.lines().last().expect("footer present");
+        assert!(
+            footer.contains("\x1b[32m"),
+            "PASSED footer wrapped in ANSI green (32): {footer}",
+        );
+        assert!(
+            footer.contains("\x1b[0m"),
+            "PASSED footer terminated by ANSI reset: {footer}",
+        );
+    }
+
+    #[test]
+    fn emit_footer_failed_use_color_true_contains_red_escape() {
+        let report = report_with_summary(
+            vec![("a.rs", vec![finding_at("a.rs", "a::tests::t", 10)])],
+            1,
+            1,
+            false,
+        );
+        let opts = TableOptions {
+            use_color: true,
+            ..TableOptions::default()
+        };
+        let output = render_emit(&report, &opts, ThresholdMode::Default);
+        let footer = output.lines().last().expect("footer present");
+        assert!(
+            footer.contains("\x1b[31m"),
+            "FAILED footer wrapped in ANSI red (31): {footer}",
+        );
+        assert!(
+            footer.contains("\x1b[0m"),
+            "FAILED footer terminated by ANSI reset: {footer}",
+        );
+    }
+
+    // ── color_code helper (CEng S1 fold-in coverage) ──────────────
+
+    #[test]
+    fn color_code_returns_some_for_green_and_red() {
+        assert_eq!(color_code(Color::Green), Some(32));
+        assert_eq!(color_code(Color::Red), Some(31));
+    }
+
+    #[test]
+    fn color_code_returns_none_for_unmapped_variants() {
+        // The impossible-by-construction path — write_footer only ever
+        // calls with Green or Red — but the Option<u8> API surfaces
+        // the unmapped case rather than silently returning the ANSI
+        // reset code (cabinet CEng S1 fold-in 2026-05-27).
+        assert_eq!(
+            color_code(Color::Yellow),
+            None,
+            "Yellow is not mapped (Some(33) would conflict with future detector severity colors)",
+        );
+        assert_eq!(color_code(Color::DarkGrey), None);
+        assert_eq!(color_code(Color::Reset), None);
+    }
 }
