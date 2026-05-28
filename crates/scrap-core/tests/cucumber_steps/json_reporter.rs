@@ -4,11 +4,17 @@
 //! `#[given]`/`#[when]`/`#[then]` step fns globally within the test
 //! binary; mod-block split per scrap-rs#18 W5.1 SHOULD-FIX #5.
 //!
-//! The literal `"scrap4rs"` / `"scrap4ts"` strings here are OK
-//! because the source-only adapter-name literal purity CI gate
-//! (scrap-rs#37 / scrap-rs#52) scopes to `crates/scrap-core/src/`,
-//! NOT `tests/`. Test fixtures use the concrete adapter names for
-//! realism.
+//! These fixtures use NEUTRAL adapter names (`adapter-a` / `adapter-b`)
+//! rather than the real `scrap4rs` / `scrap4ts` names. Per scrap-rs#37
+//! the adapter-name literal purity CI gate scans `crates/scrap-core/`
+//! source AND tests: scrap-core is adapter-name-pure, so its test
+//! fixtures must be too. A neutral fixture is also COVERAGE-SUPERIOR
+//! here — `emit()` threads `meta.tool_name` into the wire WITHOUT
+//! branching on its value, so a fixture asserting `tool == "scrap4rs"`
+//! would still PASS if `emit` hardcoded the string; a neutral
+//! `tool == "adapter-a"` assertion catches that name-hardcoding bug.
+//! Real-name emission verification lives in the adapter crate that
+//! owns the identity (`crates/scrap4rs/tests/wire_real_name.rs`).
 
 #![allow(clippy::needless_pass_by_value)] // cucumber step-fn convention
 
@@ -51,35 +57,35 @@ fn build_finding(path: &str, name: &str, penalty: u32) -> Finding {
 
 fn default_meta() -> AdapterMeta {
     AdapterMeta {
-        tool_name: "scrap4rs",
+        tool_name: "adapter-a",
         language: "rust",
         tool_version: "0.1.0",
         long_version: "0.1.0 (test 2026-05-27)",
-        about: "scrap4rs (cucumber-test fixture)",
+        about: "adapter-a (cucumber-test fixture)",
         long_about: "Cucumber-step fixture AdapterMeta for the json reporter scenarios.",
         after_help: "",
         extensions: &["rs"],
-        tool_info_uri: "https://github.com/breezy-bays-labs/scrap-rs",
-        rule_help_uri: "https://github.com/breezy-bays-labs/scrap-rs#detection-rules",
-        config_file_name: "scrap4rs.toml",
+        tool_info_uri: "https://example.invalid/scrap",
+        rule_help_uri: "https://example.invalid/scrap/rules",
+        config_file_name: "adapter-a.toml",
         default_excludes: &["tests/**", "benches/**", "examples/**"],
         parse_hint: "ensure --src points at a Cargo workspace with test files",
     }
 }
 
-fn ts_meta() -> AdapterMeta {
+fn alt_meta() -> AdapterMeta {
     AdapterMeta {
-        tool_name: "scrap4ts",
+        tool_name: "adapter-b",
         language: "typescript",
         tool_version: "0.1.0",
         long_version: "0.1.0 (test 2026-05-27)",
-        about: "scrap4ts (cucumber-test fixture)",
+        about: "adapter-b (cucumber-test fixture)",
         long_about: "Cucumber-step fixture AdapterMeta for the json reporter scenarios.",
         after_help: "",
         extensions: &["ts", "tsx"],
-        tool_info_uri: "https://github.com/breezy-bays-labs/scrap-rs",
-        rule_help_uri: "https://github.com/breezy-bays-labs/scrap-rs#detection-rules",
-        config_file_name: "scrap4ts.toml",
+        tool_info_uri: "https://example.invalid/scrap",
+        rule_help_uri: "https://example.invalid/scrap/rules",
+        config_file_name: "adapter-b.toml",
         default_excludes: &["node_modules/**", "dist/**"],
         parse_hint: "ensure --src points at a TypeScript project with test files",
     }
@@ -194,14 +200,14 @@ fn emit_only_failing(w: &mut World) {
 #[when(regex = r"^the caller invokes `emit\(\)` with adapter meta tool=`(.+?)` language=`(.+?)`$")]
 fn emit_with_meta(w: &mut World, tool: String, language: String) {
     let report = report_from_world(w);
-    let meta = if tool == "scrap4ts" {
-        ts_meta()
-    } else if tool == "scrap4rs" {
+    let meta = if tool == "adapter-b" {
+        alt_meta()
+    } else if tool == "adapter-a" {
         default_meta()
     } else {
         // Fallback — unit-test extensibility. Construct via static refs
         // since AdapterMeta fields are `&'static str`. Today the test
-        // only exercises scrap4rs / scrap4ts so this branch shouldn't
+        // only exercises adapter-a / adapter-b so this branch shouldn't
         // hit; keeping the panic explicit catches future scenario typos.
         panic!("unrecognized adapter tool `{tool}` (language=`{language}`)");
     };
@@ -215,7 +221,7 @@ fn emit_with_meta(w: &mut World, tool: String, language: String) {
         &mut buf,
     )
     .expect("emit succeeds");
-    if tool == "scrap4rs" {
+    if tool == "adapter-a" {
         w.envelope_output = Some(buf);
     } else {
         w.envelope_output_alt = Some(buf);
@@ -336,10 +342,21 @@ fn assert_envelopes_identical_modulo_tool_language(w: &mut World) {
     let ts_tool = ts_obj.remove("tool").unwrap();
     let ts_lang = ts_obj.remove("language").unwrap();
 
-    assert_eq!(rust_tool, serde_json::json!("scrap4rs"));
-    assert_eq!(ts_tool, serde_json::json!("scrap4ts"));
+    // Distinctness property: two DIFFERENT metas produce DIFFERENT wire
+    // `tool`/`language` strings (neutral names per scrap-rs#37 — the
+    // distinctness claim is fully preserved without the real names).
+    assert_eq!(rust_tool, serde_json::json!("adapter-a"));
+    assert_eq!(ts_tool, serde_json::json!("adapter-b"));
+    assert_ne!(
+        rust_tool, ts_tool,
+        "tool fields must differ across adapters"
+    );
     assert_eq!(rust_lang, serde_json::json!("rust"));
     assert_eq!(ts_lang, serde_json::json!("typescript"));
+    assert_ne!(
+        rust_lang, ts_lang,
+        "language fields must differ across adapters",
+    );
 
     // The remaining envelope must be identical.
     assert_eq!(

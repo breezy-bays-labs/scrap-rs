@@ -41,24 +41,29 @@ const FIXED_TIMESTAMP: &str = "2026-05-26T00:00:00Z";
 /// Test-fixture `AdapterMeta`. Returns by value cheaply because
 /// `AdapterMeta` is `Copy` post-scrap-rs#21 (FORK-1 fold).
 ///
-/// The `"scrap4rs"` literal here is OK: the source-only adapter-name
-/// literal purity CI gate (scrap-rs#37 / scrap-rs#52) scopes to
-/// `crates/scrap-core/src/`, NOT `tests/`. Test fixtures use the
-/// concrete adapter name for realism. 13-field shape per scrap-rs#21
-/// `AdapterMeta` expansion.
+/// Uses a NEUTRAL adapter name (`test-adapter`) rather than the real
+/// `scrap4rs` name. Per scrap-rs#37 the adapter-name literal purity CI
+/// gate scans `crates/scrap-core/` source AND tests; scrap-core is
+/// adapter-name-pure, so its fixtures must be too. The neutral name is
+/// also COVERAGE-SUPERIOR: `emit()` threads `meta.tool_name` into the
+/// wire WITHOUT branching on it, so a `tool == "test-adapter"`
+/// assertion catches a name-hardcoding regression that a
+/// `tool == "scrap4rs"` assertion would silently pass. Real-name
+/// emission is verified in `crates/scrap4rs/tests/wire_real_name.rs`.
+/// 13-field shape per scrap-rs#21 `AdapterMeta` expansion.
 fn test_meta() -> AdapterMeta {
     AdapterMeta {
-        tool_name: "scrap4rs",
+        tool_name: "test-adapter",
         language: "rust",
         tool_version: "0.1.0",
         long_version: "0.1.0 (test 2026-05-27)",
-        about: "scrap4rs (snapshot-test fixture)",
+        about: "test-adapter (snapshot-test fixture)",
         long_about: "Snapshot-test fixture AdapterMeta for the wire envelope reporter.",
         after_help: "",
         extensions: &["rs"],
-        tool_info_uri: "https://github.com/breezy-bays-labs/scrap-rs",
-        rule_help_uri: "https://github.com/breezy-bays-labs/scrap-rs#detection-rules",
-        config_file_name: "scrap4rs.toml",
+        tool_info_uri: "https://example.invalid/scrap",
+        rule_help_uri: "https://example.invalid/scrap/rules",
+        config_file_name: "test-adapter.toml",
         default_excludes: &["tests/**", "benches/**", "examples/**"],
         parse_hint: "ensure --src points at a Cargo workspace with test files",
     }
@@ -293,7 +298,7 @@ fn forward_compat_delta_present_empty_round_trips() {
     // path doesn't reject incoming envelopes that still carry it.
     let literal = r#"{
   "schema_version": 1,
-  "tool": "scrap4rs",
+  "tool": "test-adapter",
   "tool_version": "0.1.0",
   "language": "rust",
   "timestamp": "2026-05-26T00:00:00Z",
@@ -399,7 +404,7 @@ fn ignore_unknown_v02_only_field() {
     // additive changes don't break forward-compat parsers.
     let literal = r#"{
   "schema_version": 1,
-  "tool": "scrap4rs",
+  "tool": "test-adapter",
   "tool_version": "0.1.0",
   "language": "rust",
   "timestamp": "2026-05-26T00:00:00Z",

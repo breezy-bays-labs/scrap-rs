@@ -1095,6 +1095,7 @@ dependencies = [
  "proptest",
  "quote",
  "scrap-core",
+ "serde_json",
  "static_assertions",
  "syn",
  "tokio",

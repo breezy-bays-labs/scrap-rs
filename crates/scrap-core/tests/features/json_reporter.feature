@@ -59,6 +59,6 @@ Feature: JSON envelope reporter emits the v0.1 schema_version envelope
     Then the envelope's `schema_version` equals the integer 1
 
   Scenario: cross-adapter identical envelope modulo tool/language strings
-    When the caller invokes `emit()` with adapter meta tool=`scrap4rs` language=`rust`
-    And the caller invokes `emit()` with adapter meta tool=`scrap4ts` language=`typescript`
+    When the caller invokes `emit()` with adapter meta tool=`adapter-a` language=`rust`
+    And the caller invokes `emit()` with adapter meta tool=`adapter-b` language=`typescript`
     Then both envelopes are byte-identical except for the `tool` and `language` fields

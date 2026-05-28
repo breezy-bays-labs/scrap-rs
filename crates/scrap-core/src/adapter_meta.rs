@@ -31,14 +31,15 @@
 //!
 //! ## Adapter-name purity
 //!
-//! `scrap-core` source MUST NOT carry adapter-binary-name literals
-//! per the source-only `scrap-core adapter-name literal purity` CI
-//! gate. This module references the pattern abstractly; concrete
-//! literals live in adapter-binary `main.rs` and in
-//! `crates/scrap-core/tests/` test fixtures (the source-only gate
-//! scopes to `crates/scrap-core/src/`, the latter is covered by
-//! per-line `tracked: scrap-rs#37` grandfather markers when test
-//! fixtures need realism).
+//! `scrap-core` MUST NOT carry adapter-binary-name literals (`"scrap4rs"`
+//! / `"scrap4ts"`) in `src/` OR `tests/`, per the `scrap-core
+//! adapter-name literal purity` CI gate. scrap-rs#18 established the
+//! discipline for `src/`; scrap-rs#37 expanded the gate to `tests/` and
+//! NEUTRALIZED the scrap-core test fixtures to `adapter-a` / `adapter-b`
+//! / `test-adapter` (rather than exempting them). Concrete adapter-name
+//! literals live ONLY in adapter-binary `main.rs` and that adapter's
+//! own `tests/` (e.g. `crates/scrap4rs/tests/wire_real_name.rs`, which
+//! verifies the real shipping name reaches the wire `tool` field).
 //!
 //! tracked: scrap-rs#73 — `adr-port-surface-and-domain-conventions`
 //! ADR not yet authored; this module's design references the existing

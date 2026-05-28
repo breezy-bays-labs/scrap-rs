@@ -4,7 +4,7 @@ expression: pretty
 ---
 {
   "schema_version": 1,
-  "tool": "scrap4rs",
+  "tool": "test-adapter",
   "tool_version": "0.1.0",
   "language": "rust",
   "timestamp": "2026-05-26T00:00:00Z",
