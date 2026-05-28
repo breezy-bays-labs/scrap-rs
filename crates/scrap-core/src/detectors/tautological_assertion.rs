@@ -91,11 +91,11 @@ pub fn detect(parsed: &ParsedTest) -> Option<Finding> {
             )
         })
         .collect();
-    if smells.is_empty() {
-        None
-    } else {
-        Some(Finding::new(parsed.identity.clone(), smells))
-    }
+    // `bool::then` keeps the "build Finding iff smells exist" intent
+    // local to the predicate. Gemini MED on PR #83 flagged the prior
+    // if/else block as less idiomatic; the refactor preserves the
+    // exact-equivalent control flow.
+    (!smells.is_empty()).then(|| Finding::new(parsed.identity.clone(), smells))
 }
 
 /// Tautology predicate composed from the two parser-supplied

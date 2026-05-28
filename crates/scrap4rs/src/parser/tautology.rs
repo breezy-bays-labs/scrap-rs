@@ -43,7 +43,7 @@ use quote::ToTokens;
 use scrap_core::domain::literal_value::LiteralValue;
 use syn::parse::Parser;
 use syn::punctuated::Punctuated;
-use syn::{Expr, ExprLit, Lit, Token, parse2};
+use syn::{Expr, ExprLit, Lit, Token};
 
 /// Extract typed tautology facts from the argument tokens of a
 /// recognized assertion macro. Returns
@@ -62,37 +62,51 @@ use syn::{Expr, ExprLit, Lit, Token, parse2};
 /// failure or shape mismatch (`false` / `None` respectively). The
 /// helper is total — it never panics, even on garbage tokens.
 pub(crate) fn extract_tautology_facts(tokens: &TokenStream) -> (bool, Option<LiteralValue>) {
-    // Single-literal shape (assert!(true), assert!(42), ...).
-    // Attempt this BEFORE the two-arg shape because a single literal
-    // also parses as a Punctuated<Expr, Comma> of length 1, which we
-    // then reject for not having length 2 — but the single-literal
-    // path gives us the LiteralValue payload while the two-arg path
-    // would just return (false, None).
-    if let Ok(Expr::Lit(ExprLit { lit, .. })) = parse2::<Expr>(tokens.clone()) {
-        return (false, Some(literal_to_value(&lit)));
-    }
-
-    // Two-arg shape (assert_eq!(x, x), assert_ne!(0, 1), ...).
-    // Length must be exactly 2 — three-arg `assert_eq!(a, b, "msg")` is
-    // NOT detected as identical even if `a` and `b` were byte-equal.
+    // Single Punctuated parse handles both shapes — length 1 (single-arg
+    // `assert!(true)`-style) and length 2 (two-arg `assert_eq!(x, x)`-style).
+    // Empty / length-3+ token streams (empty `assert!()` or three-arg
+    // `assert_eq!(a, b, "msg")`) fall through to the `(false, None)`
+    // no-signal return at the bottom.
+    //
     // `Punctuated<Expr, Comma>` doesn't impl `Parse` directly; use
     // `Punctuated::parse_terminated` via the `Parser` trait so trailing
     // commas + empty/single-element lists all parse cleanly.
+    //
+    // (Gemini MED on PR #83 flagged the prior two-parse implementation
+    // as redundant — one parse pass covers both single-literal and
+    // two-arg shapes by checking length.)
     let parser = Punctuated::<Expr, Token![,]>::parse_terminated;
-    if let Ok(args) = parser.parse2(tokens.clone())
-        && args.len() == 2
-    {
-        let mut iter = args.iter();
-        // SAFETY: args.len() == 2 guarantees both elements exist; the
-        // assert pattern guards the proptest-style invariants.
-        let a = iter.next().expect("len==2");
-        let b = iter.next().expect("len==2");
-        let a_s = a.to_token_stream().to_string();
-        let b_s = b.to_token_stream().to_string();
-        return (a_s == b_s, None);
-    }
+    let Ok(args) = parser.parse2(tokens.clone()) else {
+        return (false, None);
+    };
 
-    (false, None)
+    match args.len() {
+        // Single-literal shape: assert!(true) / assert!(42) / etc.
+        // Only `Expr::Lit` projects to a `LiteralValue`; everything
+        // else (Path, Call, Unary, MethodCall, ...) returns None.
+        // `Expr::Unary(Neg, Lit::Int(5))` for `assert!(-5)` is
+        // intentionally NOT detected as a literal at v0.1 — see the
+        // module-level "negative-int literals" note.
+        1 => {
+            let first = &args[0];
+            if let Expr::Lit(ExprLit { lit, .. }) = first {
+                (false, Some(literal_to_value(lit)))
+            } else {
+                (false, None)
+            }
+        }
+        // Two-arg shape: assert_eq!(x, x) / assert_ne!(x, x) / etc.
+        // Token-string equality per element (option (a), safer
+        // direction; see module-level "Locked v0.1 choices").
+        2 => {
+            let a_s = args[0].to_token_stream().to_string();
+            let b_s = args[1].to_token_stream().to_string();
+            (a_s == b_s, None)
+        }
+        // 0 (empty `assert!()`) or 3+ (`assert_eq!(a, b, "msg")`) —
+        // no tautology signal.
+        _ => (false, None),
+    }
 }
 
 /// Project a `syn::Lit` into a [`LiteralValue`] variant. Always
@@ -166,11 +180,13 @@ mod tests {
     #[test]
     fn single_arg_negative_int_falls_back_to_verbatim() {
         // Documents the v0.1 limitation: `syn` parses `-5` as
-        // Expr::Unary(Neg, Lit::Int(5)), not Lit::Int(-5). The single
-        // literal path here only matches Expr::Lit, so Expr::Unary
-        // falls through to the two-arg path (which fails too), and we
-        // return (false, None). NOT (false, Some(Verbatim)) — there
-        // was no Lit to project. v0.3+ enrichment may detect this.
+        // `Expr::Unary(Neg, Lit::Int(5))`, not `Lit::Int(-5)`. The
+        // single-Punctuated parse succeeds (length 1) but the
+        // element-0 is `Expr::Unary`, not `Expr::Lit`, so the
+        // length-1 arm returns `(false, None)`. NOT
+        // `(false, Some(Verbatim))` — there was no Lit to project.
+        // v0.3+ enrichment may detect this via an explicit
+        // `Expr::Unary(UnOp::Neg, ExprLit(LitInt))` match.
         let (ident, val) = extract_tautology_facts(&quote! { -5 });
         assert!(!ident);
         assert_eq!(val, None);
