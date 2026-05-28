@@ -336,7 +336,7 @@ fn write_header<W: std::io::Write>(
 /// Format: `{PASSED|FAILED} — {exceeding_threshold} of {total_tests}
 /// tests exceed threshold under '{threshold_mode}' mode`. ANSI
 /// colored (Green/PASSED, Red/FAILED) only when `use_color`. Per
-/// cabinet CEng S1 fold-in 2026-05-27, `color_code()` returns
+/// cabinet `CEng` S1 fold-in 2026-05-27, `color_code()` returns
 /// `Option<u8>`; unmapped colors emit plain text (no silent ANSI
 /// reset).
 fn write_footer<W: std::io::Write>(
@@ -372,7 +372,7 @@ fn write_footer<W: std::io::Write>(
 /// Returns `Option<u8>` rather than a wildcard fallback (which would
 /// silently emit `0`, the ANSI RESET code, for unmapped variants — a
 /// real bug class for any future caller passing `Color::Yellow` or
-/// similar). Per cabinet CEng S1 fold-in 2026-05-27.
+/// similar). Per cabinet `CEng` S1 fold-in 2026-05-27.
 ///
 /// Today only `Color::Green` (PASSED) and `Color::Red` (FAILED) are
 /// ever passed by `write_footer`; the unmapped path is
@@ -505,7 +505,7 @@ mod tests {
         f
     }
 
-    /// Test-fixture AdapterMeta. Uses `test-adapter` placeholder per
+    /// Test-fixture [`AdapterMeta`]. Uses `test-adapter` placeholder per
     /// scrap-rs#18 source-only adapter-name-purity gate (which scopes
     /// to `crates/scrap-core/src/`; tests/ uses concrete names — but
     /// this fixture lives in `src/` under `#[cfg(test)]` so it MUST
@@ -1240,9 +1240,9 @@ mod tests {
 
     /// Snapshot fixture: 2 files, 3 Findings, mixed severity, mixed
     /// scores. Stays small for reviewer eyeball.
-    /// - a.rs::tests::t_high — High severity, ZeroAssertion, penalty 10
-    /// - b.rs::tests::t_low  — Low severity, LargeExample, penalty 4
-    /// - b.rs::tests::t_zero — zero smells (zero score, PASS)
+    /// - `a.rs::tests::t_high` — High severity, `ZeroAssertion`, penalty 10
+    /// - `b.rs::tests::t_low`  — Low severity, `LargeExample`, penalty 4
+    /// - `b.rs::tests::t_zero` — zero smells (zero score, PASS)
     fn snapshot_fixture() -> Report {
         let t_high = {
             let test = TestIdentity::new(

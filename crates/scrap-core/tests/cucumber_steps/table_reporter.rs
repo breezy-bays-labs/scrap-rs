@@ -58,7 +58,7 @@ fn default_meta() -> AdapterMeta {
 
 /// Group accumulated `World.table_findings` into a `Report`
 /// (one `FileReport` per distinct `file_path`). Mirrors the
-/// `report_from_world` helper in json_reporter step defs.
+/// `report_from_world` helper in `json_reporter` step defs.
 fn report_from_world(w: &World) -> Report {
     use std::collections::BTreeMap;
     let mut by_path: BTreeMap<String, Vec<Finding>> = BTreeMap::new();
