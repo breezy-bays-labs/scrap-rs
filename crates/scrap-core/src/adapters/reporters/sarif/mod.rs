@@ -19,10 +19,10 @@
 //! ## Adapter-name purity
 //!
 //! `tool.driver.name` comes from [`AdapterMeta::tool_name`] — NEVER a
-//! hardcoded `"scrap4rs"` literal (scrap-core is adapter-agnostic; the
+//! hardcoded adapter-name literal (scrap-core is adapter-agnostic; the
 //! source-only adapter-name purity CI gate bans the literal). The repo
 //! / rule-help URIs come from `meta.tool_info_uri` / `meta.rule_help_uri`
-//! so scrap4ts SARIF links to scrap4ts's repo, not scrap4rs's.
+//! so each adapter's SARIF links to its own repo.
 //!
 //! ## Hand-rolled subset (no `serde_sarif` dep)
 //!
@@ -379,10 +379,10 @@ mod tests {
     use crate::domain::smell::{Smell, SmellCategory};
     use crate::domain::types::{FilePath, QualifiedName, Span, TestIdentity};
 
-    /// Neutral test-fixture meta. Uses "test-adapter" (NOT "scrap4rs")
-    /// because `#[cfg(test)] mod tests` here lives under
-    /// `crates/scrap-core/src/` — the source-only adapter-name purity
-    /// CI gate applies. Forward-compatible per scrap-rs#37.
+    /// Neutral test-fixture meta. Uses `test-adapter` (NOT a concrete
+    /// adapter-name literal) because `#[cfg(test)] mod tests` here lives
+    /// under `crates/scrap-core/src/` — the source-only adapter-name
+    /// purity CI gate applies. Forward-compatible per scrap-rs#37.
     fn test_meta() -> AdapterMeta {
         AdapterMeta {
             tool_name: "test-adapter",
