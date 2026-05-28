@@ -90,7 +90,8 @@ pub fn handle_init_with_io<W: Write>(
 
     // Detect layout relative to the config path's parent (PR #91
     // Gemini HIGH fix). `config_path.parent()` returns `None` for
-    // bare-filename paths (e.g. `Path::new("scrap4rs.toml")`) — in
+    // bare-filename paths (e.g. when the caller passes a `Path` built
+    // from `meta.config_file_name` directly with no parent dir) — in
     // that case the empty path is equivalent to "current directory"
     // for `Path::join`/`is_dir` semantics, matching the prior CWD
     // behavior for the common bare-filename caller path.
