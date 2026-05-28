@@ -54,6 +54,9 @@ mod config_steps;
 #[path = "cucumber_steps/json_reporter.rs"]
 mod json_reporter_steps;
 
+#[path = "cucumber_steps/table_reporter.rs"]
+mod table_reporter_steps;
+
 #[path = "cucumber_steps/detectors_zero_assertion.rs"]
 mod detectors_zero_assertion_steps;
 
@@ -86,6 +89,13 @@ pub struct World {
     pub envelope_findings: Vec<Finding>,
     pub envelope_output: Option<Vec<u8>>,
     pub envelope_output_alt: Option<Vec<u8>>,
+    /// scrap-rs#16 table reporter fields — populated by
+    /// `cucumber_steps::table_reporter` step defs.
+    pub table_findings: Vec<Finding>,
+    pub table_output: Option<Vec<u8>>,
+    /// Toggles `Report.passed` for the PASSED footer scenario; default
+    /// false so non-Passed scenarios stay green-by-default.
+    pub table_report_passed: bool,
     /// Shared per-detector cucumber-scenario state — populated by every
     /// detector's step file (`cucumber_steps::detectors_zero_assertion`
     /// at scrap-rs#30, `cucumber_steps::tautological` at scrap-rs#24,
