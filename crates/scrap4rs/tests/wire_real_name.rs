@@ -11,13 +11,15 @@
 //! in the `tool` field when the real shipping `AdapterMeta` is threaded
 //! through.
 //!
-//! The meta below mirrors the literal in `scrap4rs/src/main.rs`: the
-//! adapter name flows from `env!("CARGO_PKG_NAME")` (resolves to
-//! `scrap4rs` for this crate's test binary), NOT a hardcoded string —
-//! so a crate rename automatically re-points both the binary and this
-//! assertion. The `"scrap4rs"` literal in the assertion is legal here
-//! because this crate IS the scrap4rs adapter; the purity gate scopes
-//! to `crates/scrap-core/` only.
+//! The meta below mirrors the env-sourced fields of the literal in
+//! `scrap4rs/src/main.rs` so the fixture can't drift from the binary:
+//! `tool_name` flows from `env!("CARGO_PKG_NAME")` (resolves to
+//! `scrap4rs` for this crate's test binary) and `long_version` from the
+//! build.rs-stamped `env!("SCRAP4RS_LONG_VERSION")` — NOT hardcoded
+//! strings — so a crate rename or version bump automatically re-points
+//! both the binary and this assertion. The `"scrap4rs"` literal in the
+//! assertion is legal here because this crate IS the scrap4rs adapter;
+//! the purity gate scopes to `crates/scrap-core/` only.
 //!
 //! scrap4ts equivalent: tracked for when the TS adapter lands (see the
 //! follow-up issue referenced in the scrap-rs#37 PR body).
@@ -39,7 +41,11 @@ fn shipping_meta() -> AdapterMeta {
         tool_name: env!("CARGO_PKG_NAME"),
         language: "rust",
         tool_version: env!("CARGO_PKG_VERSION"),
-        long_version: env!("CARGO_PKG_VERSION"),
+        // Mirror main.rs exactly: the build.rs-stamped long version,
+        // NOT CARGO_PKG_VERSION. build.rs emits this via
+        // `cargo:rustc-env`, which propagates to this integration test's
+        // compile context — so the fixture can't drift from the binary.
+        long_version: env!("SCRAP4RS_LONG_VERSION"),
         about: "Static test smell detector for Rust",
         long_about: "",
         after_help: "",
