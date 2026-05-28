@@ -37,8 +37,10 @@
 //!   inline (cabinet CAO SF-1 verdict: NO LIFT). Re-evaluate if a
 //!   third reporter recurs the same shape.
 
+use crate::adapter_meta::AdapterMeta;
 use crate::domain::classification::Severity;
 use crate::domain::report::Report;
+use crate::domain::threshold::ThresholdMode;
 use comfy_table::{Cell, Color, ContentArrangement, Table};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
@@ -272,8 +274,128 @@ fn render_finding_rows<W: std::io::Write>(
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Unit tests — W2 (types) + W3 (render_smell_rows).
-// Renderer + emit tests land in W4–W6.
+// Public emit() function — dispatch + header + footer (W5)
+// ────────────────────────────────────────────────────────────────────
+
+/// Render a [`Report`] as a human-readable table to `writer`.
+///
+/// Default human-facing output for `scrap4rs` / `scrap4ts` CLI dispatch
+/// (`--format table`). Returns [`std::io::Result`] because writer I/O
+/// is the only failure mode (no serde; no custom error type).
+///
+/// `meta` provides the header's tool identity (`tool` +
+/// `tool_version`; field renames to `tool_name` post-scrap-rs#21).
+/// `options` controls view shaping (top truncation, only-failing
+/// filter, color, row grouping). `threshold_mode` is echoed verbatim
+/// into the footer.
+///
+/// # Errors
+///
+/// Returns [`std::io::Error`] when `writer.write_all` fails.
+pub fn emit<W: std::io::Write>(
+    report: &Report,
+    meta: &AdapterMeta,
+    options: &TableOptions,
+    threshold_mode: ThresholdMode,
+    writer: &mut W,
+) -> std::io::Result<()> {
+    write_header(report, meta, threshold_mode, writer)?;
+    match options.grouping {
+        RowGrouping::Smell => render_smell_rows(report, options, writer)?,
+        RowGrouping::Finding => render_finding_rows(report, options, writer)?,
+    }
+    write_footer(report, threshold_mode, options.use_color, writer)?;
+    Ok(())
+}
+
+/// Write the single-line identification header per D-HEADER-1.
+///
+/// Format: `{tool} {tool_version} — {total_tests} tests inspected,
+/// {total_findings} findings, {exceeding_threshold} exceeding
+/// '{threshold_mode}' threshold`.
+///
+/// `meta.tool` (today's field name) renames to `meta.tool_name`
+/// pre-merge when scrap-rs#21 lands — see impl-plan.md "Pre-merge
+/// rebase" section.
+fn write_header<W: std::io::Write>(
+    report: &Report,
+    meta: &AdapterMeta,
+    threshold_mode: ThresholdMode,
+    writer: &mut W,
+) -> std::io::Result<()> {
+    let total_findings: usize = report.files.iter().map(|f| f.findings.len()).sum();
+    writeln!(
+        writer,
+        "{} {} — {} tests inspected, {} findings, {} exceeding '{}' threshold",
+        meta.tool, // pre-merge: rename to `tool_name` when scrap-rs#21 lands
+        meta.tool_version,
+        report.summary.total_tests,
+        total_findings,
+        report.summary.exceeding_threshold,
+        threshold_mode.as_wire_str(),
+    )
+}
+
+/// Write the verdict footer per D-FOOTER-1.
+///
+/// Format: `{PASSED|FAILED} — {exceeding_threshold} of {total_tests}
+/// tests exceed threshold under '{threshold_mode}' mode`. ANSI
+/// colored (Green/PASSED, Red/FAILED) only when `use_color`. Per
+/// cabinet CEng S1 fold-in 2026-05-27, `color_code()` returns
+/// `Option<u8>`; unmapped colors emit plain text (no silent ANSI
+/// reset).
+fn write_footer<W: std::io::Write>(
+    report: &Report,
+    threshold_mode: ThresholdMode,
+    use_color: bool,
+    writer: &mut W,
+) -> std::io::Result<()> {
+    let (verdict, color) = if report.passed {
+        ("PASSED", Color::Green)
+    } else {
+        ("FAILED", Color::Red)
+    };
+    let line = format!(
+        "{verdict} — {} of {} tests exceed threshold under '{}' mode",
+        report.summary.exceeding_threshold,
+        report.summary.total_tests,
+        threshold_mode.as_wire_str(),
+    );
+    if use_color {
+        match color_code(color) {
+            Some(code) => writeln!(writer, "\x1b[{code}m{line}\x1b[0m"),
+            None => writeln!(writer, "{line}"),
+        }
+    } else {
+        writeln!(writer, "{line}")
+    }
+}
+
+/// Map a `comfy_table::Color` to its ANSI escape numeric code for
+/// the footer.
+///
+/// Returns `Option<u8>` rather than a wildcard fallback (which would
+/// silently emit `0`, the ANSI RESET code, for unmapped variants — a
+/// real bug class for any future caller passing `Color::Yellow` or
+/// similar). Per cabinet CEng S1 fold-in 2026-05-27.
+///
+/// Today only `Color::Green` (PASSED) and `Color::Red` (FAILED) are
+/// ever passed by `write_footer`; the unmapped path is
+/// impossible-by-construction. The `Option<u8>` API surfaces "no
+/// color code for this variant" honestly to `write_footer`, which
+/// then emits plain text rather than a malformed escape.
+fn color_code(c: Color) -> Option<u8> {
+    match c {
+        Color::Green => Some(32),
+        Color::Red => Some(31),
+        _ => None,
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Unit tests — W2 (types) + W3 (render_smell_rows) + W4
+// (render_finding_rows) + W5 (emit + header + footer dispatch).
+// W6 ANSI verification + W7 insta snapshots land in subsequent commits.
 // ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -386,6 +508,29 @@ mod tests {
         let mut f = finding_at(path, name, penalty);
         f.exceeds_threshold = true;
         f
+    }
+
+    /// Test-fixture AdapterMeta. Uses `test-adapter` placeholder per
+    /// scrap-rs#18 source-only adapter-name-purity gate (which scopes
+    /// to `crates/scrap-core/src/`; tests/ uses concrete names — but
+    /// this fixture lives in `src/` under `#[cfg(test)]` so it MUST
+    /// use the placeholder).
+    fn fixture_meta() -> AdapterMeta {
+        AdapterMeta {
+            tool: "test-adapter",
+            language: "rust",
+            tool_version: "0.1.0",
+            config_file_name: "test-adapter.toml",
+        }
+    }
+
+    /// Render `emit()` to a UTF-8 string with the given options +
+    /// threshold mode.
+    fn render_emit(report: &Report, options: &TableOptions, mode: ThresholdMode) -> String {
+        let meta = fixture_meta();
+        let mut buf: Vec<u8> = Vec::new();
+        emit(report, &meta, options, mode, &mut buf).expect("emit writes");
+        String::from_utf8(buf).expect("output is UTF-8")
     }
 
     /// Count data rows in a rendered table by scanning for `│` cell
@@ -811,5 +956,167 @@ mod tests {
         assert_eq!(count_data_rows(&output, "File"), 0, "no findings → no rows");
         // Header still present.
         assert!(output.contains("File"), "header still rendered");
+    }
+
+    // ── emit dispatch + header + footer (W5) ──────────────────────
+
+    /// Build a Report with summary counts pre-populated for the
+    /// header line tests (header reads from `report.summary.*`).
+    fn report_with_summary(
+        files: Vec<(&str, Vec<Finding>)>,
+        total_tests: u32,
+        exceeding_threshold: u32,
+        passed: bool,
+    ) -> Report {
+        let mut report = report_from(files);
+        report.summary.total_tests = total_tests;
+        report.summary.exceeding_threshold = exceeding_threshold;
+        report.passed = passed;
+        report
+    }
+
+    #[test]
+    fn emit_writes_header_line_with_tool_and_summary() {
+        let report = report_with_summary(
+            vec![("a.rs", vec![finding_at("a.rs", "a::tests::t", 10)])],
+            1,
+            1,
+            false,
+        );
+        let output = render_emit(&report, &TableOptions::default(), ThresholdMode::Default);
+        // Header is the first line.
+        let header = output.lines().next().expect("header present");
+        assert!(header.contains("test-adapter"), "tool name in header");
+        assert!(header.contains("0.1.0"), "tool_version in header");
+        assert!(
+            header.contains("1 tests inspected"),
+            "total_tests in header: {header}",
+        );
+        assert!(
+            header.contains("1 findings"),
+            "total findings in header: {header}",
+        );
+        assert!(
+            header.contains("1 exceeding 'default' threshold"),
+            "exceeding + threshold-mode in header: {header}",
+        );
+    }
+
+    #[test]
+    fn emit_writes_footer_passed_when_report_passed_true() {
+        // Empty report — no findings, no exceedances; report.passed = true.
+        let report = report_with_summary(vec![], 0, 0, true);
+        let output = render_emit(&report, &TableOptions::default(), ThresholdMode::Default);
+        let footer = output.lines().last().expect("footer present");
+        assert!(
+            footer.contains("PASSED"),
+            "PASSED verdict for report.passed=true: {footer}",
+        );
+        assert!(
+            footer.contains("'default' mode"),
+            "threshold mode in footer: {footer}",
+        );
+        assert!(
+            !footer.contains("FAILED"),
+            "no FAILED in PASSED footer: {footer}",
+        );
+    }
+
+    #[test]
+    fn emit_writes_footer_failed_when_report_passed_false() {
+        let report = report_with_summary(
+            vec![("a.rs", vec![finding_at("a.rs", "a::tests::t", 10)])],
+            1,
+            1,
+            false,
+        );
+        let output = render_emit(&report, &TableOptions::default(), ThresholdMode::Default);
+        let footer = output.lines().last().expect("footer present");
+        assert!(
+            footer.contains("FAILED"),
+            "FAILED verdict for report.passed=false: {footer}",
+        );
+        assert!(
+            footer.contains("1 of 1 tests exceed threshold"),
+            "exceeding-of-total in footer: {footer}",
+        );
+        assert!(
+            footer.contains("'default' mode"),
+            "threshold mode in footer: {footer}",
+        );
+    }
+
+    #[test]
+    fn emit_dispatches_to_smell_renderer_by_default() {
+        let report = report_with_summary(
+            vec![("a.rs", vec![finding_at("a.rs", "a::tests::t", 10)])],
+            1,
+            1,
+            false,
+        );
+        let output = render_emit(&report, &TableOptions::default(), ThresholdMode::Default);
+        // Smell layout has `file:line` + `Penalty` columns.
+        assert!(
+            output.contains("file:line"),
+            "Smell layout header signature (file:line column) present\n{output}",
+        );
+        assert!(
+            output.contains("Penalty"),
+            "Smell layout header signature (Penalty column) present",
+        );
+    }
+
+    #[test]
+    fn emit_dispatches_to_finding_renderer_when_grouping_finding() {
+        let report = report_with_summary(
+            vec![("a.rs", vec![finding_at("a.rs", "a::tests::t", 10)])],
+            1,
+            1,
+            false,
+        );
+        let opts = TableOptions {
+            grouping: RowGrouping::Finding,
+            ..TableOptions::default()
+        };
+        let output = render_emit(&report, &opts, ThresholdMode::Default);
+        // Finding layout has `Test`, `Smells`, `Pass/Fail` columns.
+        assert!(
+            output.contains("Test"),
+            "Finding layout (Test column) present\n{output}",
+        );
+        assert!(
+            output.contains("Smells"),
+            "Finding layout (Smells column) present",
+        );
+        assert!(
+            output.contains("Pass/Fail"),
+            "Finding layout (Pass/Fail column) present",
+        );
+        // Smell-layout signature columns absent.
+        assert!(
+            !output.contains("file:line"),
+            "no Smell-layout file:line column under Finding grouping",
+        );
+        assert!(
+            !output.contains("Penalty"),
+            "no Smell-layout Penalty column under Finding grouping",
+        );
+    }
+
+    #[test]
+    fn emit_threshold_mode_strict_appears_in_footer() {
+        let report = report_with_summary(vec![], 0, 0, true);
+        let output = render_emit(&report, &TableOptions::default(), ThresholdMode::Strict);
+        let footer = output.lines().last().expect("footer present");
+        assert!(
+            footer.contains("'strict' mode"),
+            "threshold mode 'strict' in footer: {footer}",
+        );
+        // And the header echoes it too.
+        let header = output.lines().next().expect("header present");
+        assert!(
+            header.contains("'strict' threshold"),
+            "threshold mode 'strict' in header: {header}",
+        );
     }
 }
