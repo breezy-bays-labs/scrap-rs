@@ -350,11 +350,10 @@ fn build_finding_row(finding: &crate::domain::finding::Finding) -> Vec<Cell> {
 /// (`--format table`). Returns [`std::io::Result`] because writer I/O
 /// is the only failure mode (no serde; no custom error type).
 ///
-/// `meta` provides the header's tool identity (`tool` +
-/// `tool_version`; field renames to `tool_name` post-scrap-rs#21).
-/// `options` controls view shaping (top truncation, only-failing
-/// filter, color, row grouping). `threshold_mode` is echoed verbatim
-/// into the footer.
+/// `meta` provides the header's tool identity (`tool_name` +
+/// `tool_version`). `options` controls view shaping (top truncation,
+/// only-failing filter, color, row grouping). `threshold_mode` is
+/// echoed verbatim into the footer.
 ///
 /// # Errors
 ///
@@ -377,13 +376,9 @@ pub fn emit<W: std::io::Write>(
 
 /// Write the single-line identification header per D-HEADER-1.
 ///
-/// Format: `{tool} {tool_version} — {total_tests} tests inspected,
+/// Format: `{tool_name} {tool_version} — {total_tests} tests inspected,
 /// {total_findings} findings, {exceeding_threshold} exceeding
 /// '{threshold_mode}' threshold`.
-///
-/// `meta.tool` (today's field name) renames to `meta.tool_name`
-/// pre-merge when scrap-rs#21 lands — see impl-plan.md "Pre-merge
-/// rebase" section.
 fn write_header<W: std::io::Write>(
     report: &Report,
     meta: &AdapterMeta,
@@ -394,7 +389,7 @@ fn write_header<W: std::io::Write>(
     writeln!(
         writer,
         "{} {} — {} tests inspected, {} findings, {} exceeding '{}' threshold",
-        meta.tool, // pre-merge: rename to `tool_name` when scrap-rs#21 lands
+        meta.tool_name,
         meta.tool_version,
         report.summary.total_tests,
         total_findings,
@@ -581,13 +576,22 @@ mod tests {
     /// scrap-rs#18 source-only adapter-name-purity gate (which scopes
     /// to `crates/scrap-core/src/`; tests/ uses concrete names — but
     /// this fixture lives in `src/` under `#[cfg(test)]` so it MUST
-    /// use the placeholder).
+    /// use the placeholder). 13 fields per scrap-rs#21 rename.
     fn fixture_meta() -> AdapterMeta {
         AdapterMeta {
-            tool: "test-adapter",
+            tool_name: "test-adapter",
             language: "rust",
             tool_version: "0.1.0",
+            long_version: "0.1.0 (test 2026-05-27)",
+            about: "table-test fixture",
+            long_about: "Test-fixture AdapterMeta for table reporter tests.",
+            after_help: "",
+            extensions: &["rs"],
+            tool_info_uri: "https://example.invalid/scrap",
+            rule_help_uri: "https://example.invalid/scrap/rules",
             config_file_name: "test-adapter.toml",
+            default_excludes: &["tests/**"],
+            parse_hint: "ensure --src points at a workspace with test files",
         }
     }
 
