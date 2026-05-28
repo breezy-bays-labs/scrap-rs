@@ -168,7 +168,7 @@ fn render_smell_rows<W: std::io::Write>(
                     Cell::new(smell.category.as_wire_str()),
                     severity_cell,
                     Cell::new(smell.penalty.to_string()),
-                    Cell::new(format!("{:.0}", finding.scrap_score)),
+                    Cell::new(format_score(finding.scrap_score)),
                 ]);
 
                 rows_emitted += 1;
@@ -180,6 +180,18 @@ fn render_smell_rows<W: std::io::Write>(
     }
 
     writeln!(writer, "{table}")
+}
+
+/// Format a `scrap_score` for the Score column.
+///
+/// Normalizes IEEE-754 negative-zero (which `Vec<f64>::iter().sum()`
+/// produces on empty iterators — see `Finding::new` with no smells)
+/// to positive zero so the rendered cell reads "0" not "-0". Matches
+/// the json reporter's behavior (serde emits `0.0` not `-0.0` for
+/// `scrap_score`).
+fn format_score(score: f64) -> String {
+    // `+ 0.0` flips -0.0 to +0.0 per IEEE-754 (-0.0 + 0.0 == +0.0).
+    format!("{:.0}", score + 0.0)
 }
 
 /// Style a severity-text cell. When `use_color`, sets the foreground
@@ -198,6 +210,65 @@ fn severity_cell(text: String, severity: Severity, use_color: bool) -> Cell {
         Severity::Low => Color::DarkGrey,
     };
     cell.fg(color)
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Internal renderers — per-Finding row layout (W4)
+// ────────────────────────────────────────────────────────────────────
+
+/// Render the table contents for [`RowGrouping::Finding`] into `writer`.
+///
+/// `threshold_mode` is intentionally NOT a parameter — see
+/// `render_smell_rows` docstring for the cabinet CAO SF-2 rationale.
+fn render_finding_rows<W: std::io::Write>(
+    report: &Report,
+    options: &TableOptions,
+    writer: &mut W,
+) -> std::io::Result<()> {
+    let mut table = Table::new();
+    table
+        .load_preset(comfy_table::presets::UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_width(120)
+        .set_header(vec!["File", "Test", "Smells", "Score", "Pass/Fail"]);
+
+    let top_limit = options.top.map(NonZeroUsize::get);
+    let mut rows_emitted: usize = 0;
+
+    'outer: for file in &report.files {
+        for finding in &file.findings {
+            // tracked: SF-1 — 1-LOC duplication with render_smell_rows
+            if options.only_failing && finding.scrap_score == 0.0 {
+                continue;
+            }
+            let smells_text = finding
+                .smells
+                .iter()
+                .map(|s| s.category.as_wire_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let pass_fail = if finding.exceeds_threshold {
+                "FAIL"
+            } else {
+                "PASS"
+            };
+
+            table.add_row(vec![
+                Cell::new(finding.test.file_path.to_string()),
+                Cell::new(finding.test.qualified_name.as_str()),
+                Cell::new(smells_text),
+                Cell::new(format_score(finding.scrap_score)),
+                Cell::new(pass_fail),
+            ]);
+
+            rows_emitted += 1;
+            if Some(rows_emitted) == top_limit {
+                break 'outer;
+            }
+        }
+    }
+
+    writeln!(writer, "{table}")
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -302,14 +373,29 @@ mod tests {
         String::from_utf8(buf).expect("output is UTF-8")
     }
 
+    /// Render `render_finding_rows` to a UTF-8 string.
+    fn render_finding(report: &Report, options: &TableOptions) -> String {
+        let mut buf: Vec<u8> = Vec::new();
+        render_finding_rows(report, options, &mut buf).expect("render_finding_rows writes");
+        String::from_utf8(buf).expect("output is UTF-8")
+    }
+
+    /// Build a Finding with `exceeds_threshold = true` for Pass/Fail
+    /// column testing.
+    fn finding_exceeding(path: &str, name: &str, penalty: u32) -> Finding {
+        let mut f = finding_at(path, name, penalty);
+        f.exceeds_threshold = true;
+        f
+    }
+
     /// Count data rows in a rendered table by scanning for `│` cell
     /// dividers and dropping the header row. Robust against
     /// comfy-table cosmetic changes; the snapshot tests pin exact
     /// borders.
-    fn count_data_rows(output: &str) -> usize {
-        // Header row = the line containing the first column header text.
-        // Data rows = lines with `│` that DON'T contain the header text.
-        let header_marker = "file:line";
+    ///
+    /// `header_marker` is the first column's header text (`file:line`
+    /// for `RowGrouping::Smell`, `File` for `RowGrouping::Finding`).
+    fn count_data_rows(output: &str, header_marker: &str) -> usize {
         output
             .lines()
             .filter(|l| l.contains('│'))
@@ -372,13 +458,33 @@ mod tests {
         assert_eq!(opts.grouping, RowGrouping::Smell);
     }
 
+    // ── format_score helper (negative-zero normalization) ─────────
+
+    #[test]
+    fn format_score_normalizes_negative_zero_to_positive() {
+        // Vec<f64>::iter().sum() on empty produces -0.0 (Rust stdlib
+        // quirk; documented IEEE-754 behavior). The format_score
+        // helper normalizes via `+ 0.0` so the rendered Score column
+        // reads "0" not "-0".
+        let neg_zero: f64 = Vec::<f64>::new().iter().sum();
+        assert!(neg_zero.is_sign_negative(), "sanity: empty sum is -0.0");
+        assert_eq!(format_score(neg_zero), "0", "format_score normalizes -0");
+        assert_eq!(format_score(0.0), "0", "positive zero stays 0");
+        assert_eq!(format_score(10.0), "10", "positive scores unchanged");
+        assert_eq!(format_score(4.0), "4", "small scores unchanged");
+    }
+
     // ── render_smell_rows ─────────────────────────────────────────
 
     #[test]
     fn render_smell_rows_one_finding_one_smell_renders_one_row() {
         let report = report_from(vec![("a.rs", vec![finding_at("a.rs", "a::tests::t", 10)])]);
         let output = render_smell(&report, &TableOptions::default());
-        assert_eq!(count_data_rows(&output), 1, "one finding → one row");
+        assert_eq!(
+            count_data_rows(&output, "file:line"),
+            1,
+            "one finding → one row"
+        );
         // Spot-check all 5 columns surfaced: file:line, smell wire str,
         // severity, penalty, score.
         assert!(output.contains("a.rs:5"), "file:line populated");
@@ -394,7 +500,11 @@ mod tests {
             vec![finding_with_n_smells("a.rs", "a::tests::t", 5, 2)],
         )]);
         let output = render_smell(&report, &TableOptions::default());
-        assert_eq!(count_data_rows(&output), 2, "two smells → two rows");
+        assert_eq!(
+            count_data_rows(&output, "file:line"),
+            2,
+            "two smells → two rows"
+        );
         // Score column shows per-Finding total (5 + 5 = 10) on each row
         // — duplication is expected per D-COL-SMELL-1.
         // Count "10" occurrences in score-column cells (look for " 10 "
@@ -467,7 +577,7 @@ mod tests {
         };
         let output = render_smell(&report, &opts);
         assert_eq!(
-            count_data_rows(&output),
+            count_data_rows(&output, "file:line"),
             2,
             "zero-score Finding filtered → 2 rows",
         );
@@ -487,7 +597,7 @@ mod tests {
         };
         let output = render_smell(&report, &opts);
         assert_eq!(
-            count_data_rows(&output),
+            count_data_rows(&output, "file:line"),
             2,
             "top=2 truncates to 2 rows (mid-Finding break acceptable)",
         );
@@ -497,7 +607,11 @@ mod tests {
     fn render_smell_rows_empty_report_renders_zero_rows() {
         let report = Report::default();
         let output = render_smell(&report, &TableOptions::default());
-        assert_eq!(count_data_rows(&output), 0, "no findings → no rows");
+        assert_eq!(
+            count_data_rows(&output, "file:line"),
+            0,
+            "no findings → no rows"
+        );
         // Header still present (column headers in border-rendered table).
         assert!(
             output.contains("file:line"),
@@ -517,7 +631,7 @@ mod tests {
         };
         let output = render_smell(&report, &opts);
         assert_eq!(
-            count_data_rows(&output),
+            count_data_rows(&output, "file:line"),
             0,
             "all-zero + only_failing → 0 rows",
         );
@@ -537,7 +651,7 @@ mod tests {
         let opts = TableOptions::default(); // only_failing = false
         let output = render_smell(&report, &opts);
         assert_eq!(
-            count_data_rows(&output),
+            count_data_rows(&output, "file:line"),
             0,
             "zero-smell Finding renders 0 rows under Smell grouping (no inner loop iteration)",
         );
@@ -559,9 +673,143 @@ mod tests {
         };
         let output = render_smell(&report, &opts);
         assert_eq!(
-            count_data_rows(&output),
+            count_data_rows(&output, "file:line"),
             3,
             "top=5 vs 3 total rows → all 3 present (no truncation)",
         );
+    }
+
+    // ── render_finding_rows (W4) ──────────────────────────────────
+
+    #[test]
+    fn render_finding_rows_one_finding_renders_one_row() {
+        let report = report_from(vec![(
+            "a.rs",
+            vec![finding_with_n_smells("a.rs", "a::tests::t", 5, 2)],
+        )]);
+        let output = render_finding(&report, &TableOptions::default());
+        assert_eq!(
+            count_data_rows(&output, "File"),
+            1,
+            "single Finding → one row",
+        );
+        // Smells cell lists categories comma-separated (both ZeroAssertion).
+        assert!(
+            output.contains("zero_assertion, zero_assertion"),
+            "Smells column lists categories comma-separated\n{output}",
+        );
+        // Score column shows per-Finding total (5 + 5 = 10).
+        assert!(output.contains(" 10 "), "Score column shows Finding total");
+    }
+
+    #[test]
+    fn render_finding_rows_zero_smell_finding_renders_empty_smells_cell() {
+        let report = report_from(vec![("a.rs", vec![finding_at("a.rs", "a::tests::t", 0)])]);
+        let output = render_finding(&report, &TableOptions::default());
+        assert_eq!(count_data_rows(&output, "File"), 1, "row present");
+        // Pass/Fail = PASS (exceeds_threshold defaults to false).
+        assert!(
+            output.contains("PASS"),
+            "Pass/Fail = PASS for zero-score Finding without exceeds_threshold flag\n{output}",
+        );
+        // Score column shows "0" (not "-0") thanks to format_score
+        // helper that normalizes IEEE-754 negative-zero (from empty
+        // Vec<f64>::iter().sum() in Finding::new).
+        let data_row = output
+            .lines()
+            .find(|l| l.contains('│') && l.contains("a::tests::t"))
+            .expect("data row present");
+        assert!(
+            data_row.contains(" 0 "),
+            "data row contains '0' score cell (no negative-zero): {data_row}",
+        );
+        assert!(
+            !data_row.contains("-0"),
+            "score must not render as -0: {data_row}",
+        );
+    }
+
+    #[test]
+    fn render_finding_rows_pass_fail_reflects_exceeds_threshold() {
+        let report = report_from(vec![
+            (
+                "a.rs",
+                vec![finding_exceeding("a.rs", "a::tests::failing", 10)],
+            ),
+            ("b.rs", vec![finding_at("b.rs", "b::tests::passing", 3)]),
+        ]);
+        let output = render_finding(&report, &TableOptions::default());
+        // FAIL row for a.rs::failing (exceeds_threshold = true).
+        // PASS row for b.rs::passing (exceeds_threshold = false).
+        assert!(output.contains("FAIL"), "FAIL row present for exceeding");
+        assert!(
+            output.contains("PASS"),
+            "PASS row present for non-exceeding"
+        );
+        // Spot-check both qualified names surfaced.
+        assert!(output.contains("a::tests::failing"));
+        assert!(output.contains("b::tests::passing"));
+    }
+
+    #[test]
+    fn render_finding_rows_source_order_preserved() {
+        let report = report_from(vec![
+            ("a.rs", vec![finding_at("a.rs", "a::tests::t1", 10)]),
+            ("b.rs", vec![finding_at("b.rs", "b::tests::t2", 5)]),
+        ]);
+        let output = render_finding(&report, &TableOptions::default());
+        let a_pos = output.find("a::tests::t1").expect("a row present");
+        let b_pos = output.find("b::tests::t2").expect("b row present");
+        assert!(a_pos < b_pos, "source order preserved");
+    }
+
+    #[test]
+    fn render_finding_rows_only_failing_filters_zero_score() {
+        let report = report_from(vec![
+            ("a.rs", vec![finding_at("a.rs", "a::tests::t1", 10)]),
+            ("b.rs", vec![finding_at("b.rs", "b::tests::t2", 0)]),
+        ]);
+        let opts = TableOptions {
+            only_failing: true,
+            ..TableOptions::default()
+        };
+        let output = render_finding(&report, &opts);
+        assert_eq!(
+            count_data_rows(&output, "File"),
+            1,
+            "only_failing drops zero-score Finding",
+        );
+        assert!(
+            !output.contains("a::tests::t2"),
+            "b.rs Finding filtered out"
+        );
+    }
+
+    #[test]
+    fn render_finding_rows_top_truncates() {
+        let report = report_from(vec![
+            ("a.rs", vec![finding_at("a.rs", "a::tests::t1", 10)]),
+            ("b.rs", vec![finding_at("b.rs", "b::tests::t2", 5)]),
+            ("c.rs", vec![finding_at("c.rs", "c::tests::t3", 7)]),
+        ]);
+        let opts = TableOptions {
+            top: Some(NonZeroUsize::new(2).expect("non-zero")),
+            ..TableOptions::default()
+        };
+        let output = render_finding(&report, &opts);
+        assert_eq!(
+            count_data_rows(&output, "File"),
+            2,
+            "top=2 truncates to 2 rows",
+        );
+    }
+
+    #[test]
+    fn render_finding_rows_empty_report_renders_zero_rows() {
+        let report = Report::default();
+        let output = render_finding(&report, &TableOptions::default());
+        assert_eq!(count_data_rows(&output, "File"), 0, "no findings → no rows");
+        // Header still present.
+        assert!(output.contains("File"), "header still rendered");
     }
 }
