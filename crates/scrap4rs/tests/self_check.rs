@@ -4,9 +4,9 @@
 //! Per Christopher's per-detector self-check pattern (decision
 //! 2026-05-26), every v0.1 detector adds one `test_<detector>_self_check`
 //! here as it ships. The first such test (`test_zero_assertion_self_check`,
-//! scrap-rs#30) lands with the zero-assertion detector; agent-24 will add
-//! `test_tautological_self_check` atop this module when scrap-rs#24 ships;
-//! #25 / #26 / #27 follow with `test_no_op_io_self_check`,
+//! scrap-rs#30) lands with the zero-assertion detector;
+//! `tautological_assertion_self_check` (scrap-rs#24) appends here on
+//! the same scaffold; #25 / #26 / #27 follow with `test_no_op_io_self_check`,
 //! `test_surface_only_io_self_check`, `test_large_example_self_check`.
 //!
 //! Why this lives in `crates/scrap4rs/tests/` rather than `crates/scrap-core/tests/`:
@@ -32,7 +32,7 @@
 
 use scrap_core::adapters::source::fs::FsWalker;
 use scrap_core::cli::config::DetectorConfig;
-use scrap_core::detectors::zero_assertion;
+use scrap_core::detectors::{tautological_assertion, zero_assertion};
 use scrap_core::domain::config::AnalysisConfig;
 use scrap_core::domain::types::{FilePath, SourceRoot};
 use scrap_core::ports::parser::TestParserPort;
@@ -105,6 +105,51 @@ fn test_zero_assertion_self_check() {
         "zero-assertion self-check failed: {n} test(s) in crates/scrap4rs/src/ trigger the detector:\n  - {list}\n\
          \nEither the test is genuinely smelly (add assertions / implicit source / .unwrap()) \
          or the detector has a false positive (fix the detector + add a runner-shell fixture).",
+        n = offenders.len(),
+        list = offenders.join("\n  - "),
+    );
+}
+
+#[test]
+fn test_tautological_assertion_self_check() {
+    // scrap-rs#24 — `tautological-assertion` detector dogfood.
+    //
+    // The detector emits a `Finding` whenever a `ParsedTest` carries an
+    // assertion whose `arguments_identical` is true OR whose
+    // `single_arg_value` is `Some(LiteralValue::Bool(true))`. scrap4rs's
+    // own production code (excluding test fixtures) must contain zero
+    // such patterns. If this test fails, fix the tautology in-stream
+    // rather than suppressing the detector — the production code should
+    // not ship with intentionally meaningless assertions.
+    //
+    // Unlike zero-assertion::detect (which consults `DetectorConfig` for
+    // `enabled`/`penalty`), tautological_assertion::detect takes only
+    // `&ParsedTest` — per Christopher's locked Option B at /shape gate,
+    // opt-out + Skip/Advisory + cfg gating live in the pipeline driver
+    // (scrap-rs#72), not in the detector.
+    let tests = parse_scrap4rs_src();
+    assert!(
+        !tests.is_empty(),
+        "self-check guard: expected to find at least one #[test] fn in crates/scrap4rs/src/; \
+         got zero — either the walker regressed or scrap4rs has no tests",
+    );
+
+    let mut offenders: Vec<String> = Vec::new();
+    for parsed in &tests {
+        if tautological_assertion::detect(parsed).is_some() {
+            offenders.push(format!(
+                "{file}::{name}",
+                file = parsed.identity.file_path,
+                name = parsed.identity.qualified_name.as_str(),
+            ));
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "tautological-assertion self-check failed: {n} test(s) in crates/scrap4rs/src/ trigger the detector:\n  - {list}\n\
+         \nEither the test is genuinely smelly (replace the tautology with an assertion that can actually fail) \
+         or the detector has a false positive (fix the detector + add a fixture under tests/fixtures/).",
         n = offenders.len(),
         list = offenders.join("\n  - "),
     );

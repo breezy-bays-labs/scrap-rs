@@ -63,6 +63,24 @@ fn snapshot_tautological() {
     insta::assert_yaml_snapshot!(file);
 }
 
+#[test]
+fn snapshot_tautological_assert_ne() {
+    // scrap-rs#24 — covers the assert_ne!(x, x) shape via
+    // arguments_identical: true. Sibling to tautological.rs.
+    let file = parse_fixture("tests/fixtures/true_positives/tautological_assert_ne.rs");
+    insta::assert_yaml_snapshot!(file);
+}
+
+#[test]
+fn snapshot_tautological_with_should_panic() {
+    // scrap-rs#24 — locks the SHAPE-Q1=(ii)+Option B contract: the
+    // parser surfaces ParsedAssertion{single_arg_value: Bool(true)}
+    // PLUS implicit_assertion_sources=[ShouldPanic]. Detector emits;
+    // pipeline policy at scrap-rs#72 owns suppression.
+    let file = parse_fixture("tests/fixtures/true_positives/tautological_with_should_panic.rs");
+    insta::assert_yaml_snapshot!(file);
+}
+
 // ─── S2.3 snapshots: macro-form implicit-assertion sources ──────────
 
 #[test]
@@ -92,6 +110,16 @@ fn snapshot_pretty_assertions_shell() {
 #[test]
 fn snapshot_proptest_macro_suffix() {
     let file = parse_fixture("tests/fixtures/runner_shells/proptest_macro_suffix.rs");
+    insta::assert_yaml_snapshot!(file);
+}
+
+#[test]
+fn snapshot_tautological_inside_proptest() {
+    // scrap-rs#24 — LOCKS the no-recurse boundary at body.rs's
+    // visit_macro. The fixture's inner assert!(true) MUST NOT
+    // surface as a ParsedAssertion; if it does, the snapshot diff
+    // will show a phantom entry and CI fails.
+    let file = parse_fixture("tests/fixtures/runner_shells/tautological_inside_proptest.rs");
     insta::assert_yaml_snapshot!(file);
 }
 

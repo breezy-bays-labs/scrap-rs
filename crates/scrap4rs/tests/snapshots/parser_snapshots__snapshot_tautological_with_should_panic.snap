@@ -1,0 +1,33 @@
+---
+source: crates/scrap4rs/tests/parser_snapshots.rs
+expression: file
+---
+path: tests/fixtures/true_positives/tautological_with_should_panic.rs
+tests:
+  - identity:
+      file_path: tests/fixtures/true_positives/tautological_with_should_panic.rs
+      qualified_name: assert_true_with_should_panic_is_still_tautological
+      span:
+        start_line: 22
+        end_line: 26
+    attributes:
+      - name: test
+        raw: ~
+      - name: should_panic
+        raw: ~
+    assertions:
+      - name: assert
+        raw_args: "true"
+        span:
+          start_line: 25
+          end_line: 25
+        arguments_identical: false
+        single_arg_value:
+          kind: bool
+          value: true
+    body_line_count: 2
+    implicit_assertion_sources:
+      - should_panic
+    opt_outs: []
+    behavioral_facts: []
+diagnostics: []

@@ -129,8 +129,15 @@ impl<'ast> Visit<'ast> for BodyVisitor {
         {
             let raw_args = stringify_tokens_opt(&mac.tokens);
             let span = span_from_spanned(mac);
-            self.assertions
-                .push(ParsedAssertion::new(leaf, raw_args, span));
+            let (arguments_identical, single_arg_value) =
+                super::tautology::extract_tautology_facts(&mac.tokens);
+            self.assertions.push(ParsedAssertion::new(
+                leaf,
+                raw_args,
+                span,
+                arguments_identical,
+                single_arg_value,
+            ));
         }
 
         // Implicit-assertion sources via the recognise() contract

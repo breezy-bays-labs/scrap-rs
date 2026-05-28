@@ -135,3 +135,26 @@ Feature: scrap4rs syn-based test parser — TestParserPort contract
       }
       """
     Then test "it" has body_line_count 3
+
+  # ─── scrap-rs#24 tautological-assertion structural-fact scenarios ───
+  #
+  # The tautological-assertion DETECTOR contract (filter+aggregate of
+  # the two structural facts) is covered by
+  # `crates/scrap-core/tests/features/tautological_assertion.feature`.
+  # The two scenarios below cover the PARSER's structural-fact
+  # extraction on real `.rs` fixtures — they exercise the syn-side
+  # `extract_tautology_facts` helper through the SynTestParser surface,
+  # which scrap-core can't do without importing scrap4rs.
+
+  Scenario: assert!(true) inside proptest! is NOT visible to the parser (no-recurse boundary)
+    When I parse the fixture tests/fixtures/runner_shells/tautological_inside_proptest.rs
+    Then test "it" has 0 explicit assertions
+    And test "it" has the implicit assertion source Proptest
+
+  Scenario: #[should_panic] fn with assert!(true) projects single_arg_value Bool(true)
+    When I parse the fixture tests/fixtures/true_positives/tautological_with_should_panic.rs
+    Then test "assert_true_with_should_panic_is_still_tautological" has 1 explicit assertion
+    And test "assert_true_with_should_panic_is_still_tautological" assertion 0 has name "assert"
+    And test "assert_true_with_should_panic_is_still_tautological" assertion 0 has single_arg_value Bool(true)
+    And test "assert_true_with_should_panic_is_still_tautological" assertion 0 has arguments_identical false
+    And test "assert_true_with_should_panic_is_still_tautological" has the implicit assertion source ShouldPanic

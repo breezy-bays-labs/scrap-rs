@@ -14,6 +14,7 @@ mod assertions;
 mod attributes;
 mod body;
 mod spans;
+mod tautology;
 mod visitor;
 
 use scrap_core::domain::parsed::{ParsedTest, ParsedTestFile};
