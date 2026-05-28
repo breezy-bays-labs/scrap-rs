@@ -33,4 +33,17 @@ preset = "default"
 # `**/tests/**` pattern subsumes them.
 exclude = [
     "**/tests/**",
+    # tracked: scrap-rs#92 — adapter binary entry-point; CC=4 by
+    # construction (wires AdapterMeta → cli::parse_args → cli::run).
+    # Integration tests cover it via end-to-end smoke; unit-coverage
+    # is not the right gate for the dispatch wiring. Same posture as
+    # crap4rs/src/main.rs.
+    "**/scrap4rs/src/main.rs",
+    # tracked: scrap-rs#93 — cargo-llvm-cov does not instrument
+    # build scripts (build.rs is not a normal test binary), so
+    # coverage is reported as 0% even when unit tests exist (the
+    # `build_date_known_epoch` test in scrap4rs/build.rs runs at
+    # build time only). Promote to instrumented helpers via
+    # extraction OR convert to an ADR per the issue's AC.
+    "**/scrap4rs/build.rs",
 ]

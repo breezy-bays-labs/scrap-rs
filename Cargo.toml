@@ -80,6 +80,26 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 # injection). scrap-rs#12 S1.1 plan revision item 7 was
 # over-aggressive about dropping this; restored here in S2.1.
 quote = "1"
+# `clap` powers the CLI surface in `crates/scrap-core/src/cli/mod.rs`
+# (lands with scrap-rs#21). The `derive` feature drives `#[derive(Parser)]`
+# / `Args` / `Subcommand` / `ValueEnum`. The `string` feature is required
+# for the runtime-`argv[0]`-derived `bin_name` pattern from crap-rs#161:
+# `Cli::command().name(runtime_string).bin_name(runtime_string)` needs
+# `impl From<String> for clap::builder::Str`, only available with
+# `string`. clap_derive's proc-macro chain (proc-macro2, syn, quote)
+# enters scrap-core as a proc-macro-only transitive dep — same shape as
+# the pre-existing serde_derive / thiserror chains; the ast-purity CI
+# gate (source-grep) is unaffected. scrap4ts (v0.6+) inherits cleanly.
+clap = { version = "4.6", features = ["derive", "string"] }
+# `clap_complete` generates shell completion scripts for bash/zsh/fish/
+# elvish/powershell at runtime from the clap `Command` tree. Consumed
+# inside `cli::dispatch_subcommand`'s `Completions` arm.
+clap_complete = "4.6"
+# `clap_complete_nushell` is a SEPARATE crate from `clap_complete` (per
+# clap's modular split for less-common shells). Required for the
+# nushell variant of `--completions <SHELL>`. Pinned to the matching
+# 4.6 series; MSRV 1.93 compatible (verified at /plan).
+clap_complete_nushell = "4.6"
 
 # ─── Workspace lints (item 20 — lifted from per-crate #![warn(...)]) ───
 #

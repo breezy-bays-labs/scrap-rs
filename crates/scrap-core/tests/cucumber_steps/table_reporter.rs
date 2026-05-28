@@ -49,10 +49,19 @@ fn build_finding(path: &str, name: &str, penalty: u32) -> Finding {
 
 fn default_meta() -> AdapterMeta {
     AdapterMeta {
-        tool: "test-adapter",
+        tool_name: "test-adapter",
         language: "rust",
         tool_version: "0.1.0",
+        long_version: "0.1.0 (cucumber 2026-05-27)",
+        about: "Static test smell detector",
+        long_about: "Cucumber-test fixture AdapterMeta for table_reporter.feature.",
+        after_help: "",
+        extensions: &["rs"],
+        tool_info_uri: "https://example.invalid/scrap",
+        rule_help_uri: "https://example.invalid/scrap/rules",
         config_file_name: "test-adapter.toml",
+        default_excludes: &["tests/**"],
+        parse_hint: "ensure --src points at a workspace with test files",
     }
 }
 

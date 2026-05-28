@@ -51,19 +51,37 @@ fn build_finding(path: &str, name: &str, penalty: u32) -> Finding {
 
 fn default_meta() -> AdapterMeta {
     AdapterMeta {
-        tool: "scrap4rs",
+        tool_name: "scrap4rs",
         language: "rust",
         tool_version: "0.1.0",
+        long_version: "0.1.0 (test 2026-05-27)",
+        about: "scrap4rs (cucumber-test fixture)",
+        long_about: "Cucumber-step fixture AdapterMeta for the json reporter scenarios.",
+        after_help: "",
+        extensions: &["rs"],
+        tool_info_uri: "https://github.com/breezy-bays-labs/scrap-rs",
+        rule_help_uri: "https://github.com/breezy-bays-labs/scrap-rs#detection-rules",
         config_file_name: "scrap4rs.toml",
+        default_excludes: &["tests/**", "benches/**", "examples/**"],
+        parse_hint: "ensure --src points at a Cargo workspace with test files",
     }
 }
 
 fn ts_meta() -> AdapterMeta {
     AdapterMeta {
-        tool: "scrap4ts",
+        tool_name: "scrap4ts",
         language: "typescript",
         tool_version: "0.1.0",
+        long_version: "0.1.0 (test 2026-05-27)",
+        about: "scrap4ts (cucumber-test fixture)",
+        long_about: "Cucumber-step fixture AdapterMeta for the json reporter scenarios.",
+        after_help: "",
+        extensions: &["ts", "tsx"],
+        tool_info_uri: "https://github.com/breezy-bays-labs/scrap-rs",
+        rule_help_uri: "https://github.com/breezy-bays-labs/scrap-rs#detection-rules",
         config_file_name: "scrap4ts.toml",
+        default_excludes: &["node_modules/**", "dist/**"],
+        parse_hint: "ensure --src points at a TypeScript project with test files",
     }
 }
 

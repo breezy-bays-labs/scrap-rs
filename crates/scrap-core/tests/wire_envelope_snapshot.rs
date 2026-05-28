@@ -38,19 +38,29 @@ use std::num::NonZeroUsize;
 /// deterministic. ADR D2 example format.
 const FIXED_TIMESTAMP: &str = "2026-05-26T00:00:00Z";
 
-/// Test-fixture `AdapterMeta`. Construct fresh per-test (struct is not
-/// Copy and a const ctor would over-restrict future field shapes).
+/// Test-fixture `AdapterMeta`. Returns by value cheaply because
+/// `AdapterMeta` is `Copy` post-scrap-rs#21 (FORK-1 fold).
 ///
 /// The `"scrap4rs"` literal here is OK: the source-only adapter-name
 /// literal purity CI gate (scrap-rs#37 / scrap-rs#52) scopes to
 /// `crates/scrap-core/src/`, NOT `tests/`. Test fixtures use the
-/// concrete adapter name for realism.
+/// concrete adapter name for realism. 13-field shape per scrap-rs#21
+/// `AdapterMeta` expansion.
 fn test_meta() -> AdapterMeta {
     AdapterMeta {
-        tool: "scrap4rs",
+        tool_name: "scrap4rs",
         language: "rust",
         tool_version: "0.1.0",
+        long_version: "0.1.0 (test 2026-05-27)",
+        about: "scrap4rs (snapshot-test fixture)",
+        long_about: "Snapshot-test fixture AdapterMeta for the wire envelope reporter.",
+        after_help: "",
+        extensions: &["rs"],
+        tool_info_uri: "https://github.com/breezy-bays-labs/scrap-rs",
+        rule_help_uri: "https://github.com/breezy-bays-labs/scrap-rs#detection-rules",
         config_file_name: "scrap4rs.toml",
+        default_excludes: &["tests/**", "benches/**", "examples/**"],
+        parse_hint: "ensure --src points at a Cargo workspace with test files",
     }
 }
 

@@ -65,10 +65,36 @@ The `zero-assertion` detector recognizes the following idioms as
 
 ## Usage (v0.x — internal only)
 
+Quick start:
+
 ```bash
-# From within scrap-rs:
-cargo run -p scrap4rs -- --src crates --format json
+# Bootstrap a starter config in the current directory:
+cargo run -p scrap4rs -- init
+
+# Run the analyzer against a source root + emit the JSON envelope:
+cargo run -p scrap4rs -- --src crates/scrap-core --format json
+
+# Plain stdout summary, top 20 findings, only-failing:
+cargo run -p scrap4rs -- --src crates/scrap-core --format stdout --top 20 --only-failing
+
+# Show full help (about + EXAMPLES):
+cargo run -p scrap4rs -- --help
 ```
+
+`scrap4rs init` writes a `scrap4rs.toml` skeleton in the current
+directory with commented-out detector blocks + exclude templates;
+`crates/scrap4rs/scrap4rs.example.toml` is the canonical reference
+copy committed to the repo.
+
+The CLI surface accepts:
+`--src`, `--config`, `-f/--format json|stdout|markdown|sarif`,
+`--threshold-mode strict|default|lenient`, `--no-fail`, `--exclude`
+(repeatable), `--no-gitignore`, `--top N`, `--only-failing`,
+`--color auto|always|never`, `-q/--quiet`, `-v/--verbose`.
+Subcommands: `init [--force] [--non-interactive]`,
+`completions <SHELL>` (bash/zsh/fish/elvish/powershell/nushell).
+Exit codes: 0 = passed, 1 = over threshold, 2 = config error,
+3 = all files failed to parse.
 
 Mokumo CI consumes scrap-rs via the composite action published from
 this repo:

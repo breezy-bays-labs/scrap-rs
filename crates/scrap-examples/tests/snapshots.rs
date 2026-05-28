@@ -65,13 +65,23 @@ const FIXED_TIMESTAMP: &str = "2026-05-27T00:00:00Z";
 const TOOL_VERSION: &str = "0.1.0";
 
 /// Construct the fixed `AdapterMeta` literal used across all
-/// fixtures. Returned by-value (the struct doesn't impl `Copy`).
+/// fixtures. `AdapterMeta` is `Copy` post-scrap-rs#21 (FORK-1 fold);
+/// 13-field shape per the same wave.
 fn harness_meta() -> AdapterMeta {
     AdapterMeta {
-        tool: "scrap4rs",
+        tool_name: "scrap4rs",
         language: "rust",
         tool_version: TOOL_VERSION,
+        long_version: "0.1.0 (snapshot 2026-05-27)",
+        about: "snapshot-test harness",
+        long_about: "Demo-corpus snapshot harness AdapterMeta for the scrap-examples crate.",
+        after_help: "",
+        extensions: &["rs"],
+        tool_info_uri: "https://github.com/breezy-bays-labs/scrap-rs",
+        rule_help_uri: "https://github.com/breezy-bays-labs/scrap-rs#detection-rules",
         config_file_name: "scrap4rs.toml",
+        default_excludes: &["tests/**", "benches/**", "examples/**"],
+        parse_hint: "ensure --src points at a Cargo workspace with test files",
     }
 }
 
