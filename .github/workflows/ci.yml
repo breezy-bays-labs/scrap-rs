@@ -101,6 +101,38 @@ jobs:
       # lands once all parser.feature scenarios are green.)
       - run: cargo test -p scrap4rs --test cucumber --locked
 
+  scrap-examples:
+    name: scrap-examples (demo corpus + golden snapshots)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Demo corpus golden-snapshot harness (scrap-rs#80, sub-issue of
+    # epic scrap-rs#79). Iterates `crates/scrap-examples/examples/`,
+    # invokes scrap-rs programmatically against each fixture's
+    # `bad.rs` / `good.rs`, and diffs the emitted JSON envelope
+    # against the committed `expected.json`. Drift = behaviour change
+    # = CI failure. Bless workflow documented in the sub-crate README.
+    #
+    # Standalone job (per shape doc D12) rather than folded into the
+    # `Test (...)` matrix above — parallel-eligible, clear failure
+    # naming in PR status checks, and conflates neither with the
+    # standard test suite signal nor with the cross-platform matrix.
+    #
+    # Branch protection note: this job is informational on the PR
+    # that introduces it (scrap-rs#80); it is NOT yet in the required
+    # status checks list. Promoting it to required is a separate
+    # post-merge orchestrator decision (and PR against branch
+    # protection settings, not this workflow file).
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # tracks @stable branch
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: scrap-rs
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo test -p scrap-examples --locked
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
