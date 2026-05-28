@@ -1,0 +1,54 @@
+[package]
+name = "scrap-examples"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+description = "Curated bad-by-design fixture corpus + golden-snapshot harness for the scrap-rs detector ecosystem. publish=false; not a binary."
+keywords = ["scrap", "testing", "quality", "static-analysis", "smell"]
+categories = ["development-tools::testing"]
+readme = "README.md"
+rust-version.workspace = true
+publish = false
+# Disable cargo's magic `examples/` directory: files under
+# `crates/scrap-examples/examples/` are fixture source files for the
+# harness to parse, NOT cargo binary targets. See shape doc D5 in
+# `~/Github/ops/workspace/scrap-rs/scrap-rs-20260527-80-scrap-examples-scaffolding/shaping.md`.
+autoexamples = false
+
+# scrap-examples is a CONSUMER of the scrap-rs detector ecosystem, NOT
+# a hexagon-layer member. See `adr-hexagonal-layout`. The crate ships
+# no library logic of its own; its `src/lib.rs` is intentionally empty
+# (docstring + `#![warn(missing_docs)]` only). The corpus and harness
+# live under `examples/` and `tests/` respectively. publish=false;
+# never reaches crates.io.
+
+[lib]
+name = "scrap_examples"
+path = "src/lib.rs"
+
+[dev-dependencies]
+# Single dep on the Rust-source adapter binary's lib. scrap4rs's
+# `src/lib.rs:18` re-exports every scrap_core module as a strict
+# superset: `pub use scrap_core::{adapters, cli, core, detectors,
+# domain, ports};`. Harness imports `scrap_core::*` items via this
+# re-export rather than listing both deps and inviting a misleading
+# distinction (per cabinet CAO SF1, 2026-05-27).
+scrap4rs = { path = "../scrap4rs" }
+# `serde_json::Value` powers the round-trip diff between live
+# `emit()` output and committed `expected.json`. Per cabinet CEng SF2:
+# `serde_json::Map<String, Value>` is `BTreeMap`-backed by default
+# (no `preserve_order` feature on the workspace pin), so emitted keys
+# are alphabetical and byte-stable — combined with the harness's
+# trailing-newline contract (CEng MF1), `expected.json` round-trips
+# through editor save without drift.
+serde_json = { workspace = true }
+
+[lints]
+# Inherit `clippy::pedantic` + `clippy::cargo` from the workspace
+# block. Harness code (`tests/snapshots.rs`) passes pedantic lints.
+# Fixture files under `examples/` are NOT compiled
+# (`autoexamples = false`), so they are outside lint scope.
+workspace = true
