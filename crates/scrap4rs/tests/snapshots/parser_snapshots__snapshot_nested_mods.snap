@@ -11,7 +11,7 @@ tests:
         start_line: 13
         end_line: 14
         start_column: 9
-        end_column: 27
+        end_column: 26
     attributes:
       - name: test
         raw: ~

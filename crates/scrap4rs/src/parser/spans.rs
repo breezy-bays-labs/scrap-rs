@@ -25,15 +25,32 @@ pub(crate) fn line_to_u32(line: usize) -> u32 {
     u32::try_from(line).unwrap_or(u32::MAX)
 }
 
-/// Saturating cast + 0-based → 1-based shift for
+/// Saturating cast + 0-based → 1-based shift for a **start** column
+/// from `proc_macro2::LineColumn::column` (`usize`).
+///
+/// proc-macro2's `start().column` is **0-based inclusive** (the first
+/// column on a line is `0`, pointing AT the first character);
+/// `domain::Span` columns are **1-based inclusive**. The `+1` converts
+/// 0-based-inclusive → 1-based-inclusive (`saturating_add` so a
+/// pathological `u32::MAX` column does not wrap).
+pub(crate) fn start_column_to_u32_1based(column: usize) -> u32 {
+    u32::try_from(column).unwrap_or(u32::MAX).saturating_add(1)
+}
+
+/// Saturating cast for an **end** column from
 /// `proc_macro2::LineColumn::column` (`usize`).
 ///
-/// proc-macro2's `column` is **0-based** (the first column on a line
-/// is `0`); `domain::Span` columns are **1-based** (consistent with
-/// the 1-based line fields and SARIF region semantics). We add 1 with
-/// `saturating_add` so a pathological `u32::MAX` column does not wrap.
-pub(crate) fn column_to_u32_1based(column: usize) -> u32 {
-    u32::try_from(column).unwrap_or(u32::MAX).saturating_add(1)
+/// proc-macro2's `end().column` is **0-based exclusive** — it points
+/// ONE PAST the last character of the span (e.g. for `fn f() {}` the
+/// closing `}` is at 0-based column 8, and `end().column` reports `9`).
+/// A 0-based-exclusive value is numerically equal to the 1-based-
+/// inclusive column of the last character, so NO `+1` is applied here
+/// (unlike [`start_column_to_u32_1based`]) — the cast is the identity
+/// modulo the `0`→`1` floor. The floor keeps the domain's 1-based
+/// invariant for the degenerate zero-width span at column 0 (which the
+/// synthetic-span guard in [`span_from_spanned`] also catches).
+pub(crate) fn end_column_to_u32_1based(column: usize) -> u32 {
+    u32::try_from(column).unwrap_or(u32::MAX).max(1)
 }
 
 /// Project any `syn::spanned::Spanned` node into the domain's
@@ -44,14 +61,18 @@ pub(crate) fn column_to_u32_1based(column: usize) -> u32 {
 /// `start.line` and `end.line` are zero for every node and the
 /// resulting placeholder `Span::new(1, 1, 1, 1)` is meaningless.
 ///
-/// `proc_macro2::Span::start()` returns `LineColumn { line, column }`
-/// — line is **1-based**, column is **0-based** (converted to 1-based
-/// via [`column_to_u32_1based`]). A `start.line == 0` value is the
-/// proc-macro2 sentinel for "no usable span info" (synthetic spans
-/// from procedural expansion, etc.); we defensively clamp those to the
-/// placeholder span `Span::new(1, 1, 1, 1)` rather than panic via
-/// `Span::new`'s `debug_assert!`. `parse_error_from_syn_error` uses
-/// the parallel shape for parser failures specifically.
+/// `proc_macro2::Span::start()` / `end()` return `LineColumn { line,
+/// column }` — line is **1-based**; `start().column` is **0-based
+/// inclusive** (converted via [`start_column_to_u32_1based`]) and
+/// `end().column` is **0-based exclusive** (converted via
+/// [`end_column_to_u32_1based`], which applies no `+1` because a
+/// 0-based-exclusive column equals the 1-based-inclusive column of the
+/// last character). A `start.line == 0` value is the proc-macro2
+/// sentinel for "no usable span info" (synthetic spans from procedural
+/// expansion, etc.); we defensively clamp those to the placeholder span
+/// `Span::new(1, 1, 1, 1)` rather than panic via `Span::new`'s
+/// `debug_assert!`. `parse_error_from_syn_error` uses the parallel
+/// shape for parser failures specifically.
 ///
 /// Called from `extract_parsed_test` (every test fn's identity span)
 /// and from `BodyVisitor::visit_macro` (every recognised assertion's
@@ -62,8 +83,8 @@ pub(crate) fn span_from_spanned<T: Spanned>(node: &T) -> Span {
     let end = syn_span.end();
     let start_line = line_to_u32(start.line);
     let end_line = line_to_u32(end.line);
-    let start_column = column_to_u32_1based(start.column);
-    let end_column = column_to_u32_1based(end.column);
+    let start_column = start_column_to_u32_1based(start.column);
+    let end_column = end_column_to_u32_1based(end.column);
 
     // Synthetic-span defense: if start.line is 0 (the proc-macro2
     // "no span info" sentinel), or if end < start (shouldn't happen
@@ -117,19 +138,37 @@ mod tests {
     }
 
     #[test]
-    fn column_to_u32_1based_shifts_zero_to_one() {
-        // proc-macro2 columns are 0-based; the domain is 1-based.
-        assert_eq!(column_to_u32_1based(0), 1, "0-based column 0 → 1-based 1");
-        assert_eq!(column_to_u32_1based(4), 5, "0-based column 4 → 1-based 5");
+    fn start_column_to_u32_1based_shifts_zero_to_one() {
+        // proc-macro2 start columns are 0-based inclusive; the domain
+        // is 1-based inclusive — so `+1`.
+        assert_eq!(
+            start_column_to_u32_1based(0),
+            1,
+            "0-based-inclusive 0 → 1-based-inclusive 1",
+        );
+        assert_eq!(start_column_to_u32_1based(4), 5, "0-based 4 → 1-based 5");
+    }
+
+    #[test]
+    fn end_column_to_u32_1based_is_identity_modulo_floor() {
+        // proc-macro2 end columns are 0-based EXCLUSIVE — numerically
+        // equal to the 1-based-inclusive column of the last char — so
+        // NO `+1`, just a `0`→`1` floor.
+        assert_eq!(
+            end_column_to_u32_1based(9),
+            9,
+            "0-based-exclusive 9 (== 1-based-inclusive last char) → 9",
+        );
+        assert_eq!(end_column_to_u32_1based(0), 1, "degenerate 0 floors to 1");
     }
 
     #[test]
     #[cfg(target_pointer_width = "64")]
-    fn column_to_u32_1based_saturates_without_wrapping() {
+    fn column_converters_saturate_without_wrapping() {
         // A pathological max column must NOT wrap to 0 after the +1.
-        assert_eq!(column_to_u32_1based(usize::MAX), u32::MAX);
-        // u32::MAX as a usize column saturates to u32::MAX (no wrap).
-        assert_eq!(column_to_u32_1based(u32::MAX as usize), u32::MAX);
+        assert_eq!(start_column_to_u32_1based(usize::MAX), u32::MAX);
+        assert_eq!(start_column_to_u32_1based(u32::MAX as usize), u32::MAX);
+        assert_eq!(end_column_to_u32_1based(usize::MAX), u32::MAX);
     }
 
     #[test]
@@ -174,6 +213,27 @@ mod tests {
         // column 1.
         assert_eq!(span.start_line, 1);
         assert_eq!(span.start_column, 1, "leading `#` is at 1-based column 1");
+    }
+
+    #[test]
+    fn span_from_spanned_exact_end_column_single_line() {
+        // `fn f() {}` — all on line 1. The closing `}` is the 9th
+        // character → 1-based-inclusive end_column 9. This is the
+        // discriminating test for the proc-macro2 end-column semantics:
+        // `end().column` is 0-based EXCLUSIVE (reports 9 for `}` at
+        // 0-based col 8), and a naive `+1` would yield 10. `start().
+        // column` is 0-based inclusive (0 → 1-based 1).
+        let source = "fn f() {}";
+        let file: syn::File = syn::parse_str(source).expect("parses");
+        let item = &file.items[0];
+        let span = span_from_spanned(item);
+        assert_eq!(span.start_line, 1);
+        assert_eq!(span.end_line, 1);
+        assert_eq!(span.start_column, 1, "leading `f` at 1-based column 1");
+        assert_eq!(
+            span.end_column, 9,
+            "closing `}}` is the 9th char → 1-based-inclusive end_column 9 (NOT 10)",
+        );
     }
 
     #[test]

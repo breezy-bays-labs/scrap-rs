@@ -25,7 +25,10 @@ use syn::{Ident, ItemFn};
 
 use self::attributes::{extract_attributes, extract_opt_outs, implicit_sources_from_attributes};
 use self::body::BodyVisitor;
-use self::spans::{column_to_u32_1based, compute_body_line_count, line_to_u32, span_from_spanned};
+use self::spans::{
+    compute_body_line_count, end_column_to_u32_1based, line_to_u32, span_from_spanned,
+    start_column_to_u32_1based,
+};
 use self::visitor::TestVisitor;
 
 /// Zero-sized parser adapter implementing
@@ -84,16 +87,33 @@ impl TestParserPort for SynTestParser {
 fn parse_error_from_syn_error(err: &syn::Error) -> ParseError {
     let message = err.to_string();
     let syn_span = err.span();
-    // Reuse `spans::line_to_u32` / `column_to_u32_1based` for the
-    // saturating casts — single source of truth for
-    // `LineColumn::{line,column}: usize` → `u32` (and the 0→1-based
-    // column shift). (Gemini #56 helper reuse.)
+    // Reuse the `spans::*` saturating casts — single source of truth
+    // for `LineColumn::{line,column}: usize` → `u32` (and the column
+    // conventions: start is 0-based-inclusive `+1`, end is
+    // 0-based-exclusive identity). (Gemini #56 helper reuse.)
     let start = syn_span.start();
     let end = syn_span.end();
     let start_line = line_to_u32(start.line);
     let end_line = line_to_u32(end.line);
-    let start_column = column_to_u32_1based(start.column);
-    let end_column = column_to_u32_1based(end.column);
+    let start_column = start_column_to_u32_1based(start.column);
+    // Zero-width-error normalization: `syn::Error::span()` for some
+    // failures (e.g. an unclosed brace) reports a ZERO-WIDTH point
+    // where proc-macro2's `start` and `end` columns are EQUAL. Through
+    // the asymmetric converters (start `+1`, end identity) that becomes
+    // `end_column == start_column - 1` on the same line — an inverted
+    // range that would trip `Span::new`'s column debug_assert. Clamp
+    // `end_column` up to `start_column` on a same-line span so the
+    // point renders as a zero-width span at the error location rather
+    // than panicking. (Multi-line error spans never need this — their
+    // columns live on different lines.)
+    let end_column = {
+        let raw = end_column_to_u32_1based(end.column);
+        if start_line == end_line {
+            raw.max(start_column)
+        } else {
+            raw
+        }
+    };
 
     // Span::new debug-asserts a well-ordered line+column range.
     // Guard against both:
