@@ -18,6 +18,15 @@
 //! line cannot resolve) and via a source-level `ast-purity` CI grep
 //! plus the matching `lefthook` pre-push hook.
 //!
+//! scrap-core is also adapter-name-pure: all adapter identity flows
+//! through [`adapter_meta::AdapterMeta`], never a literal `"scrap4rs"`
+//! / `"scrap4ts"` baked into this crate. The `scrap-core adapter-name
+//! literal purity` CI gate (scrap-rs#18, expanded to `tests/` in
+//! scrap-rs#37) rejects such literals in `src/` AND `tests/`; the
+//! test fixtures use neutral names (`adapter-a` / `test-adapter`), and
+//! real-name emission is verified in the adapter crate that owns the
+//! identity (`crates/scrap4rs/tests/`).
+//!
 //! Module roster:
 //! - [`domain`] — types: `Smell`, `SmellCategory`, `Finding`, `Report`, `Span`, `TestIdentity`, etc.
 //! - [`ports`] — trait definitions and per-port error enums:

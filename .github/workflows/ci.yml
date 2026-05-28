@@ -295,49 +295,80 @@ jobs:
           echo "scrap4rs adapter is parser-confined (syn/quote/proc_macro2/tree_sitter/swc/oxc only inside parser/)"
 
   adapter-name-purity:
+    # NOTE: the `name:` string below is a REQUIRED branch-protection
+    # context on `main`. It is INTENTIONALLY kept verbatim across the
+    # scrap-rs#37 scope expansion — renaming it would orphan the
+    # required context and block all merges (enforce_admins: true).
+    # The "(source-only — scrap-rs#18)" suffix is now a historical
+    # artifact: as of scrap-rs#37 the gate covers source AND tests.
     name: scrap-core adapter-name literal purity (source-only — scrap-rs#18)
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # The scrap-rs#18 config loader establishes the adapter-name-
-    # agnostic discipline for `crates/scrap-core/src/`: zero
-    # double-quoted "scrap4rs" / "scrap4ts" string literals — every
-    # adapter-binary name flows through `meta.config_file_name` /
-    # `meta.tool_name` set by the binary crate, never embedded as a
-    # literal in scrap-core source. This job ships a SUBSET of
-    # scrap-rs#37 (which expands the gate to tests/, tests/features/,
-    # and tests/cucumber_steps/).
+    # scrap-core is adapter-name-pure: zero double-quoted "scrap4rs" /
+    # "scrap4ts" string literals anywhere in `crates/scrap-core/`
+    # (src/ AND tests/). Every adapter-binary name flows through
+    # `meta.config_file_name` / `meta.tool_name` supplied by the binary
+    # crate, never embedded as a literal in scrap-core. scrap-rs#18
+    # established the discipline for src/; scrap-rs#37 EXPANDED the gate
+    # to tests/ (incl. tests/cucumber_steps/) by NEUTRALIZING the
+    # scrap-core test fixtures to `adapter-a` / `adapter-b` /
+    # `test-adapter` rather than exempting them. Real-name emission is
+    # verified where identity lives, in `crates/scrap4rs/tests/`.
     #
-    # tracked: scrap-rs#37 — expand the gate to tests/, tests/features/,
-    # tests/cucumber_steps/ when AdapterMeta lands in scrap-rs#21 and
-    # the existing `cli/mod.rs:run()` placeholder is replaced.
+    # Mirrors the crap-rs precedent (crap-core/.github/workflows/ci.yml,
+    # `rg -lF -e '"crap4rs"' -e '"crap4ts"'`, src-only with src/bin/** +
+    # #[cfg(test)] exemptions). scrap-rs#37 extends the precedent to
+    # tests/ via fixture neutralization, so no test-block exemption is
+    # needed.
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - name: Reject adapter-name literals in scrap-core source
+      - name: Reject adapter-name literals in scrap-core source and tests
         # Static pattern, no untrusted-input interpolation. The grep
         # matches any double-quoted string containing the adapter
-        # binary name `scrap4rs` or `scrap4ts` as a substring (e.g.,
-        # `"scrap4rs (skeleton) ..."` or the bare `"scrap4rs"` form).
-        # Doc-comment backtick references (`scrap4rs.toml`) and
-        # module-path references (`scrap-rs#21`) don't false-positive
-        # because they lack the required double-quote delimiters.
+        # binary name `scrap4rs` or `scrap4ts` as a substring (e.g.
+        # `"scrap4rs (snapshot-test fixture)"` or the bare `"scrap4rs"`
+        # form). Backtick references (`scrap4rs.toml`) and module-path
+        # references (`scrap-rs#37`) don't match — they lack the
+        # double-quote delimiters.
         #
-        # The single grandfathered line in `cli/mod.rs:run()` carries
-        # an in-line trailing comment `// tracked: scrap-rs#37 — ...`
-        # on the SAME line as the matched literal; the `grep -v`
-        # filter excludes it. New adapter-name literals lacking the
-        # same in-line marker fail the gate.
+        # Comment-strip before matching so doc/prose lines that
+        # legitimately mention the adapter name (e.g. a `//!` module
+        # docstring quoting `"scrap4rs"`) do NOT false-positive — this
+        # is what bit scrap-rs#17 on the src-only gate. The awk filter
+        # drops lines whose first non-whitespace is a line-comment
+        # (`//`, `///`, `//!`), a block-comment opener (`/*`), or a
+        # block-comment continuation (`*`). HEURISTIC, not a parser:
+        # a `"scrap4rs"` literal sharing a line with a trailing `//`
+        # comment, or buried inside a multi-line string, is not
+        # comment-stripped. A syn-based xtask is the v1.0 end-state;
+        # pulling syn into this check now would violate scrap-core's
+        # AST-purity, so the heuristic stands until then. Portable
+        # across GNU + BSD grep/awk (no GNU-only flags).
         run: |
           set -euo pipefail
-          matches=$(grep -rnE '"(scrap4rs|scrap4ts)[^"]*"' crates/scrap-core/src/ --include='*.rs' || true)
-          unmatched=$(printf '%s\n' "$matches" | grep -v 'tracked: scrap-rs#37' || true)
+          matches=$(grep -rnE '"(scrap4rs|scrap4ts)[^"]*"' \
+            crates/scrap-core/src crates/scrap-core/tests \
+            --include='*.rs' || true)
+          # Comment-strip: keep only lines whose content (after the
+          # `path:lineno:` prefix, leading whitespace trimmed) is NOT a
+          # comment line.
+          unmatched=$(printf '%s\n' "$matches" | awk -F: '
+            {
+              if (NF < 3) next
+              content = ""
+              for (i = 3; i <= NF; i++) content = content (i > 3 ? ":" : "") $i
+              gsub(/^[ \t]+/, "", content)
+              if (content !~ /^(\/\/|\/\*|\*)/) print
+            }
+          ')
           if [ -n "$unmatched" ]; then
-            echo "::error::adapter-name literal in scrap-core source — use AdapterMeta::tool_name from the binary crate (scrap-rs#21)"
+            echo "::error::adapter-name literal in scrap-core source/tests — flow the name through AdapterMeta::tool_name (set by the binary crate); neutralize test fixtures to adapter-a/adapter-b/test-adapter (scrap-rs#37)"
             echo "$unmatched"
             exit 1
           fi
-          echo "scrap-core source is adapter-name-pure (only grandfathered tracked: scrap-rs#37 line allowed)"
+          echo "scrap-core is adapter-name-pure (src + tests, comment-stripped)"
 
   docs:
     name: cargo doc (warnings as errors)

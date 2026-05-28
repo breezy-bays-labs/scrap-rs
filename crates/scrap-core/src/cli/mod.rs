@@ -1,12 +1,13 @@
 //! Command-line surface — clap-derive entry point + dispatch +
 //! `ExitCode` shaping.
 //!
-//! Wave 4 of scrap-rs#21 replaces the original placeholder `run()`
+//! Wave 4 of scrap-rs#21 replaced the original placeholder `run()`
 //! with the full clap-derive surface per the issue body's enumerated
-//! AC. The single grandfathered `tracked: scrap-rs#37` `println!`
-//! line is REMOVED at this wave — the adapter-name-purity CI gate's
-//! `grep -v 'tracked: scrap-rs#37'` filter now excludes nothing
-//! (still passes; the filter can be dropped in a follow-up chore).
+//! AC, removing the last grandfathered adapter-name `println!` line.
+//! scrap-rs#37 then dropped the now-vacuous `grep -v 'tracked:
+//! scrap-rs#37'` filter from the adapter-name-purity CI gate (it
+//! excluded nothing) and expanded the gate to cover `tests/` too.
+//! scrap-core source carries zero double-quoted adapter-name literals.
 //!
 //! Sub-module roster:
 //! - [`config`] — project-level TOML config schema (re-exports

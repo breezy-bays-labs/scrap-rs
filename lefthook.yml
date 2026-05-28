@@ -39,6 +39,36 @@ pre-push:
           exit 1
         fi
       timeout: 30s
+    adapter-name-purity:
+      # Mirror the `scrap-core adapter-name literal purity` CI job
+      # (scrap-rs#18 → scrap-rs#37). Rejects double-quoted "scrap4rs" /
+      # "scrap4ts" string literals anywhere in `crates/scrap-core/`
+      # (src/ AND tests/) — adapter names flow through AdapterMeta from
+      # the binary crate, never baked into the shared core or its
+      # fixtures (which are neutralized to adapter-a/adapter-b/
+      # test-adapter). Comment-strip via awk so doc/prose lines that
+      # mention the name don't false-positive (scrap-rs#17 lesson).
+      # Heuristic, not a parser; portable across GNU + BSD grep/awk.
+      run: |
+        set -euo pipefail
+        matches=$(grep -rnE '"(scrap4rs|scrap4ts)[^"]*"' \
+          crates/scrap-core/src crates/scrap-core/tests \
+          --include='*.rs' || true)
+        unmatched=$(printf '%s\n' "$matches" | awk -F: '
+          {
+            if (NF < 3) next
+            content = ""
+            for (i = 3; i <= NF; i++) content = content (i > 3 ? ":" : "") $i
+            gsub(/^[ \t]+/, "", content)
+            if (content !~ /^(\/\/|\/\*|\*)/) print
+          }
+        ')
+        if [ -n "$unmatched" ]; then
+          echo "scrap-core must not reference adapter names (src + tests) — flow through AdapterMeta::tool_name; neutralize fixtures to adapter-a/adapter-b/test-adapter (scrap-rs#37)"
+          echo "$unmatched"
+          exit 1
+        fi
+      timeout: 30s
     clippy:
       run: cargo clippy --workspace --all-targets --locked -- -D warnings
       timeout: 300s
