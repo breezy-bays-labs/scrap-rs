@@ -289,17 +289,15 @@ fn good_rs_does_not_trigger() {
     let mut unexpected_triggers: Vec<String> = Vec::new();
 
     for fixture_dir in discover_fixtures() {
-        let good_path = fixture_dir.join("good.rs");
-        assert!(
-            good_path.is_file(),
-            "fixture {} missing good.rs",
-            fixture_dir.display(),
-        );
-
         let fixture_name = fixture_dir
             .file_name()
             .and_then(|s| s.to_str())
             .expect("fixture directory has a valid UTF-8 name");
+        let good_path = fixture_dir.join("good.rs");
+        if !good_path.is_file() {
+            unexpected_triggers.push(format!("fixture: {fixture_name} — missing good.rs",));
+            continue;
+        }
         let relative_path = format!("crates/scrap-examples/examples/{fixture_name}/good.rs");
 
         let report = run_pipeline(&good_path, &relative_path);
