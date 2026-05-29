@@ -293,15 +293,17 @@ fn classify_discard_init(expr: &syn::Expr) -> Option<ResultDiscardKind> {
         syn::Expr::Call(call) if call_func_is_result_ctor(&call.func) => {
             Some(ResultDiscardKind::ResultCtor)
         }
-        // Any other free-function / path call → Call.
-        syn::Expr::Call(_) => Some(ResultDiscardKind::Call),
-        // Method call: panic-chain terminal → None (ResultAsserted owns
-        // it); `.ok()`/`.err()` → ResultAdapter; otherwise → Call.
+        // Panic-chain method terminal (`x.unwrap()` / `.expect(..)` /
+        // `*_err`) → None: `visit_expr_method_call` owns it as
+        // ResultAsserted, so projecting a discard too would be a
+        // contradictory double-classify.
         syn::Expr::MethodCall(mc) if method_is_panic_chain(&mc.method) => None,
+        // `.ok()` / `.err()` Result↔Option adapter → ResultAdapter.
         syn::Expr::MethodCall(mc) if method_is_result_adapter(&mc.method) => {
             Some(ResultDiscardKind::ResultAdapter)
         }
-        syn::Expr::MethodCall(_) => Some(ResultDiscardKind::Call),
+        // Any other free-function or method call → Call.
+        syn::Expr::Call(_) | syn::Expr::MethodCall(_) => Some(ResultDiscardKind::Call),
         // Everything else (literal, path, macro, tuple, control-flow,
         // reference, ...) is not a discarded-Result shape.
         _ => None,

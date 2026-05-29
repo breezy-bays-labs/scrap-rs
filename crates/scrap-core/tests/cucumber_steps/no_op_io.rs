@@ -7,7 +7,7 @@
 //! shared `parsed_test` / `detect_result` fields.
 //!
 //! Scope: pure detector-contract scenarios. Fixture-driven scenarios
-//! (`let _ = ...;` source → ResultDiscarded; `let _: () = ...;` FP
+//! (`let _ = ...;` source → `ResultDiscarded`; `let _: () = ...;` FP
 //! guard) live in `crates/scrap4rs/tests/features/parser.feature`
 //! instead — scrap-core must stay AST-pure (no `scrap4rs` import here).
 
