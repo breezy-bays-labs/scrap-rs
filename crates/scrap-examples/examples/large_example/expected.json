@@ -1,0 +1,113 @@
+{
+  "language": "rust",
+  "result": {
+    "files": [
+      {
+        "file_path": "crates/scrap-examples/examples/large_example/bad.rs",
+        "findings": [
+          {
+            "exceeds_threshold": false,
+            "opt_outs": [],
+            "scrap_score": 4.0,
+            "smells": [
+              {
+                "actionability": "manual_split",
+                "ai_actionability_message": "Split this example into focused tests or extract setup helpers.",
+                "category": "large_example",
+                "penalty": 4,
+                "severity": "low",
+                "span": {
+                  "end_column": 1,
+                  "end_line": 57,
+                  "start_column": 1,
+                  "start_line": 18
+                }
+              }
+            ],
+            "test": {
+              "file_path": "crates/scrap-examples/examples/large_example/bad.rs",
+              "qualified_name": "one_test_does_far_too_much",
+              "span": {
+                "end_column": 1,
+                "end_line": 57,
+                "start_column": 1,
+                "start_line": 18
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "passed": false,
+    "summary": {
+      "average_scrap_score": 4.0,
+      "by_severity": {
+        "low": 1
+      },
+      "by_smell": {
+        "large_example": 1
+      },
+      "exceeding_threshold": 0,
+      "max_scrap_score": 4.0,
+      "total_files": 1,
+      "total_tests": 1
+    }
+  },
+  "schema_version": 1,
+  "threshold_mode": "default",
+  "timestamp": "2026-05-27T00:00:00Z",
+  "tool": "scrap4rs",
+  "tool_version": "0.1.0",
+  "view": {
+    "eligible_count": 1,
+    "shown": [
+      {
+        "exceeds_threshold": false,
+        "opt_outs": [],
+        "scrap_score": 4.0,
+        "smells": [
+          {
+            "actionability": "manual_split",
+            "ai_actionability_message": "Split this example into focused tests or extract setup helpers.",
+            "category": "large_example",
+            "penalty": 4,
+            "severity": "low",
+            "span": {
+              "end_column": 1,
+              "end_line": 57,
+              "start_column": 1,
+              "start_line": 18
+            }
+          }
+        ],
+        "test": {
+          "file_path": "crates/scrap-examples/examples/large_example/bad.rs",
+          "qualified_name": "one_test_does_far_too_much",
+          "span": {
+            "end_column": 1,
+            "end_line": 57,
+            "start_column": 1,
+            "start_line": 18
+          }
+        }
+      }
+    ],
+    "shown_summary": {
+      "average_scrap_score": 4.0,
+      "by_severity": {
+        "low": 1
+      },
+      "by_smell": {
+        "large_example": 1
+      },
+      "exceeding_threshold": 0,
+      "max_scrap_score": 4.0,
+      "total_files": 1,
+      "total_tests": 1
+    },
+    "spec": {
+      "only_failing": false
+    },
+    "truncated": false
+  }
+}
