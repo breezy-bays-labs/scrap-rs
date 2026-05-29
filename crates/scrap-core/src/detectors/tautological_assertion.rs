@@ -58,8 +58,8 @@
 //!   The config validator in `cli/config.rs` rejects `Some(0)` so the
 //!   effective floor is always >= 1.
 
-use crate::cli::config::DetectorConfig;
 use crate::domain::classification::{Actionability, Severity};
+use crate::domain::config::DetectorConfig;
 use crate::domain::finding::Finding;
 use crate::domain::literal_value::LiteralValue;
 use crate::domain::parsed::{ParsedAssertion, ParsedTest};
