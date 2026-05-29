@@ -10,7 +10,7 @@
 //! happens at the call site, not behind an indirection.
 //!
 //! Per the wire-envelope ADR
-//! [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md)
+//! [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-nested-json-envelope.md)
 //! (D2), every adapter binary in the workspace calls the same
 //! `scrap_core::adapters::reporters::*::emit` function so the wire
 //! shape cannot drift across adapters by construction.

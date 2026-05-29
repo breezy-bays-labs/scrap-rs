@@ -16,7 +16,7 @@
 //! ## Semantic Facts pattern
 //!
 //! Per the `feedback_semantic-facts-vs-statement-projection` memory
-//! and the [`adr-hexagonal-layout`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-hexagonal-layout.md)
+//! and the [`adr-hexagonal-layout`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-hexagonal-layout.md)
 //! ADR, the adapter answers "what is happening?" (the typed
 //! [`crate::domain::parsed::ParsedAssertion`] fields
 //! `arguments_identical` and `single_arg_value`) and this core

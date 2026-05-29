@@ -19,7 +19,7 @@ should read this before touching code.
 
 Hexagonal (ports & adapters), strict dependency direction enforced by
 Cargo crate boundaries. See
-[`adr-hexagonal-layout`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-hexagonal-layout.md)
+[`adr-hexagonal-layout`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-hexagonal-layout.md)
 for the full layering invariant.
 
 ```

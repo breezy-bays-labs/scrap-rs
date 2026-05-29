@@ -78,7 +78,7 @@ When adding a new smell:
 
 1. Add the variant to `scrap_core::domain::SmellCategory`
    (`#[non_exhaustive]` enum — see
-   [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md)
+   [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-nested-json-envelope.md)
    for the enums-yes-structs-no rule) and the penalty/severity
    entries to `scrap_core::domain::policy`.
 2. Add a property invariant covering the score-formula effect.

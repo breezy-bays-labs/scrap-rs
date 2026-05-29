@@ -13,7 +13,7 @@
 //!
 //! ## Semantic Facts pattern
 //!
-//! Per [`adr-hexagonal-layout`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-hexagonal-layout.md)
+//! Per [`adr-hexagonal-layout`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-hexagonal-layout.md)
 //! and the [`feedback_semantic-facts-vs-statement-projection`
 //! memory], the *adapter* answers "what is happening?" (the typed
 //! fact: this assertion has a single-arg `Bool(true)` literal) and the
@@ -30,7 +30,7 @@
 //!
 //! ## Wire shape
 //!
-//! `#[non_exhaustive]` per [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md)
+//! `#[non_exhaustive]` per [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-nested-json-envelope.md)
 //! enum discipline — consumers must use non-exhaustive matches so
 //! future variants (e.g. `Float(...)` or `ByteStr(...)`) land without
 //! breaking pattern-match sites in downstream code. Wire form uses

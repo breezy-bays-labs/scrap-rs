@@ -42,7 +42,7 @@ impl std::error::Error for InvertedSpan {}
 /// adapters convert from any 0-based source coordinate at the parser
 /// boundary). Columns landed additively with the SARIF reporter
 /// (scrap-rs#17) and do NOT bump the wire envelope's `schema_version`
-/// per [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md)
+/// per [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-nested-json-envelope.md)
 /// D2 additive-field rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Span {

@@ -71,4 +71,4 @@ See `expected.json` for the canonical envelope emitted against
   function from signature to closing brace.
 
 The full v0.1 envelope shape is documented at
-[`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md).
+[`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-nested-json-envelope.md).
