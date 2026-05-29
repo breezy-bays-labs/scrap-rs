@@ -1,0 +1,139 @@
+{
+  "language": "rust",
+  "result": {
+    "files": [
+      {
+        "file_path": "crates/scrap-examples/examples/tautological_assertion/bad.rs",
+        "findings": [
+          {
+            "exceeds_threshold": false,
+            "opt_outs": [],
+            "scrap_score": 20.0,
+            "smells": [
+              {
+                "actionability": "auto_refactor",
+                "ai_actionability_message": "Replace the tautology with an assertion that can actually fail.",
+                "category": "tautological_assertion",
+                "penalty": 10,
+                "severity": "high",
+                "span": {
+                  "end_column": 17,
+                  "end_line": 20,
+                  "start_column": 5,
+                  "start_line": 20
+                }
+              },
+              {
+                "actionability": "auto_refactor",
+                "ai_actionability_message": "Replace the tautology with an assertion that can actually fail.",
+                "category": "tautological_assertion",
+                "penalty": 10,
+                "severity": "high",
+                "span": {
+                  "end_column": 20,
+                  "end_line": 21,
+                  "start_column": 5,
+                  "start_line": 21
+                }
+              }
+            ],
+            "test": {
+              "file_path": "crates/scrap-examples/examples/tautological_assertion/bad.rs",
+              "qualified_name": "asserts_things_that_cannot_fail",
+              "span": {
+                "end_column": 1,
+                "end_line": 22,
+                "start_column": 1,
+                "start_line": 18
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "passed": false,
+    "summary": {
+      "average_scrap_score": 20.0,
+      "by_severity": {
+        "high": 2
+      },
+      "by_smell": {
+        "tautological_assertion": 2
+      },
+      "exceeding_threshold": 0,
+      "max_scrap_score": 20.0,
+      "total_files": 1,
+      "total_tests": 1
+    }
+  },
+  "schema_version": 1,
+  "threshold_mode": "default",
+  "timestamp": "2026-05-27T00:00:00Z",
+  "tool": "scrap4rs",
+  "tool_version": "0.1.0",
+  "view": {
+    "eligible_count": 1,
+    "shown": [
+      {
+        "exceeds_threshold": false,
+        "opt_outs": [],
+        "scrap_score": 20.0,
+        "smells": [
+          {
+            "actionability": "auto_refactor",
+            "ai_actionability_message": "Replace the tautology with an assertion that can actually fail.",
+            "category": "tautological_assertion",
+            "penalty": 10,
+            "severity": "high",
+            "span": {
+              "end_column": 17,
+              "end_line": 20,
+              "start_column": 5,
+              "start_line": 20
+            }
+          },
+          {
+            "actionability": "auto_refactor",
+            "ai_actionability_message": "Replace the tautology with an assertion that can actually fail.",
+            "category": "tautological_assertion",
+            "penalty": 10,
+            "severity": "high",
+            "span": {
+              "end_column": 20,
+              "end_line": 21,
+              "start_column": 5,
+              "start_line": 21
+            }
+          }
+        ],
+        "test": {
+          "file_path": "crates/scrap-examples/examples/tautological_assertion/bad.rs",
+          "qualified_name": "asserts_things_that_cannot_fail",
+          "span": {
+            "end_column": 1,
+            "end_line": 22,
+            "start_column": 1,
+            "start_line": 18
+          }
+        }
+      }
+    ],
+    "shown_summary": {
+      "average_scrap_score": 20.0,
+      "by_severity": {
+        "high": 2
+      },
+      "by_smell": {
+        "tautological_assertion": 2
+      },
+      "exceeding_threshold": 0,
+      "max_scrap_score": 20.0,
+      "total_files": 1,
+      "total_tests": 1
+    },
+    "spec": {
+      "only_failing": false
+    },
+    "truncated": false
+  }
+}

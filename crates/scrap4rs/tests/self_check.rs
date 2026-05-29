@@ -122,11 +122,11 @@ fn test_tautological_assertion_self_check() {
     // rather than suppressing the detector — the production code should
     // not ship with intentionally meaningless assertions.
     //
-    // Unlike zero-assertion::detect (which consults `DetectorConfig` for
-    // `enabled`/`penalty`), tautological_assertion::detect takes only
-    // `&ParsedTest` — per Christopher's locked Option B at /shape gate,
-    // opt-out + Skip/Advisory + cfg gating live in the pipeline driver
-    // (scrap-rs#72), not in the detector.
+    // Signature-aligned with its siblings at scrap-rs#99:
+    // `tautological_assertion::detect(parsed, &cfg)` now consults
+    // `DetectorConfig` for `enabled`/`penalty` (so it can be wired into
+    // `detect_all` uniformly). opt-out + Skip/Advisory policy still live
+    // in the pipeline driver (scrap-rs#72), not in the detector.
     let tests = parse_scrap4rs_src();
     assert!(
         !tests.is_empty(),
@@ -134,9 +134,10 @@ fn test_tautological_assertion_self_check() {
          got zero — either the walker regressed or scrap4rs has no tests",
     );
 
+    let cfg = DetectorConfig::default();
     let mut offenders: Vec<String> = Vec::new();
     for parsed in &tests {
-        if tautological_assertion::detect(parsed).is_some() {
+        if tautological_assertion::detect(parsed, &cfg).is_some() {
             offenders.push(format!(
                 "{file}::{name}",
                 file = parsed.identity.file_path,
