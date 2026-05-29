@@ -234,8 +234,7 @@ impl<'ast> Visit<'ast> for BodyVisitor {
             .any(|&name| node.method == name)
             && !self
                 .behavioral_facts
-                .iter()
-                .any(|f| matches!(f, BehavioralFact::ResultAsserted))
+                .contains(&BehavioralFact::ResultAsserted)
         {
             self.behavioral_facts.push(BehavioralFact::ResultAsserted);
         }
@@ -272,7 +271,7 @@ impl<'ast> Visit<'ast> for BodyVisitor {
             && let Some(kind) = classify_discard_init(&init.expr)
         {
             let fact = BehavioralFact::ResultDiscarded { kind };
-            if !self.behavioral_facts.iter().any(|f| f == &fact) {
+            if !self.behavioral_facts.contains(&fact) {
                 self.behavioral_facts.push(fact);
             }
         }
