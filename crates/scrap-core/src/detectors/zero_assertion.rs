@@ -62,7 +62,7 @@ const DEFAULT_ACTIONABILITY: Actionability = Actionability::AutoRefactor;
 /// pure-detector convention. Returns:
 /// - `None` when the detector is disabled, when any clause fails, or
 ///   when the parser recognised the explicit-panic-is-the-assertion
-///   pattern via [`BehavioralFact::ResultAsserted`].
+///   pattern via [`crate::domain::behavioral_fact::BehavioralFact::ResultAsserted`].
 /// - `Some(Finding)` carrying one [`Smell`] whose
 ///   `category = SmellCategory::ZeroAssertion`,
 ///   `severity = Severity::High`,

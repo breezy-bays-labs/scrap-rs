@@ -12,10 +12,10 @@
 //!    expr>;` discard the parser projected — see
 //!    [`crate::domain::behavioral_fact::ResultDiscardKind`] for the
 //!    recognised shapes).
-//! 3. [`crate::detectors::has_positive_check`] is `false` — the test
-//!    holds NO positive evidence it observes the system-under-test (no
-//!    explicit assertion, no implicit-assertion source, no
-//!    `.unwrap()`/`.expect()` [`BehavioralFact::ResultAsserted`] chain).
+//! 3. `detectors::has_positive_check` is `false` — the test holds NO
+//!    positive evidence it observes the system-under-test (no explicit
+//!    assertion, no implicit-assertion source, no `.unwrap()`/`.expect()`
+//!    [`BehavioralFact::ResultAsserted`] chain).
 //!
 //! ### "ALL body statements discard", modeled as the fact bag
 //!
@@ -79,7 +79,7 @@ const DEFAULT_ACTIONABILITY: Actionability = Actionability::AutoRefactor;
 /// stacking notes. Returns:
 /// - `None` when the detector is disabled, when the body carries no
 ///   [`BehavioralFact::ResultDiscarded`], or when
-///   [`crate::detectors::has_positive_check`] holds.
+///   `detectors::has_positive_check` holds.
 /// - `Some(Finding)` carrying one [`Smell`] whose
 ///   `category = SmellCategory::NoOpIo`, `severity = Severity::Moderate`,
 ///   `actionability = Actionability::AutoRefactor`, and
