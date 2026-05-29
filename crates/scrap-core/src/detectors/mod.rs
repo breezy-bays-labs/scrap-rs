@@ -36,12 +36,40 @@
 //! `crate::cli::config` (which now holds loader-only concerns).
 //! `detectors/` must never depend on `cli/` per adr-hexagonal-layout.
 
+pub mod no_op_io;
 pub mod tautological_assertion;
 pub mod zero_assertion;
 
+use crate::domain::behavioral_fact::BehavioralFact;
 use crate::domain::config::{FileConfig, resolve_detector_for_path};
 use crate::domain::parsed::ParsedTest;
 use crate::domain::smell::{Smell, SmellCategory};
+
+/// Shared suppression predicate: does this test carry **any** positive
+/// evidence that it observes the system-under-test?
+///
+/// Returns `true` when the parser recorded an explicit assertion, an
+/// implicit-assertion source (runner shell / `#[should_panic]`), or a
+/// `.unwrap()`/`.expect()`-style [`BehavioralFact::ResultAsserted`]
+/// chain.
+///
+/// This is the literal proof of the `no-op-io` ⊂ `zero-assertion`
+/// subset relationship (SHOULD-FIX #7, scrap-rs#25 cabinet): both
+/// detectors suppress on exactly this predicate, so factoring it here
+/// keeps them from drifting if a fourth implicit-assertion category is
+/// ever added. `zero-assertion` fires when this is `false` (and nothing
+/// else is wrong); `no-op-io` fires when this is `false` AND a discard
+/// is present — strictly narrower, hence the stacking (Option A,
+/// penalties sum) the v0.1 pipeline emits, pending the precedence
+/// policy at scrap-rs#32.
+#[must_use]
+pub(crate) fn has_positive_check(parsed: &ParsedTest) -> bool {
+    !parsed.assertions.is_empty()
+        || !parsed.implicit_assertion_sources.is_empty()
+        || parsed
+            .behavioral_facts
+            .contains(&BehavioralFact::ResultAsserted)
+}
 
 /// Run every enabled detector against `parsed` and return the union
 /// of produced [`Smell`]s.
@@ -78,7 +106,21 @@ pub fn detect_all(parsed: &ParsedTest, cfg: &FileConfig) -> Vec<Smell> {
     if let Some(finding) = zero_assertion::detect(parsed, za_cfg) {
         smells.extend(finding.smells);
     }
-    // (Future detectors append here. #24 tautological / #25 no-op-io /
-    // #26 surface-only-io / #31 large-example each add ~3 lines.)
+    // No-op-io (scrap-rs#25 — discarded-Result smell, penalty 8). Strict
+    // subset of zero-assertion: an all-discard body co-fires both, and
+    // their penalties STACK (Option A; precedence policy deferred to the
+    // scrap-rs#32 score aggregator).
+    let noop_cfg = resolve_detector_for_path(
+        cfg,
+        parsed.identity.file_path.as_path(),
+        SmellCategory::NoOpIo,
+    );
+    if let Some(finding) = no_op_io::detect(parsed, noop_cfg) {
+        smells.extend(finding.smells);
+    }
+    // (Future detectors append here. #24 tautological / #26 surface-only-io
+    // / #31 large-example each add ~3 lines. NB: #24 tautological landed
+    // but is NOT yet wired here — tracked separately as the dead-wire
+    // follow-up scrap-rs#99.)
     smells
 }

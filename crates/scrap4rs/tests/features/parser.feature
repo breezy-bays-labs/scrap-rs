@@ -158,3 +158,22 @@ Feature: scrap4rs syn-based test parser — TestParserPort contract
     And test "assert_true_with_should_panic_is_still_tautological" assertion 0 has single_arg_value Bool(true)
     And test "assert_true_with_should_panic_is_still_tautological" assertion 0 has arguments_identical false
     And test "assert_true_with_should_panic_is_still_tautological" has the implicit assertion source ShouldPanic
+
+  # ─── no-op-io ResultDiscarded projection (scrap-rs#25) ───
+  #
+  # The no-op-io DETECTOR contract lives in
+  # `crates/scrap-core/tests/features/no_op_io.feature`. The scenarios
+  # below cover the PARSER's structural-fact extraction of the
+  # `let _ = ...;` discard shape on real `.rs` fixtures, including the
+  # `let _: () = ...;` false-positive guard — neither of which scrap-core
+  # can exercise without importing scrap4rs.
+
+  Scenario: A bare `let _ = call();` discard projects a ResultDiscarded fact
+    When I parse the fixture tests/fixtures/true_positives/no_op_io.rs
+    Then test "writes_a_file_but_checks_nothing" has 1 behavioral fact
+    And test "writes_a_file_but_checks_nothing" has the ResultDiscarded fact of kind Call
+
+  Scenario: A type-ascribed `let _: () = call();` does NOT project a discard (FP guard)
+    When I parse the fixture tests/fixtures/runner_shells/no_op_io_unit_binding.rs
+    Then test "intentional_unit_binding_does_not_smell" has 0 behavioral facts
+    And test "intentional_unit_binding_does_not_smell" has the implicit assertion source ShouldPanic

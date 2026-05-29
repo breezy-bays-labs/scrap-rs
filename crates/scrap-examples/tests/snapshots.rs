@@ -39,8 +39,8 @@
 // drop the `scrap-core` dev-dep from Cargo.toml.
 use scrap_core::adapter_meta::AdapterMeta;
 use scrap4rs::adapters::reporters::json::{EmitOptions, emit};
-use scrap4rs::cli::config::DetectorConfig;
-use scrap4rs::detectors::zero_assertion;
+use scrap4rs::detectors::detect_all;
+use scrap4rs::domain::config::FileConfig;
 use scrap4rs::domain::finding::Finding;
 use scrap4rs::domain::report::{FileReport, Report, Summary};
 use scrap4rs::domain::threshold::ThresholdMode;
@@ -141,9 +141,10 @@ fn discover_fixtures() -> Vec<PathBuf> {
 // Pipeline + I/O helpers
 // ────────────────────────────────────────────────────────────────────
 
-/// Read `source_path`, parse it via `SynTestParser`, run every wired
-/// detector against each `ParsedTest`, and build a single-`FileReport`
-/// `Report` with the surviving findings.
+/// Read `source_path`, parse it via `SynTestParser`, run the **whole
+/// detector registry** (`detectors::detect_all`) against each
+/// `ParsedTest`, and build a single-`FileReport` `Report` with the
+/// surviving findings.
 ///
 /// `relative_path` is the path string embedded in the wire envelope's
 /// `result.files[].file_path` and `result.files[].findings[].test.file_path`
@@ -151,12 +152,21 @@ fn discover_fixtures() -> Vec<PathBuf> {
 /// so the same `expected.json` is byte-stable across worktrees with
 /// different absolute prefixes.
 ///
-/// **NB**: only the zero-assertion detector is wired today. As more
-/// detectors land in `scrap_core::detectors`, append their `detect`
-/// calls here; the corpus reflects the wire shape of every detector
-/// regardless of which subdirectory the fixture lives in. Cross-
-/// detector behaviour (a `bad.rs` that triggers two detectors) is
-/// captured naturally.
+/// **Routes through `detect_all`** (scrap-rs#25 MUST-FIX #1) rather than
+/// hand-rolling a per-detector list — the prior `filter_map(zero_assertion
+/// ::detect)` was a parallel registry that let the corpus drift from
+/// production (and was the root cause of the tautological dead-wire,
+/// scrap-rs#99). The corpus now reflects exactly what the production
+/// pipeline emits, including cross-detector co-fires: a `bad.rs` that
+/// trips both `no-op-io` and `zero-assertion` produces ONE `Finding`
+/// with BOTH `Smell`s and the stacked `scrap_score` (Option A).
+///
+/// **Empty-finding handling mirrors `core::analyze_one_file`'s
+/// `if findings.is_empty()` intent**: `detect_all` returns the smells
+/// for one test, and a `Finding` is built only when that test produced
+/// at least one smell. A clean test (`good.rs`) yields zero smells →
+/// zero findings (not a noisy `scrap_score: 0` finding), so the
+/// `good_rs_does_not_trigger` count check stays correct.
 fn run_pipeline(source_path: &Path, relative_path: &str) -> Report {
     let source = std::fs::read_to_string(source_path)
         .unwrap_or_else(|e| panic!("read fixture {}: {e}", source_path.display()));
@@ -165,11 +175,17 @@ fn run_pipeline(source_path: &Path, relative_path: &str) -> Report {
         .parse_test_source(&source, &FilePath::new(relative_path))
         .unwrap_or_else(|e| panic!("parse fixture {}: {e:?}", source_path.display()));
 
-    let cfg = DetectorConfig::default();
+    let cfg = FileConfig::default();
     let findings: Vec<Finding> = parsed_file
         .tests
         .iter()
-        .filter_map(|parsed_test| zero_assertion::detect(parsed_test, &cfg))
+        .filter_map(|parsed_test| {
+            let smells = detect_all(parsed_test, &cfg);
+            // Skip score-0 (no-smell) tests so clean fixtures don't emit
+            // noise findings — same intent as analyze_one_file's
+            // `if findings.is_empty()` file-report gate, applied per-test.
+            (!smells.is_empty()).then(|| Finding::new(parsed_test.identity.clone(), smells))
+        })
         .collect();
 
     let summary = Summary::from_findings(findings.iter());

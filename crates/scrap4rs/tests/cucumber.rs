@@ -336,6 +336,37 @@ fn then_assertion_arguments_identical(w: &mut World, test_name: String, index: u
     );
 }
 
+// ─── Behavioral-fact inspection (no-op-io discard projection, scrap-rs#25) ──
+
+#[then(regex = r#"^test "([^"]+)" has (\d+) behavioral facts?$"#)]
+fn then_test_has_n_behavioral_facts(w: &mut World, name: String, expected: usize) {
+    let test = find_test(assert_ok(w), &name);
+    assert_eq!(
+        test.behavioral_facts.len(),
+        expected,
+        "test {name:?} behavioral_facts count mismatch: {:?}",
+        test.behavioral_facts,
+    );
+}
+
+#[then(regex = r#"^test "([^"]+)" has the ResultDiscarded fact of kind (\w+)$"#)]
+fn then_test_has_result_discarded_kind(w: &mut World, name: String, kind_name: String) {
+    use scrap_core::domain::behavioral_fact::{BehavioralFact, ResultDiscardKind};
+    let test = find_test(assert_ok(w), &name);
+    let kind = match kind_name.as_str() {
+        "Call" => ResultDiscardKind::Call,
+        "ResultCtor" => ResultDiscardKind::ResultCtor,
+        "ResultAdapter" => ResultDiscardKind::ResultAdapter,
+        _ => panic!("unknown ResultDiscardKind variant in scenario: {kind_name:?}"),
+    };
+    assert!(
+        test.behavioral_facts
+            .contains(&BehavioralFact::ResultDiscarded { kind }),
+        "test {name:?} behavioral_facts {:?} missing ResultDiscarded {{ kind: {kind:?} }}",
+        test.behavioral_facts,
+    );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────
 
 #[tokio::main(flavor = "current_thread")]

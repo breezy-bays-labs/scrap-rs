@@ -40,7 +40,6 @@
 //! (D10) rationale.
 
 use crate::cli::config::DetectorConfig;
-use crate::domain::behavioral_fact::BehavioralFact;
 use crate::domain::classification::{Actionability, Severity};
 use crate::domain::finding::Finding;
 use crate::domain::parsed::ParsedTest;
@@ -63,7 +62,7 @@ const DEFAULT_ACTIONABILITY: Actionability = Actionability::AutoRefactor;
 /// pure-detector convention. Returns:
 /// - `None` when the detector is disabled, when any clause fails, or
 ///   when the parser recognised the explicit-panic-is-the-assertion
-///   pattern via [`BehavioralFact::ResultAsserted`].
+///   pattern via [`crate::domain::behavioral_fact::BehavioralFact::ResultAsserted`].
 /// - `Some(Finding)` carrying one [`Smell`] whose
 ///   `category = SmellCategory::ZeroAssertion`,
 ///   `severity = Severity::High`,
@@ -74,16 +73,11 @@ pub fn detect(parsed: &ParsedTest, cfg: &DetectorConfig) -> Option<Finding> {
     if cfg.enabled == Some(false) {
         return None;
     }
-    if !parsed.assertions.is_empty() {
-        return None;
-    }
-    if !parsed.implicit_assertion_sources.is_empty() {
-        return None;
-    }
-    if parsed
-        .behavioral_facts
-        .contains(&BehavioralFact::ResultAsserted)
-    {
+    // Three-clause suppression (explicit assertion ∨ implicit source ∨
+    // `ResultAsserted` chain) is the shared `no-op-io` ⊂ `zero-assertion`
+    // subset predicate — factored into `detectors::has_positive_check`
+    // (scrap-rs#25 SHOULD-FIX #7) so both detectors can't drift.
+    if super::has_positive_check(parsed) {
         return None;
     }
 
@@ -107,6 +101,7 @@ pub fn detect(parsed: &ParsedTest, cfg: &DetectorConfig) -> Option<Finding> {
 mod tests {
     use super::*;
     use crate::domain::assertion_sources::AssertionSource;
+    use crate::domain::behavioral_fact::BehavioralFact;
     use crate::domain::parsed::{ParsedAssertion, ParsedAttribute};
     use crate::domain::types::{FilePath, QualifiedName, Span, TestIdentity};
     use proptest::prelude::*;

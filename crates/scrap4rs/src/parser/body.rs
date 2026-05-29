@@ -23,7 +23,7 @@
 //! recognition).
 
 use scrap_core::domain::assertion_sources::{AssertionSource, recognise};
-use scrap_core::domain::behavioral_fact::BehavioralFact;
+use scrap_core::domain::behavioral_fact::{BehavioralFact, ResultDiscardKind};
 use scrap_core::domain::parsed::ParsedAssertion;
 use std::collections::BTreeSet;
 use syn::Block;
@@ -232,6 +232,119 @@ impl<'ast> Visit<'ast> for BodyVisitor {
         }
         syn::visit::visit_expr_method_call(self, node);
     }
+
+    /// Discarded-`Result` recognition for `no-op-io` (scrap-rs#25).
+    ///
+    /// Recognises the `let _ = <expr>;` shape — a bare wildcard binding
+    /// (NOT `let _: T = ...;`, which is an intentional explicit binding)
+    /// whose initializer is a `Result`-shaped expr per
+    /// [`classify_discard_init`]. Projects
+    /// [`BehavioralFact::ResultDiscarded`] with the matched
+    /// [`ResultDiscardKind`].
+    ///
+    /// FP boundary lives in `classify_discard_init` (flat free fn,
+    /// nesting 0, to keep this override's cognitive complexity low for
+    /// the CRAP gate): literals, paths, macros, control-flow exprs, and
+    /// panic-chain-terminated chains (`x.unwrap()` → `ResultAsserted`
+    /// instead) all return `None`.
+    ///
+    /// **DOES** call `visit::visit_local(self, local)` — discards can
+    /// nest inside `if`/`match` arms and inner blocks; recursion finds
+    /// every one. `BTreeSet` dedupes same-kind discards.
+    fn visit_local(&mut self, local: &'ast syn::Local) {
+        // Bare `_` only — `let _: T = ...;` (Pat::Type) is an intentional
+        // explicit binding and never projects (hard FP guard, scrap-rs#25).
+        if matches!(local.pat, syn::Pat::Wild(_))
+            && let Some(init) = &local.init
+            && let Some(kind) = classify_discard_init(&init.expr)
+        {
+            self.behavioral_facts
+                .insert(BehavioralFact::ResultDiscarded { kind });
+        }
+        syn::visit::visit_local(self, local);
+    }
+}
+
+/// Classify the initializer of a `let _ = <expr>;` discard into a
+/// [`ResultDiscardKind`], or `None` for shapes that must NOT project a
+/// discard fact.
+///
+/// **Flat by design** (nesting 0, simple match arms) so its cognitive
+/// complexity stays low for the CRAP gate; every arm is covered by a
+/// unit test so the `(1 − coverage)³` CRAP penalty collapses to ~0.
+///
+/// Projects:
+/// - [`ResultDiscardKind::ResultCtor`] — `Ok(..)` / `Err(..)` call.
+/// - [`ResultDiscardKind::ResultAdapter`] — `x.ok()` / `x.err()` method.
+/// - [`ResultDiscardKind::Call`] — any other function or method call.
+///
+/// Transparent wrappers are unwrapped by recursing into the inner expr:
+/// - `Await` — `let _ = foo().await;` is textbook no-op-io: the awaited
+///   future genuinely ran and its `Result` was dropped. Classify by the
+///   awaited base's shape. (NB: only the AWAITED form projects; a bare
+///   un-awaited `let _ = some_future();` is classified by its own
+///   `Expr::Call` shape as `Call` — recognising un-awaited futures as
+///   darkness needs type info we lack in v0.1, and is scrap-rs#98's job.)
+/// - `Paren` — `let _ = (foo());` recurses to the inner expr, so a
+///   parenthesised literal (`(5)`) still resolves to `None`.
+///
+/// Returns `None` (do NOT project) for:
+/// - panic-chain-terminated method calls (`x.unwrap()` / `.expect(..)` /
+///   `.unwrap_err()` / `.expect_err(..)`) — these project
+///   [`BehavioralFact::ResultAsserted`] via `visit_expr_method_call`, so
+///   projecting a discard too would be a contradictory double-classify;
+/// - every non-call shape: literals, paths/idents, macros (`vec![]`),
+///   tuples, `if`/`match`/block exprs, references, etc. `#[non_exhaustive]`
+///   on `ResultDiscardKind` is the forward-compat hatch — there is no
+///   catch-all `Other` kind (matches `ParseDiagnosticKind` discipline).
+fn classify_discard_init(expr: &syn::Expr) -> Option<ResultDiscardKind> {
+    match expr {
+        // `Ok(..)` / `Err(..)` constructor call → ResultCtor.
+        syn::Expr::Call(call) if call_func_is_result_ctor(&call.func) => {
+            Some(ResultDiscardKind::ResultCtor)
+        }
+        // Panic-chain method terminal (`x.unwrap()` / `.expect(..)` /
+        // `*_err`) → None: `visit_expr_method_call` owns it as
+        // ResultAsserted, so projecting a discard too would be a
+        // contradictory double-classify.
+        syn::Expr::MethodCall(mc) if method_is_panic_chain(&mc.method) => None,
+        // `.ok()` / `.err()` Result↔Option adapter → ResultAdapter.
+        syn::Expr::MethodCall(mc) if method_is_result_adapter(&mc.method) => {
+            Some(ResultDiscardKind::ResultAdapter)
+        }
+        // Any other free-function or method call → Call.
+        syn::Expr::Call(_) | syn::Expr::MethodCall(_) => Some(ResultDiscardKind::Call),
+        // Transparent wrappers: classify by the inner expr (Gemini C1).
+        syn::Expr::Await(a) => classify_discard_init(&a.base),
+        syn::Expr::Paren(p) => classify_discard_init(&p.expr),
+        // Everything else (literal, path, macro, tuple, control-flow,
+        // reference, ...) is not a discarded-Result shape.
+        _ => None,
+    }
+}
+
+/// `true` when a call's func path leaf is `Ok` or `Err` (the `Result`
+/// constructors). Only inspects the LEAF segment so `core::result::Result::Ok`
+/// and a bare `Ok` both match.
+fn call_func_is_result_ctor(func: &syn::Expr) -> bool {
+    if let syn::Expr::Path(expr_path) = func
+        && let Some(seg) = expr_path.path.segments.last()
+    {
+        return seg.ident == "Ok" || seg.ident == "Err";
+    }
+    false
+}
+
+/// `true` for the panic-chain method idents (delegates to the same
+/// [`PANIC_CHAIN_METHOD_NAMES`] set the `ResultAsserted` projection uses,
+/// so the two stay in lock-step).
+fn method_is_panic_chain(method: &syn::Ident) -> bool {
+    PANIC_CHAIN_METHOD_NAMES.iter().any(|&name| method == name)
+}
+
+/// `true` for the `Result`↔`Option` adapter methods `.ok()` / `.err()`.
+fn method_is_result_adapter(method: &syn::Ident) -> bool {
+    method == "ok" || method == "err"
 }
 
 /// Detect whether an `&Expr` (the receiver of an `.await`) is a
@@ -671,14 +784,263 @@ mod tests {
     }
 
     #[test]
-    fn body_visitor_ignores_unrelated_method_calls() {
-        // `.push(1)` and `.len()` are not `.unwrap()`/`.expect()`;
-        // they must NOT fire BehavioralFact::ResultAsserted.
+    fn body_visitor_unrelated_method_calls_do_not_fire_result_asserted() {
+        // `.push(1)` and `.len()` are not panic-chain idents → no
+        // ResultAsserted. But `let _ = v.len();` is a bare-wildcard
+        // discard of a method call → ResultDiscarded { Call } (scrap-rs#25
+        // — the v0.1 over-fire: `Call` fires on any discarded call, not
+        // just I/O; see no_op_io module docs). The `v.push(1)` statement
+        // call is NOT bound by `let _`, so it does not project.
         let item = parse_test_fn(
             "fn it() { let mut v: Vec<u32> = Vec::new(); v.push(1); let _ = v.len(); }",
         );
         let mut visitor = BodyVisitor::new();
         visitor.drive(&item.block);
-        assert!(visitor.behavioral_facts.is_empty());
+        assert!(
+            !visitor
+                .behavioral_facts
+                .contains(&BehavioralFact::ResultAsserted),
+            "`.len()`/`.push()` are not panic-chain idents — no ResultAsserted",
+        );
+        assert_eq!(
+            visitor.behavioral_facts,
+            [BehavioralFact::ResultDiscarded {
+                kind: ResultDiscardKind::Call,
+            }]
+            .into(),
+        );
+    }
+
+    // ─── visit_local (BehavioralFact::ResultDiscarded) ──────────────────
+
+    /// Drive a body fragment and return its `behavioral_facts`.
+    fn facts_of(source: &str) -> BTreeSet<BehavioralFact> {
+        let item = parse_test_fn(source);
+        let mut visitor = BodyVisitor::new();
+        visitor.drive(&item.block);
+        visitor.behavioral_facts
+    }
+
+    #[test]
+    fn discard_of_call_projects_call_kind() {
+        // `let _ = compute();` — bare wildcard discard of a free-fn call.
+        assert_eq!(
+            facts_of("fn it() { let _ = compute(); }"),
+            [BehavioralFact::ResultDiscarded {
+                kind: ResultDiscardKind::Call,
+            }]
+            .into(),
+        );
+    }
+
+    #[test]
+    fn discard_of_method_call_projects_call_kind() {
+        // `let _ = obj.do_thing();` — bare wildcard discard of a method
+        // call (non-panic-chain, non-adapter) → Call.
+        assert_eq!(
+            facts_of("fn it() { let obj = Thing; let _ = obj.do_thing(); }"),
+            [BehavioralFact::ResultDiscarded {
+                kind: ResultDiscardKind::Call,
+            }]
+            .into(),
+        );
+    }
+
+    #[test]
+    fn discard_of_ok_ctor_projects_result_ctor_kind() {
+        assert_eq!(
+            facts_of("fn it() { let _ = Ok::<u32, ()>(1); }"),
+            [BehavioralFact::ResultDiscarded {
+                kind: ResultDiscardKind::ResultCtor,
+            }]
+            .into(),
+        );
+    }
+
+    #[test]
+    fn discard_of_err_ctor_projects_result_ctor_kind() {
+        assert_eq!(
+            facts_of("fn it() { let _ = Err::<(), u32>(1); }"),
+            [BehavioralFact::ResultDiscarded {
+                kind: ResultDiscardKind::ResultCtor,
+            }]
+            .into(),
+        );
+    }
+
+    #[test]
+    fn discard_of_ok_adapter_projects_result_adapter_kind() {
+        // `let _ = x.ok();` — Option↔Result adapter.
+        assert_eq!(
+            facts_of("fn it() { let x: Result<u32, ()> = Ok(1); let _ = x.ok(); }"),
+            [BehavioralFact::ResultDiscarded {
+                kind: ResultDiscardKind::ResultAdapter,
+            }]
+            .into(),
+        );
+    }
+
+    #[test]
+    fn discard_of_err_adapter_projects_result_adapter_kind() {
+        assert_eq!(
+            facts_of("fn it() { let x: Result<u32, ()> = Ok(1); let _ = x.err(); }"),
+            [BehavioralFact::ResultDiscarded {
+                kind: ResultDiscardKind::ResultAdapter,
+            }]
+            .into(),
+        );
+    }
+
+    // ── FP guards: shapes that MUST NOT project a ResultDiscarded ───────
+
+    #[test]
+    fn type_ascribed_unit_discard_does_not_project() {
+        // `let _: () = foo();` — Pat::Type, intentional must-use silencer.
+        // HARD FP GUARD (scrap-rs#25 AC).
+        assert!(facts_of("fn it() { let _: () = foo(); }").is_empty());
+    }
+
+    #[test]
+    fn type_ascribed_non_unit_discard_does_not_project() {
+        // `let _: T = foo();` — any type ascription is an explicit binding.
+        assert!(facts_of("fn it() { let _: u32 = foo(); }").is_empty());
+    }
+
+    #[test]
+    fn question_mark_propagation_does_not_project() {
+        // `foo()?;` is Expr::Try, not a `let _ =` local. Early-return, not
+        // a discard.
+        assert!(facts_of("fn it() -> Result<(), ()> { foo()?; Ok(()) }").is_empty());
+    }
+
+    #[test]
+    fn named_binding_of_try_does_not_project() {
+        // `let x = foo()?;` binds a named pattern → not Pat::Wild.
+        assert!(facts_of("fn it() -> Result<(), ()> { let x = foo()?; Ok(()) }").is_empty());
+    }
+
+    #[test]
+    fn discard_of_literal_does_not_project() {
+        assert!(facts_of("fn it() { let _ = 5; }").is_empty());
+    }
+
+    #[test]
+    fn discard_of_path_does_not_project() {
+        assert!(facts_of("fn it() { let x = 1; let _ = x; }").is_empty());
+    }
+
+    #[test]
+    fn discard_of_macro_does_not_project() {
+        // `vec![1, 2]` is Expr::Macro, not a call.
+        assert!(facts_of("fn it() { let _ = vec![1, 2]; }").is_empty());
+    }
+
+    #[test]
+    fn discard_of_tuple_does_not_project() {
+        assert!(facts_of("fn it() { let _ = (1, 2); }").is_empty());
+    }
+
+    #[test]
+    fn discard_of_reference_does_not_project() {
+        assert!(facts_of("fn it() { let x = 1; let _ = &x; }").is_empty());
+    }
+
+    #[test]
+    fn discard_of_awaited_call_projects_call_kind() {
+        // `let _ = foo().await;` — the awaited future genuinely ran and
+        // its Result was dropped (textbook no-op-io). Expr::Await
+        // recurses into the base call → Call (Gemini C1). `.await`
+        // requires an async fn to parse.
+        assert_eq!(
+            facts_of("async fn it() { let _ = fetch().await; }"),
+            [BehavioralFact::ResultDiscarded {
+                kind: ResultDiscardKind::Call,
+            }]
+            .into(),
+        );
+    }
+
+    #[test]
+    fn discard_of_parenthesized_call_projects_call_kind() {
+        // `let _ = (foo());` — Expr::Paren recurses to the inner call.
+        assert_eq!(
+            facts_of("fn it() { let _ = (compute()); }"),
+            [BehavioralFact::ResultDiscarded {
+                kind: ResultDiscardKind::Call,
+            }]
+            .into(),
+        );
+    }
+
+    #[test]
+    fn discard_of_parenthesized_literal_does_not_project() {
+        // `let _ = (5);` — Paren recurses to a literal → None (FP guard
+        // holds through the transparent wrapper).
+        assert!(facts_of("fn it() { let _ = (5); }").is_empty());
+    }
+
+    #[test]
+    fn discard_of_awaited_unwrap_chain_projects_result_asserted_only() {
+        // `let _ = foo().await.unwrap();` — the await wraps a panic-chain
+        // terminal: classify_discard_init recurses Await → MethodCall
+        // (unwrap) → None, so NO ResultDiscarded; the inner .unwrap()
+        // still projects ResultAsserted via visit_expr_method_call.
+        assert_eq!(
+            facts_of("async fn it() { let _ = fetch().await.unwrap(); }"),
+            [BehavioralFact::ResultAsserted].into(),
+        );
+    }
+
+    #[test]
+    fn discard_of_unwrap_chain_projects_result_asserted_only() {
+        // `let _ = x.unwrap();` — panic-chain terminal. ResultAsserted is
+        // projected by visit_expr_method_call; classify_discard_init
+        // returns None so NO contradictory ResultDiscarded is added.
+        assert_eq!(
+            facts_of("fn it() { let x: Result<u32, ()> = Ok(1); let _ = x.unwrap(); }"),
+            [BehavioralFact::ResultAsserted].into(),
+        );
+    }
+
+    #[test]
+    fn discard_nested_in_if_arm_projects() {
+        // visit_local recursion finds discards inside control-flow arms.
+        assert_eq!(
+            facts_of("fn it() { if true { let _ = compute(); } }"),
+            [BehavioralFact::ResultDiscarded {
+                kind: ResultDiscardKind::Call,
+            }]
+            .into(),
+        );
+    }
+
+    #[test]
+    fn two_same_kind_discards_dedupe() {
+        // BTreeSet dedupes — two Call-kind discards → one fact entry
+        // (line is intentionally NOT carried, so they collapse).
+        assert_eq!(
+            facts_of("fn it() { let _ = a(); let _ = b(); }"),
+            [BehavioralFact::ResultDiscarded {
+                kind: ResultDiscardKind::Call,
+            }]
+            .into(),
+        );
+    }
+
+    #[test]
+    fn two_different_kind_discards_both_project() {
+        // A Call discard and a ResultCtor discard → two distinct facts.
+        assert_eq!(
+            facts_of("fn it() { let _ = a(); let _ = Ok::<u32, ()>(1); }"),
+            [
+                BehavioralFact::ResultDiscarded {
+                    kind: ResultDiscardKind::Call,
+                },
+                BehavioralFact::ResultDiscarded {
+                    kind: ResultDiscardKind::ResultCtor,
+                },
+            ]
+            .into(),
+        );
     }
 }

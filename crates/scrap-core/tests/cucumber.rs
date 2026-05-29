@@ -63,6 +63,9 @@ mod detectors_zero_assertion_steps;
 #[path = "cucumber_steps/tautological.rs"]
 mod tautological_steps;
 
+#[path = "cucumber_steps/no_op_io.rs"]
+mod no_op_io_steps;
+
 #[path = "cucumber_steps/cli.rs"]
 mod cli_steps;
 
