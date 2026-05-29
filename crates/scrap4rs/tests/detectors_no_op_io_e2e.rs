@@ -20,19 +20,50 @@ use scrap_core::domain::types::FilePath;
 use scrap_core::ports::parser::TestParserPort;
 use scrap4rs::parser::SynTestParser;
 
-fn parse_fixture(rel: &str) -> Vec<ParsedTest> {
+/// Read + parse one fixture. Returns `Err(String)` on read OR parse
+/// failure so the negative-guard loops can accumulate the failure
+/// alongside spurious-trigger violations and report ALL of them in one
+/// run (per `feedback_pristine-test-output`) rather than aborting on the
+/// first bad fixture. The single-fixture positive test `.expect()`s the
+/// `Ok`.
+fn parse_fixture(rel: &str) -> Result<Vec<ParsedTest>, String> {
     let abs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
-    let source = std::fs::read_to_string(&abs)
-        .unwrap_or_else(|e| panic!("read fixture {}: {e}", abs.display()));
+    let source =
+        std::fs::read_to_string(&abs).map_err(|e| format!("read {}: {e}", abs.display()))?;
     SynTestParser::new()
         .parse_test_source(&source, &FilePath::new(rel))
-        .unwrap_or_else(|e| panic!("fixture {rel} must parse cleanly: {e:?}"))
-        .tests
+        .map(|f| f.tests)
+        .map_err(|e| format!("parse {rel}: {e:?}"))
+}
+
+/// Run the detector across every fixture and accumulate violations: a
+/// `parse: <detail>` entry per read/parse failure, and a
+/// `trigger: <fixture>::<test>` entry per fixture that unexpectedly
+/// fires the detector. Returns the (possibly empty) violations vec.
+fn collect_unexpected_triggers(fixtures: &[&str]) -> Vec<String> {
+    let mut violations: Vec<String> = Vec::new();
+    for &f in fixtures {
+        match parse_fixture(f) {
+            Err(e) => violations.push(format!("parse: {e}")),
+            Ok(tests) => {
+                for parsed in tests {
+                    if detect(&parsed, &DetectorConfig::default()).is_some() {
+                        violations.push(format!(
+                            "trigger: {f}::{name}",
+                            name = parsed.identity.qualified_name.as_str(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    violations
 }
 
 #[test]
 fn e2e_no_op_io_triggers_on_true_positive() {
-    let tests = parse_fixture("tests/fixtures/true_positives/no_op_io.rs");
+    let tests = parse_fixture("tests/fixtures/true_positives/no_op_io.rs")
+        .expect("true-positive fixture must parse cleanly");
     assert_eq!(
         tests.len(),
         1,
@@ -47,9 +78,10 @@ fn e2e_no_op_io_triggers_on_true_positive() {
 
 #[test]
 fn e2e_no_op_io_does_not_trigger_on_runner_shells() {
-    // Collect ALL failures before asserting (per
-    // `feedback_pristine-test-output`) so one bad fixture doesn't hide
-    // the others from downstream agentic loops.
+    // Accumulate-and-assert (Gemini C2–C4 / `feedback_pristine-test-output`):
+    // one run reports ALL offending fixtures — parse failures (`parse:`)
+    // AND spurious detector triggers (`trigger:`) — instead of aborting
+    // on the first.
     let fixtures = [
         "tests/fixtures/runner_shells/cucumber_shell.rs",
         "tests/fixtures/runner_shells/insta_shell.rs",
@@ -65,22 +97,11 @@ fn e2e_no_op_io_does_not_trigger_on_runner_shells() {
         "tests/fixtures/runner_shells/no_op_io_unit_binding.rs",
     ];
 
-    let mut unexpected_triggers: Vec<String> = Vec::new();
-    for f in fixtures {
-        for parsed in parse_fixture(f) {
-            if detect(&parsed, &DetectorConfig::default()).is_some() {
-                unexpected_triggers.push(format!(
-                    "{f}::{name}",
-                    name = parsed.identity.qualified_name.as_str(),
-                ));
-            }
-        }
-    }
-
+    let violations = collect_unexpected_triggers(&fixtures);
     assert!(
-        unexpected_triggers.is_empty(),
-        "no-op-io fired on runner shells that should suppress it:\n  - {}",
-        unexpected_triggers.join("\n  - "),
+        violations.is_empty(),
+        "no-op-io guard failed on runner shells (parse failures or spurious triggers):\n  - {}",
+        violations.join("\n  - "),
     );
 }
 
@@ -88,7 +109,7 @@ fn e2e_no_op_io_does_not_trigger_on_runner_shells() {
 fn e2e_no_op_io_does_not_trigger_on_result_asserted_fixtures() {
     // `.unwrap()`/`.expect()` chains project `ResultAsserted`, which is
     // positive-check evidence → no-op-io suppressed even though the line
-    // is a `let _ = ...;` discard.
+    // is a `let _ = ...;` discard. Same accumulate-and-assert pattern.
     let fixtures = [
         "tests/fixtures/behavioral_facts/unwrap_chain.rs",
         "tests/fixtures/behavioral_facts/expect_chain.rs",
@@ -96,21 +117,10 @@ fn e2e_no_op_io_does_not_trigger_on_result_asserted_fixtures() {
         "tests/fixtures/behavioral_facts/expect_err_chain.rs",
     ];
 
-    let mut unexpected_triggers: Vec<String> = Vec::new();
-    for f in fixtures {
-        for parsed in parse_fixture(f) {
-            if detect(&parsed, &DetectorConfig::default()).is_some() {
-                unexpected_triggers.push(format!(
-                    "{f}::{name}",
-                    name = parsed.identity.qualified_name.as_str(),
-                ));
-            }
-        }
-    }
-
+    let violations = collect_unexpected_triggers(&fixtures);
     assert!(
-        unexpected_triggers.is_empty(),
-        "no-op-io fired on ResultAsserted fixtures that should suppress it:\n  - {}",
-        unexpected_triggers.join("\n  - "),
+        violations.is_empty(),
+        "no-op-io guard failed on ResultAsserted fixtures (parse failures or spurious triggers):\n  - {}",
+        violations.join("\n  - "),
     );
 }
