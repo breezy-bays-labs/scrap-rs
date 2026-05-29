@@ -61,7 +61,7 @@ fn main() -> ExitCode {
         extensions: EXTENSIONS,
         tool_info_uri: "https://github.com/breezy-bays-labs/scrap-rs",
         rule_help_uri: "https://github.com/breezy-bays-labs/scrap-rs#detection-rules",
-        config_file_name: "scrap4rs.toml",
+        config_file_name: "scrap.toml",
         default_excludes: DEFAULT_EXCLUDES,
         parse_hint: PARSE_HINT,
     };

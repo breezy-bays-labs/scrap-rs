@@ -23,7 +23,7 @@
 //!   choice. Default `Smell` (one row per `Smell`); `Finding`
 //!   collapses multi-smell tests into one row. Serializable for
 //!   config-file override (`[table] grouping = "smell|finding"` in
-//!   `scrap4rs.toml`).
+//!   `scrap.toml`).
 //!
 //! ## tracked
 //!
@@ -59,7 +59,7 @@ use std::num::NonZeroUsize;
 /// pattern-matchers via `#[non_exhaustive]`.
 ///
 /// Config-file override flows through serde (`[table] grouping =
-/// "smell|finding"` in scrap4rs.toml deserializes via kebab-case).
+/// "smell|finding"` in scrap.toml deserializes via kebab-case).
 /// CLI override is added by scrap-rs#21 (clap `ValueEnum` derive
 /// lands in that PR — not here, because scrap-core does not yet
 /// list `clap` in its `[dependencies]`).
@@ -654,7 +654,7 @@ mod tests {
     #[test]
     fn row_grouping_round_trips_through_toml() {
         // Exercises the config-file override path:
-        // `[table] grouping = "finding"` in scrap4rs.toml.
+        // `[table] grouping = "finding"` in scrap.toml.
         #[derive(serde::Deserialize)]
         struct Section {
             grouping: RowGrouping,

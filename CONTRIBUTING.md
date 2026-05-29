@@ -96,7 +96,7 @@ When adding a new smell:
 
 ## Exclusions and Tracking-Issue Rule
 
-Every entry in `scrap4rs.toml`'s `exclude = [...]` array, every
+Every entry in `scrap.toml`'s `exclude = [...]` array, every
 `#[ignore]`, every `#[cfg(skip_in_ci)]` MUST carry an inline
 `# tracked: scrap4rs#<n> — <reason>` comment OR `# adr: <path>` if
 permanent. Quarterly grep audit. See
@@ -108,7 +108,7 @@ permanent. Quarterly grep audit. See
 copy of the config schema with every detector / opt-out / override
 block commented out — read it to see the surface, then run
 `scrap4rs init` from your project root to generate your own live
-`scrap4rs.toml`. The example file is NOT loaded by the analyzer; it
+`scrap.toml`. The example file is NOT loaded by the analyzer; it
 exists so contributors and downstream users can see "what does the
 schema look like?" without invoking `init`. The `.example.toml`
 naming mirrors the npm/yarn `.env.example` convention so the
