@@ -25,11 +25,12 @@
 //! test + the resolved [`FileConfig`] and returns every [`Smell`]
 //! produced by enabled detectors. The function is the single
 //! integration point for `core::analyze`'s detector loop — each new
-//! detector PR (#24 tautological, #25 no-op-io, #26 surface-only-io,
-//! #31 large-example) extends `detect_all` by routing through
+//! detector PR extends `detect_all` by routing through
 //! `cli::config::resolve_detector_for_path` for the appropriate
 //! `[detectors.<smell>]` table, then calling the detector's
-//! `detect(parsed, cfg)` fn.
+//! `detect(parsed, cfg)` fn. Wired so far: zero-assertion (#30),
+//! no-op-io (#25), tautological-assertion (#24, wired at #99). Still
+//! to land: surface-only-io (#26), large-example (#31).
 //!
 //! Per scrap-rs#21 cabinet MF-1, `&FileConfig` is imported from
 //! `crate::domain::config` (the POD-types home) NOT from
@@ -118,9 +119,20 @@ pub fn detect_all(parsed: &ParsedTest, cfg: &FileConfig) -> Vec<Smell> {
     if let Some(finding) = no_op_io::detect(parsed, noop_cfg) {
         smells.extend(finding.smells);
     }
-    // (Future detectors append here. #24 tautological / #26 surface-only-io
-    // / #31 large-example each add ~3 lines. NB: #24 tautological landed
-    // but is NOT yet wired here — tracked separately as the dead-wire
-    // follow-up scrap-rs#99.)
+    // Tautological-assertion (scrap-rs#24 — landed dead-wired in PR #83;
+    // wired here at scrap-rs#99). Penalty 10, default. CANNOT co-fire with
+    // zero-assertion / no-op-io: a tautological assertion is still a
+    // recorded assertion, so `has_positive_check` is true and both of
+    // those suppress. Emits only when the body holds ≥1 tautology.
+    let tauto_cfg = resolve_detector_for_path(
+        cfg,
+        parsed.identity.file_path.as_path(),
+        SmellCategory::TautologicalAssertion,
+    );
+    if let Some(finding) = tautological_assertion::detect(parsed, tauto_cfg) {
+        smells.extend(finding.smells);
+    }
+    // (Future detectors append here. #26 surface-only-io / #31
+    // large-example each add ~3 lines.)
     smells
 }

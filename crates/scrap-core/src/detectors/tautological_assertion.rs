@@ -31,7 +31,7 @@
 //! ## Explicit non-responsibilities
 //!
 //! The detector emits unconditionally when the facts indicate
-//! tautology. It does NOT:
+//! tautology (modulo the `cfg.enabled` gate below). It does NOT:
 //!
 //! - Consult [`crate::domain::parsed::ParsedTest::opt_outs`] —
 //!   per-test `#[allow(scrap::tautology)]` suppression lives in the
@@ -41,42 +41,55 @@
 //!   for `#[should_panic]` suppression — same; the pipeline routes
 //!   findings on `should_panic`-attributed tests through the policy
 //!   layer.
-//! - Consult any `DetectorConfig` for `enabled` / `penalty`
-//!   overrides — that's also pipeline-driver territory; the detector
-//!   ships v0.1 defaults.
 //!
 //! The pipeline driver (scrap-rs#72) calls `detect`, receives
 //! `Option<Finding>`, and applies the project's `[opt_outs]` policy
 //! plus the configured Skip/Advisory mode before the finding lands on
 //! the wire envelope.
+//!
+//! ## Penalty and config gating
+//!
+//! Wired into [`super::detect_all`] at scrap-rs#99 with the same
+//! `(parsed, cfg)` signature as its sibling detectors:
+//!
+//! - `cfg.enabled == Some(false)` short-circuits to `None` regardless
+//!   of facts (CLI / `scrap4rs.toml` can disable per-detector).
+//! - Penalty resolves to `cfg.penalty.unwrap_or(DEFAULT_PENALTY)`.
+//!   The config validator in `cli/config.rs` rejects `Some(0)` so the
+//!   effective floor is always >= 1.
 
+use crate::cli::config::DetectorConfig;
 use crate::domain::classification::{Actionability, Severity};
 use crate::domain::finding::Finding;
 use crate::domain::literal_value::LiteralValue;
 use crate::domain::parsed::{ParsedAssertion, ParsedTest};
 use crate::domain::smell::{Smell, SmellCategory};
 
-/// Penalty contribution per tautological-assertion smell. Pinned at
-/// v0.1 per the kickstart-plan detection table; tunable via
-/// `[detectors.tautological_assertion]` in `scrap4rs.toml` once the
-/// pipeline driver consumes
-/// [`crate::cli::config::DetectorConfig`] (scrap-rs#21).
-pub const PENALTY: u32 = 10;
+/// Default penalty contribution per tautological-assertion smell.
+/// Pinned at v0.1 per the kickstart-plan detection table; overridable
+/// via `[detectors.tautological_assertion]` in `scrap4rs.toml` (the
+/// `cfg.penalty` knob resolved in [`detect`]).
+const DEFAULT_PENALTY: u32 = 10;
 
 /// Detector entry point. Returns `Some(Finding)` when one or more
 /// assertions on the test trip the tautology rule
 /// (`arguments_identical` OR `single_arg_value == Some(Bool(true))`),
-/// or `None` when no assertions match.
+/// or `None` when the detector is disabled or no assertions match.
 ///
 /// Each emitted [`Smell`] carries the offending assertion's
 /// [`crate::domain::types::Span`] via `Smell::span` (SHAPE-Q1=(ii) at
 /// the pipeline shape gate) so downstream consumers (SARIF reporter
 /// at scrap-rs#17, mokumo scorecard) get per-instance line
 /// attribution. N tautological assertions on one test produce 1
-/// `Finding` with N `Smell`s; `Finding::scrap_score` aggregates
-/// (10 × N).
+/// `Finding` with N `Smell`s, each carrying
+/// `penalty = cfg.penalty.unwrap_or(DEFAULT_PENALTY)`;
+/// `Finding::scrap_score` aggregates (penalty × N).
 #[must_use]
-pub fn detect(parsed: &ParsedTest) -> Option<Finding> {
+pub fn detect(parsed: &ParsedTest, cfg: &DetectorConfig) -> Option<Finding> {
+    if cfg.enabled == Some(false) {
+        return None;
+    }
+    let penalty = cfg.penalty.unwrap_or(DEFAULT_PENALTY);
     let smells: Vec<Smell> = parsed
         .assertions
         .iter()
@@ -86,7 +99,7 @@ pub fn detect(parsed: &ParsedTest) -> Option<Finding> {
                 SmellCategory::TautologicalAssertion,
                 Severity::High,
                 Actionability::AutoRefactor,
-                PENALTY,
+                penalty,
                 Some(a.span),
             )
         })
@@ -113,6 +126,13 @@ mod tests {
     use crate::domain::types::{FilePath, QualifiedName, Span, TestIdentity};
     use proptest::prelude::*;
     use std::collections::BTreeSet;
+
+    /// Default detector config (enabled, default penalty) used by the
+    /// fact-driven unit + property tests. Mirrors `zero_assertion`'s
+    /// in-module `DetectorConfig::default()` usage.
+    fn default_cfg() -> DetectorConfig {
+        DetectorConfig::default()
+    }
 
     // ── Fixtures ────────────────────────────────────────────────────
 
@@ -159,7 +179,7 @@ mod tests {
     #[test]
     fn detect_returns_none_for_empty_assertions() {
         let parsed = parsed_with_assertions(vec![]);
-        assert!(detect(&parsed).is_none());
+        assert!(detect(&parsed, &default_cfg()).is_none());
     }
 
     #[test]
@@ -167,19 +187,19 @@ mod tests {
         // arguments_identical=false, single_arg_value=None — both
         // clauses fail; no smell.
         let parsed = parsed_with_one(false, None);
-        assert!(detect(&parsed).is_none());
+        assert!(detect(&parsed, &default_cfg()).is_none());
     }
 
     #[test]
     fn detect_returns_finding_for_assert_eq_x_x() {
         let parsed = parsed_with_one(true, None);
-        let finding = detect(&parsed).expect("Some(Finding)");
+        let finding = detect(&parsed, &default_cfg()).expect("Some(Finding)");
         assert_eq!(finding.smells.len(), 1);
         assert_eq!(
             finding.smells[0].category,
             SmellCategory::TautologicalAssertion
         );
-        assert_eq!(finding.smells[0].penalty, PENALTY);
+        assert_eq!(finding.smells[0].penalty, DEFAULT_PENALTY);
         assert!(
             (finding.scrap_score - 10.0).abs() < f64::EPSILON,
             "scrap_score should be 10.0, got {}",
@@ -190,16 +210,16 @@ mod tests {
     #[test]
     fn detect_returns_finding_for_assert_true() {
         let parsed = parsed_with_one(false, Some(LiteralValue::Bool(true)));
-        let finding = detect(&parsed).expect("Some(Finding)");
+        let finding = detect(&parsed, &default_cfg()).expect("Some(Finding)");
         assert_eq!(finding.smells.len(), 1);
-        assert_eq!(finding.smells[0].penalty, PENALTY);
+        assert_eq!(finding.smells[0].penalty, DEFAULT_PENALTY);
     }
 
     #[test]
     fn detect_returns_none_for_assert_false() {
         // SHAPE-Q3 lock: Bool(false) is NOT a tautology trigger.
         let parsed = parsed_with_one(false, Some(LiteralValue::Bool(false)));
-        assert!(detect(&parsed).is_none());
+        assert!(detect(&parsed, &default_cfg()).is_none());
     }
 
     #[test]
@@ -207,19 +227,67 @@ mod tests {
         // `assert!(0)` is ill-typed in Rust but the helper handles it
         // cleanly. Int literals are NOT a tautology trigger.
         let parsed = parsed_with_one(false, Some(LiteralValue::Int(0)));
-        assert!(detect(&parsed).is_none());
+        assert!(detect(&parsed, &default_cfg()).is_none());
     }
 
     #[test]
     fn detect_returns_none_for_str_literal() {
         let parsed = parsed_with_one(false, Some(LiteralValue::Str(String::new())));
-        assert!(detect(&parsed).is_none());
+        assert!(detect(&parsed, &default_cfg()).is_none());
     }
 
     #[test]
     fn detect_returns_none_for_verbatim() {
         let parsed = parsed_with_one(false, Some(LiteralValue::Verbatim("3.14".into())));
-        assert!(detect(&parsed).is_none());
+        assert!(detect(&parsed, &default_cfg()).is_none());
+    }
+
+    // ── Config gating (scrap-rs#99 signature align) ─────────────────
+
+    #[test]
+    fn detect_returns_none_when_disabled_via_config() {
+        // A tautological body that WOULD fire is suppressed when the
+        // detector is disabled, regardless of facts. Mirrors
+        // zero_assertion / no_op_io's `cfg.enabled == Some(false)` gate.
+        let cfg = DetectorConfig {
+            enabled: Some(false),
+            penalty: None,
+            line_threshold: None,
+        };
+        let parsed = parsed_with_one(true, None);
+        assert!(detect(&parsed, &cfg).is_none());
+    }
+
+    #[test]
+    fn detect_applies_custom_penalty_override() {
+        // `cfg.penalty` overrides the v0.1 default. Three tautological
+        // assertions × custom penalty 7 = scrap_score 21.
+        let cfg = DetectorConfig {
+            enabled: None,
+            penalty: Some(7),
+            line_threshold: None,
+        };
+        let parsed = parsed_with_assertions(vec![
+            ParsedAssertion::new("assert_eq", None, Span::new(11, 11, 1, 1), true, None),
+            ParsedAssertion::new("assert_ne", None, Span::new(12, 12, 1, 1), true, None),
+            ParsedAssertion::new(
+                "assert",
+                None,
+                Span::new(13, 13, 1, 1),
+                false,
+                Some(LiteralValue::Bool(true)),
+            ),
+        ]);
+        let finding = detect(&parsed, &cfg).expect("custom-penalty tautology fires");
+        assert_eq!(finding.smells.len(), 3);
+        for smell in &finding.smells {
+            assert_eq!(smell.penalty, 7);
+        }
+        assert!(
+            (finding.scrap_score - 21.0).abs() < f64::EPSILON,
+            "scrap_score should be 21.0 (3 × 7), got {}",
+            finding.scrap_score
+        );
     }
 
     // ── Aggregation: N tautological asserts → 1 Finding, N Smells ──
@@ -237,7 +305,7 @@ mod tests {
             ),
             ParsedAssertion::new("assert_ne", None, Span::new(13, 13, 1, 1), true, None),
         ]);
-        let finding = detect(&parsed).expect("Some(Finding)");
+        let finding = detect(&parsed, &default_cfg()).expect("Some(Finding)");
         assert_eq!(finding.smells.len(), 3);
         assert!(
             (finding.scrap_score - 30.0).abs() < f64::EPSILON,
@@ -246,7 +314,7 @@ mod tests {
         );
         for smell in &finding.smells {
             assert_eq!(smell.category, SmellCategory::TautologicalAssertion);
-            assert_eq!(smell.penalty, PENALTY);
+            assert_eq!(smell.penalty, DEFAULT_PENALTY);
         }
     }
 
@@ -262,7 +330,7 @@ mod tests {
             false,
             Some(LiteralValue::Bool(true)),
         )]);
-        let finding = detect(&parsed).expect("Some(Finding)");
+        let finding = detect(&parsed, &default_cfg()).expect("Some(Finding)");
         assert_eq!(finding.smells[0].span, Some(assertion_span));
     }
 
@@ -272,7 +340,7 @@ mod tests {
             ParsedAssertion::new("assert_eq", None, Span::new(11, 11, 1, 1), true, None),
             ParsedAssertion::new("assert_eq", None, Span::new(22, 22, 1, 1), true, None),
         ]);
-        let finding = detect(&parsed).expect("Some(Finding)");
+        let finding = detect(&parsed, &default_cfg()).expect("Some(Finding)");
         assert_eq!(finding.smells[0].span, Some(Span::new(11, 11, 1, 1)));
         assert_eq!(finding.smells[1].span, Some(Span::new(22, 22, 1, 1)));
     }
@@ -302,7 +370,7 @@ mod tests {
             opt_outs,
             BTreeSet::new(),
         );
-        assert!(detect(&parsed).is_some());
+        assert!(detect(&parsed, &default_cfg()).is_some());
     }
 
     #[test]
@@ -326,7 +394,7 @@ mod tests {
             BTreeSet::new(),
             BTreeSet::new(),
         );
-        assert!(detect(&parsed).is_some());
+        assert!(detect(&parsed, &default_cfg()).is_some());
     }
 
     // ── Property test: determinism (AC #7 — see PR body for the
@@ -364,8 +432,8 @@ mod tests {
     proptest! {
         #[test]
         fn detect_is_deterministic(parsed in arb_parsed_test()) {
-            let first = detect(&parsed);
-            let second = detect(&parsed);
+            let first = detect(&parsed, &default_cfg());
+            let second = detect(&parsed, &default_cfg());
             // PartialEq on Finding covers everything we care about
             // (test identity, smells, scrap_score, exceeds_threshold,
             // opt_outs). f64 scrap_score: comparing the SAME computation
@@ -377,7 +445,7 @@ mod tests {
         #[test]
         fn detect_smell_count_equals_tautological_count(parsed in arb_parsed_test()) {
             let expected = parsed.assertions.iter().filter(|a| is_tautological(a)).count();
-            let actual = detect(&parsed).map_or(0, |f| f.smells.len());
+            let actual = detect(&parsed, &default_cfg()).map_or(0, |f| f.smells.len());
             prop_assert_eq!(expected, actual);
         }
     }

@@ -17,6 +17,7 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use cucumber::{given, then, when};
+use scrap_core::cli::config::DetectorConfig;
 use scrap_core::detectors::tautological_assertion;
 use scrap_core::domain::literal_value::LiteralValue;
 use scrap_core::domain::parsed::{ParsedAssertion, ParsedTest};
@@ -124,10 +125,16 @@ fn when_two_tautological_assertions(w: &mut World) {
     invoke_detect(w);
 }
 
-// Helper invoked by every When to populate `detect_result`.
+// Helper invoked by every When to populate `detect_result`. Uses the
+// default `DetectorConfig` (enabled, default penalty 10) — these
+// scenarios assert the v0.1 default contract; per-config gating is
+// exercised in the in-module unit tests (scrap-rs#99 signature align).
 fn invoke_detect(w: &mut World) {
     let parsed = w.parsed_test.as_ref().expect("ParsedTest built");
-    w.detect_result = Some(tautological_assertion::detect(parsed));
+    w.detect_result = Some(tautological_assertion::detect(
+        parsed,
+        &DetectorConfig::default(),
+    ));
 }
 
 // ─── Then ───────────────────────────────────────────────────────────
