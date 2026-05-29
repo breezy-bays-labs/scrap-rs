@@ -103,14 +103,23 @@ pub struct ParsedTest {
     /// Body-shape behavioral facts the parser recognises (e.g.
     /// `.unwrap()`/`.expect()` chains as
     /// [`crate::domain::behavioral_fact::BehavioralFact::ResultAsserted`]).
-    /// `BTreeSet` for deterministic serialization order — mirrors the
-    /// `opt_outs` storage rationale. Empty when the parser recognised
-    /// no behavioral facts.
+    /// `Vec` (not `BTreeSet`) preserves the parser's natural body-walk
+    /// **emission order**, and — unlike a `BTreeSet` — admits the
+    /// located, correlation-carrying fact variants arriving at
+    /// scrap-rs#26 (a `String` path-key + a `Span` that must NOT be
+    /// forced into an `Ord` wire-ordering, mirroring the `FilePath`
+    /// Ord-refusal precedent). Empty when the parser recognised no
+    /// behavioral facts.
+    ///
+    /// Presence-fact dedup (the "≥1 of shape X" semantics for the two
+    /// existing variants) now happens at **projection** in the parser
+    /// adapter, not via `BTreeSet` set-admission — see
+    /// `scrap4rs::parser::body::BodyVisitor`.
     ///
     /// Populated by `scrap4rs::parser` via syn-visit overrides; consumed
     /// by detectors in `scrap-core::detectors/` (zero-assertion #30,
     /// no-op-io #25, etc.).
-    pub behavioral_facts: BTreeSet<BehavioralFact>,
+    pub behavioral_facts: Vec<BehavioralFact>,
 }
 
 impl ParsedTest {
@@ -124,7 +133,7 @@ impl ParsedTest {
         body_line_count: u32,
         implicit_assertion_sources: Vec<AssertionSource>,
         opt_outs: BTreeSet<OptOut>,
-        behavioral_facts: BTreeSet<BehavioralFact>,
+        behavioral_facts: Vec<BehavioralFact>,
     ) -> Self {
         Self {
             identity,
@@ -333,7 +342,7 @@ mod tests {
             3,
             Vec::new(),
             BTreeSet::new(),
-            BTreeSet::new(),
+            Vec::new(),
         )
     }
 
@@ -404,12 +413,13 @@ mod tests {
 
     #[test]
     fn parsed_test_with_behavioral_facts_serializes_array() {
-        // Pin the wire shape of a populated `behavioral_facts` BTreeSet.
-        // The empty-array form is the sibling `opt_outs` convention (no
-        // skip_serializing_if); we ALSO want to pin that populated form
-        // serializes as a JSON array of snake_case strings.
-        let mut behavioral_facts = BTreeSet::new();
-        behavioral_facts.insert(BehavioralFact::ResultAsserted);
+        // Pin the wire shape of a populated `behavioral_facts` Vec. The
+        // empty-array form is the sibling `implicit_assertion_sources`
+        // convention (no skip_serializing_if); we ALSO want to pin that
+        // a populated `Vec` serializes as a JSON array — the same
+        // (string | object)[] heterogeneous shape the BTreeSet produced,
+        // now in **emission order** rather than `Ord`-sorted order.
+        let behavioral_facts = vec![BehavioralFact::ResultAsserted];
         let parsed = ParsedTest::new(
             TestIdentity::new(
                 FilePath::new("a.rs"),

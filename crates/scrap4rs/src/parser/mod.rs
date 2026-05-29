@@ -193,8 +193,11 @@ pub(crate) fn extract_parsed_test(
     implicit_assertion_sources.extend(implicit_sources_from_attributes(item));
 
     // Behavioral facts populated by `BodyVisitor::visit_expr_method_call`
-    // (`.unwrap()` / `.expect()` chains → `BehavioralFact::ResultAsserted`).
-    // BTreeSet dedupes naturally so multiple chains produce one fact entry.
+    // (`.unwrap()` / `.expect()` chains → `BehavioralFact::ResultAsserted`)
+    // and `visit_local` (`let _ = ...;` discards → `ResultDiscarded`).
+    // `Vec` storage (scrap-rs#112) in emission order; the visitor already
+    // deduped presence facts at projection, so multiple chains produce
+    // one fact entry.
     let behavioral_facts = body_visitor.behavioral_facts;
 
     ParsedTest::new(

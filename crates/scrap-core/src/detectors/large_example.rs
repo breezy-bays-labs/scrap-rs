@@ -131,7 +131,7 @@ mod tests {
             body_line_count,
             Vec::new(),
             BTreeSet::new(),
-            BTreeSet::new(),
+            Vec::new(),
         )
     }
 

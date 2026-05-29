@@ -474,7 +474,7 @@ mod tests {
                             10,                                // body_line_count
                             vec![],                            // implicit_assertion_sources
                             std::collections::BTreeSet::new(), // opt_outs
-                            std::collections::BTreeSet::new(), // behavioral_facts
+                            Vec::new(),                        // behavioral_facts
                         )],
                         vec![],
                     ))

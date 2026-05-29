@@ -38,7 +38,7 @@ fn smelly_test() -> ParsedTest {
         3,
         Vec::new(),
         BTreeSet::new(),
-        BTreeSet::new(),
+        Vec::new(),
     )
 }
 

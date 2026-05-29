@@ -167,10 +167,10 @@ mod tests {
             5,
             Vec::new(),
             BTreeSet::new(),
-            // `behavioral_facts` (added at scrap-rs#30) — empty for
-            // tautological-assertion fixtures; the detector does not
-            // consult this field.
-            BTreeSet::new(),
+            // `behavioral_facts` (added at scrap-rs#30, migrated to `Vec`
+            // at scrap-rs#112) — empty for tautological-assertion
+            // fixtures; the detector does not consult this field.
+            Vec::new(),
         )
     }
 
@@ -368,7 +368,7 @@ mod tests {
             5,
             Vec::new(),
             opt_outs,
-            BTreeSet::new(),
+            Vec::new(),
         );
         assert!(detect(&parsed, &default_cfg()).is_some());
     }
@@ -392,7 +392,7 @@ mod tests {
             5,
             vec![AssertionSource::ShouldPanic],
             BTreeSet::new(),
-            BTreeSet::new(),
+            Vec::new(),
         );
         assert!(detect(&parsed, &default_cfg()).is_some());
     }
