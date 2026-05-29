@@ -29,14 +29,15 @@
 //! `cli::config::resolve_detector_for_path` for the appropriate
 //! `[detectors.<smell>]` table, then calling the detector's
 //! `detect(parsed, cfg)` fn. Wired so far: zero-assertion (#30),
-//! no-op-io (#25), tautological-assertion (#24, wired at #99). Still
-//! to land: surface-only-io (#26), large-example (#31).
+//! no-op-io (#25), tautological-assertion (#24, wired at #99),
+//! large-example (#31). Still to land: surface-only-io (#26).
 //!
 //! Per scrap-rs#21 cabinet MF-1, `&FileConfig` is imported from
 //! `crate::domain::config` (the POD-types home) NOT from
 //! `crate::cli::config` (which now holds loader-only concerns).
 //! `detectors/` must never depend on `cli/` per adr-hexagonal-layout.
 
+pub mod large_example;
 pub mod no_op_io;
 pub mod tautological_assertion;
 pub mod zero_assertion;
@@ -132,7 +133,22 @@ pub fn detect_all(parsed: &ParsedTest, cfg: &FileConfig) -> Vec<Smell> {
     if let Some(finding) = tautological_assertion::detect(parsed, tauto_cfg) {
         smells.extend(finding.smells);
     }
-    // (Future detectors append here. #26 surface-only-io / #31
-    // large-example each add ~3 lines.)
+    // Large-example (scrap-rs#31 — body exceeds the configured line
+    // threshold, penalty 4). ORTHOGONAL to the assertion-based smells:
+    // it reads only `body_line_count` (structural), never the assertion
+    // / fact bag, so it neither suppresses nor is suppressed by any
+    // other detector and can co-fire with all of them. A long body that
+    // also fails to assert stacks large-example (4) + zero-assertion
+    // (10) into one Finding (Option A; precedence policy deferred to the
+    // scrap-rs#32 score aggregator).
+    let large_cfg = resolve_detector_for_path(
+        cfg,
+        parsed.identity.file_path.as_path(),
+        SmellCategory::LargeExample,
+    );
+    if let Some(finding) = large_example::detect(parsed, large_cfg) {
+        smells.extend(finding.smells);
+    }
+    // (Future detectors append here. #26 surface-only-io adds ~7 lines.)
     smells
 }
