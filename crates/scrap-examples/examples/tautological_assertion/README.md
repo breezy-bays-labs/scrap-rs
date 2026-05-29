@@ -2,12 +2,16 @@
 
 ## Smell
 
-A `#[test]` body asserts, but the assertions are shaped so they can
-never fail — so they carry no information about the system under test:
+A `#[test]` body asserts, but the assertions are shaped so their
+outcome is **constant — fixed regardless of the system under test** —
+so they carry no information about its behavior. `assert!(true)` and
+`assert_eq!(x, x)` always pass; `assert_ne!(x, x)` always fails. Both
+directions are meaningless: the result is determined by the
+assertion's shape, not by the code being tested.
 
-- `assert!(true)` — a single-arg constant-true literal.
+- `assert!(true)` — a single-arg constant-true literal (always passes).
 - `assert_eq!(x, x)` / `assert_ne!(x, x)` — token-identical two-argument
-  shape.
+  shape (`assert_eq!` always passes, `assert_ne!` always fails).
 - Literal-vs-literal compare (`assert_eq!(1, 1)`) — same
   token-identical mechanism.
 
