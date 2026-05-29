@@ -32,7 +32,7 @@
 
 use scrap_core::adapters::source::fs::FsWalker;
 use scrap_core::cli::config::DetectorConfig;
-use scrap_core::detectors::{tautological_assertion, zero_assertion};
+use scrap_core::detectors::{no_op_io, tautological_assertion, zero_assertion};
 use scrap_core::domain::config::AnalysisConfig;
 use scrap_core::domain::types::{FilePath, SourceRoot};
 use scrap_core::ports::parser::TestParserPort;
@@ -150,6 +150,52 @@ fn test_tautological_assertion_self_check() {
         "tautological-assertion self-check failed: {n} test(s) in crates/scrap4rs/src/ trigger the detector:\n  - {list}\n\
          \nEither the test is genuinely smelly (replace the tautology with an assertion that can actually fail) \
          or the detector has a false positive (fix the detector + add a fixture under tests/fixtures/).",
+        n = offenders.len(),
+        list = offenders.join("\n  - "),
+    );
+}
+
+#[test]
+fn test_no_op_io_self_check() {
+    // scrap-rs#25 — `no-op-io` detector dogfood.
+    //
+    // The detector emits a `Finding` when a `ParsedTest` carries a
+    // `BehavioralFact::ResultDiscarded` AND no positive check (no
+    // assertion, no implicit source, no `.unwrap()`/`.expect()` chain).
+    // scrap4rs's own production tests either assert, use a runner shell,
+    // or `.unwrap()`/`.expect()` their Results — so no-op-io must NEVER
+    // fire. A non-zero count is a real regression: either a src test
+    // genuinely discards a Result without checking it (fix the test) or
+    // the detector over-fires (fix the detector + add a runner-shell
+    // fixture).
+    //
+    // Like tautological_assertion + zero_assertion, no_op_io::detect
+    // consults `DetectorConfig` (enabled/penalty) but NOT opt-outs —
+    // those live in the pipeline driver (scrap-rs#72).
+    let tests = parse_scrap4rs_src();
+    assert!(
+        !tests.is_empty(),
+        "self-check guard: expected to find at least one #[test] fn in crates/scrap4rs/src/; \
+         got zero — either the walker regressed or scrap4rs has no tests",
+    );
+
+    let cfg = DetectorConfig::default();
+    let mut offenders: Vec<String> = Vec::new();
+    for parsed in &tests {
+        if no_op_io::detect(parsed, &cfg).is_some() {
+            offenders.push(format!(
+                "{file}::{name}",
+                file = parsed.identity.file_path,
+                name = parsed.identity.qualified_name.as_str(),
+            ));
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "no-op-io self-check failed: {n} test(s) in crates/scrap4rs/src/ trigger the detector:\n  - {list}\n\
+         \nEither the test genuinely discards a Result without checking it (inspect or assert on the value, \
+         or use .unwrap()/.expect()) or the detector has a false positive (fix the detector + add a fixture).",
         n = offenders.len(),
         list = offenders.join("\n  - "),
     );
