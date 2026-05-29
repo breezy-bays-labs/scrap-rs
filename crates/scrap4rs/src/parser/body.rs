@@ -278,6 +278,16 @@ impl<'ast> Visit<'ast> for BodyVisitor {
 /// - [`ResultDiscardKind::ResultAdapter`] — `x.ok()` / `x.err()` method.
 /// - [`ResultDiscardKind::Call`] — any other function or method call.
 ///
+/// Transparent wrappers are unwrapped by recursing into the inner expr:
+/// - `Await` — `let _ = foo().await;` is textbook no-op-io: the awaited
+///   future genuinely ran and its `Result` was dropped. Classify by the
+///   awaited base's shape. (NB: only the AWAITED form projects; a bare
+///   un-awaited `let _ = some_future();` is classified by its own
+///   `Expr::Call` shape as `Call` — recognising un-awaited futures as
+///   darkness needs type info we lack in v0.1, and is scrap-rs#98's job.)
+/// - `Paren` — `let _ = (foo());` recurses to the inner expr, so a
+///   parenthesised literal (`(5)`) still resolves to `None`.
+///
 /// Returns `None` (do NOT project) for:
 /// - panic-chain-terminated method calls (`x.unwrap()` / `.expect(..)` /
 ///   `.unwrap_err()` / `.expect_err(..)`) — these project
@@ -304,6 +314,9 @@ fn classify_discard_init(expr: &syn::Expr) -> Option<ResultDiscardKind> {
         }
         // Any other free-function or method call → Call.
         syn::Expr::Call(_) | syn::Expr::MethodCall(_) => Some(ResultDiscardKind::Call),
+        // Transparent wrappers: classify by the inner expr (Gemini C1).
+        syn::Expr::Await(a) => classify_discard_init(&a.base),
+        syn::Expr::Paren(p) => classify_discard_init(&p.expr),
         // Everything else (literal, path, macro, tuple, control-flow,
         // reference, ...) is not a discarded-Result shape.
         _ => None,
@@ -930,6 +943,52 @@ mod tests {
     #[test]
     fn discard_of_reference_does_not_project() {
         assert!(facts_of("fn it() { let x = 1; let _ = &x; }").is_empty());
+    }
+
+    #[test]
+    fn discard_of_awaited_call_projects_call_kind() {
+        // `let _ = foo().await;` — the awaited future genuinely ran and
+        // its Result was dropped (textbook no-op-io). Expr::Await
+        // recurses into the base call → Call (Gemini C1). `.await`
+        // requires an async fn to parse.
+        assert_eq!(
+            facts_of("async fn it() { let _ = fetch().await; }"),
+            [BehavioralFact::ResultDiscarded {
+                kind: ResultDiscardKind::Call,
+            }]
+            .into(),
+        );
+    }
+
+    #[test]
+    fn discard_of_parenthesized_call_projects_call_kind() {
+        // `let _ = (foo());` — Expr::Paren recurses to the inner call.
+        assert_eq!(
+            facts_of("fn it() { let _ = (compute()); }"),
+            [BehavioralFact::ResultDiscarded {
+                kind: ResultDiscardKind::Call,
+            }]
+            .into(),
+        );
+    }
+
+    #[test]
+    fn discard_of_parenthesized_literal_does_not_project() {
+        // `let _ = (5);` — Paren recurses to a literal → None (FP guard
+        // holds through the transparent wrapper).
+        assert!(facts_of("fn it() { let _ = (5); }").is_empty());
+    }
+
+    #[test]
+    fn discard_of_awaited_unwrap_chain_projects_result_asserted_only() {
+        // `let _ = foo().await.unwrap();` — the await wraps a panic-chain
+        // terminal: classify_discard_init recurses Await → MethodCall
+        // (unwrap) → None, so NO ResultDiscarded; the inner .unwrap()
+        // still projects ResultAsserted via visit_expr_method_call.
+        assert_eq!(
+            facts_of("async fn it() { let _ = fetch().await.unwrap(); }"),
+            [BehavioralFact::ResultAsserted].into(),
+        );
     }
 
     #[test]
