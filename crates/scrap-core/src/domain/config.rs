@@ -125,7 +125,7 @@ pub struct FileConfig {
     ///
     /// Per `~/.claude/rules/exclusions.md`: every entry SHOULD carry
     /// an inline `# tracked: <repo>#<n>` or `# adr: <path>` comment in
-    /// the user's `scrap4rs.toml`. The loader doesn't enforce this
+    /// the user's `scrap.toml`. The loader doesn't enforce this
     /// rule (TOML comments aren't part of the parsed value); the
     /// `CONTRIBUTING.md` doc + this docstring surface the discipline.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

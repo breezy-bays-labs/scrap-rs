@@ -11,7 +11,7 @@
 # behaviors (S5-S7), and the locked OptOutPolicy Shape B contract
 # (S10).
 
-Feature: TOML config loader parses scrap4rs.toml-shaped files and surfaces typed errors
+Feature: TOML config loader parses scrap.toml-shaped files and surfaces typed errors
   As a downstream consumer of `scrap_core::cli::config`
   I want a strict deserialization API with file:line-aware diagnostics
   So that user-authored config typos surface at load time with

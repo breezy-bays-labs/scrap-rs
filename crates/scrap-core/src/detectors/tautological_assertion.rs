@@ -53,7 +53,7 @@
 //! `(parsed, cfg)` signature as its sibling detectors:
 //!
 //! - `cfg.enabled == Some(false)` short-circuits to `None` regardless
-//!   of facts (CLI / `scrap4rs.toml` can disable per-detector).
+//!   of facts (CLI / `scrap.toml` can disable per-detector).
 //! - Penalty resolves to `cfg.penalty.unwrap_or(DEFAULT_PENALTY)`.
 //!   The config validator in `cli/config.rs` rejects `Some(0)` so the
 //!   effective floor is always >= 1.
@@ -67,7 +67,7 @@ use crate::domain::smell::{Smell, SmellCategory};
 
 /// Default penalty contribution per tautological-assertion smell.
 /// Pinned at v0.1 per the kickstart-plan detection table; overridable
-/// via `[detectors.tautological_assertion]` in `scrap4rs.toml` (the
+/// via `[detectors.tautological_assertion]` in `scrap.toml` (the
 /// `cfg.penalty` knob resolved in [`detect`]).
 const DEFAULT_PENALTY: u32 = 10;
 

@@ -30,7 +30,7 @@
 //! ## Penalty and config gating
 //!
 //! - `cfg.enabled == Some(false)` short-circuits to `None` regardless
-//!   of facts (CLI / `scrap4rs.toml` can disable per-detector).
+//!   of facts (CLI / `scrap.toml` can disable per-detector).
 //! - Penalty resolves to `cfg.penalty.unwrap_or(DEFAULT_PENALTY)`.
 //!   The config validator in `cli/config.rs` rejects `Some(0)` so the
 //!   effective floor is always >= 1.

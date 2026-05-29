@@ -52,7 +52,7 @@ fn shipping_meta() -> AdapterMeta {
         extensions: &["rs"],
         tool_info_uri: "https://github.com/breezy-bays-labs/scrap-rs",
         rule_help_uri: "https://github.com/breezy-bays-labs/scrap-rs#detection-rules",
-        config_file_name: "scrap4rs.toml",
+        config_file_name: "scrap.toml",
         default_excludes: &["tests/**", "benches/**", "examples/**"],
         parse_hint: "ensure --src points at a Cargo workspace with test files",
     }

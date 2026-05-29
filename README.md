@@ -81,7 +81,7 @@ cargo run -p scrap4rs -- --src crates/scrap-core --format stdout --top 20 --only
 cargo run -p scrap4rs -- --help
 ```
 
-`scrap4rs init` writes a `scrap4rs.toml` skeleton in the current
+`scrap4rs init` writes a `scrap.toml` skeleton in the current
 directory with commented-out detector blocks + exclude templates;
 `crates/scrap4rs/scrap4rs.example.toml` is the canonical reference
 copy committed to the repo.
@@ -104,7 +104,7 @@ this repo:
 - uses: breezy-bays-labs/scrap-rs/.github/actions/scorecard@v0.2.0
   with:
     src: crates
-    config: scrap4rs.toml
+    config: scrap.toml
 ```
 
 The action builds `scrap4rs` from the pinned ref on every run. v1.0

@@ -388,7 +388,7 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
 - CI workflow with format / clippy / test matrix (Linux + macOS arm64 +
   macOS x86_64) / coverage jobs.
 - Repo chrome: README, AGENTS.md, CLAUDE.md, CONTRIBUTING.md, dual
-  MIT/Apache-2.0 license, default scrap4rs.toml stub.
+  MIT/Apache-2.0 license, default scrap.toml stub.
 
 ### Changed
 

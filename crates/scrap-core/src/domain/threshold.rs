@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Threshold mode chosen by `--threshold-mode` or `scrap4rs.toml`.
+/// Threshold mode chosen by `--threshold-mode` or `scrap.toml`.
 ///
 /// `Default` is the suggested gate for new adopters; `Strict` adds
 /// pressure for repos that already enforce assertion discipline;

@@ -5,8 +5,8 @@
 //! every adapter inherits the subcommand for free via `AdapterMeta`.
 //! The generator is parameterized on three meta fields:
 //!
-//! - `config_file_name` — the per-adapter literal (e.g.,
-//!   `scrap4rs.toml`, future `scrap4ts.toml`).
+//! - `config_file_name` — the config-file literal (the unified
+//!   `scrap.toml`, shared by every adapter).
 //! - `tool_name` — surfaced in the header comment + the next-step
 //!   hint printed to stderr after a successful write.
 //! - `default_excludes` — commented-out exclude patterns the

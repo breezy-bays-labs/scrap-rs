@@ -21,7 +21,7 @@
 //! machines + versions):
 //! - Fixed `AdapterMeta` literal: `tool: "scrap4rs"`,
 //!   `language: "rust"`, `tool_version: "0.1.0"`,
-//!   `config_file_name: "scrap4rs.toml"`.
+//!   `config_file_name: "scrap.toml"`.
 //! - Fixed timestamp constant (`FIXED_TIMESTAMP`).
 //! - `tool_version` is hard-coded `"0.1.0"`, NOT
 //!   `env!("CARGO_PKG_VERSION")` — version bumps would otherwise
@@ -79,7 +79,7 @@ fn harness_meta() -> AdapterMeta {
         extensions: &["rs"],
         tool_info_uri: "https://github.com/breezy-bays-labs/scrap-rs",
         rule_help_uri: "https://github.com/breezy-bays-labs/scrap-rs#detection-rules",
-        config_file_name: "scrap4rs.toml",
+        config_file_name: "scrap.toml",
         default_excludes: &["tests/**", "benches/**", "examples/**"],
         parse_hint: "ensure --src points at a Cargo workspace with test files",
     }

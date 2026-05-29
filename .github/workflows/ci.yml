@@ -329,7 +329,7 @@ jobs:
         # matches any double-quoted string containing the adapter
         # binary name `scrap4rs` or `scrap4ts` as a substring (e.g.
         # `"scrap4rs (snapshot-test fixture)"` or the bare `"scrap4rs"`
-        # form). Backtick references (`scrap4rs.toml`) and module-path
+        # form). Backtick references (`scrap.toml`) and module-path
         # references (`scrap-rs#37`) don't match — they lack the
         # double-quote delimiters.
         #
