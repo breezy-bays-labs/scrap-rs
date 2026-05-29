@@ -25,7 +25,6 @@
 use scrap_core::domain::assertion_sources::{AssertionSource, recognise};
 use scrap_core::domain::behavioral_fact::{BehavioralFact, ResultDiscardKind};
 use scrap_core::domain::parsed::ParsedAssertion;
-use std::collections::BTreeSet;
 use syn::Block;
 use syn::visit::Visit;
 
@@ -78,13 +77,17 @@ pub(crate) struct BodyVisitor {
     /// triggered recognition.
     pub(crate) implicit_assertion_sources: Vec<AssertionSource>,
     /// Body-shape behavioral facts found in the body. Populated by
-    /// `visit_expr_method_call` (method-call sources: `.unwrap()`,
-    /// `.expect(...)`). `BTreeSet` dedupes naturally — multiple
-    /// `.unwrap()` calls in the same body produce one fact entry.
+    /// `visit_expr_method_call` (`.unwrap()` / `.expect(...)` chains →
+    /// `ResultAsserted`) and `visit_local` (`let _ = ...;` discards →
+    /// `ResultDiscarded`). `Vec` (not `BTreeSet`) preserves emission
+    /// order and admits the located fact variants arriving at
+    /// scrap-rs#26; the "≥1 of shape X" presence-fact dedup the two
+    /// existing variants relied on is enforced here at **projection**
+    /// (each push is guarded against an already-present equal fact).
     /// Mirrors the
     /// [`scrap_core::domain::parsed::ParsedTest::behavioral_facts`]
     /// storage shape.
-    pub(crate) behavioral_facts: BTreeSet<BehavioralFact>,
+    pub(crate) behavioral_facts: Vec<BehavioralFact>,
 }
 
 impl BodyVisitor {
@@ -92,7 +95,7 @@ impl BodyVisitor {
         Self {
             assertions: Vec::new(),
             implicit_assertion_sources: Vec::new(),
-            behavioral_facts: BTreeSet::new(),
+            behavioral_facts: Vec::new(),
         }
     }
 
@@ -203,13 +206,15 @@ impl<'ast> Visit<'ast> for BodyVisitor {
     /// [`PANIC_CHAIN_METHOD_NAMES`] (`.unwrap()` / `.expect(...)` happy
     /// path + `.unwrap_err()` / `.expect_err(...)` error path) anywhere
     /// in the body, projecting each as `BehavioralFact::ResultAsserted`.
-    /// The `BTreeSet` dedupes naturally — multiple panic-chain calls in
-    /// the same body produce one fact entry.
+    /// Presence-fact dedup happens at **projection** (scrap-rs#112 `Vec`
+    /// storage): the push is skipped when a `ResultAsserted` is already
+    /// recorded, so multiple panic-chain calls in the same body produce
+    /// one fact entry and the wire carries no duplicate `result_asserted`.
     ///
     /// **DOES** call `visit::visit_expr_method_call(self, node)` —
     /// method-call chains nest naturally (`x.unwrap().unwrap()`), and
-    /// recursion finds every fact in the body. (Per-call dedup is
-    /// already provided by `BTreeSet`.)
+    /// recursion finds every fact in the body. (The projection-time
+    /// guard collapses the repeats into one entry.)
     ///
     /// No type inference. A `.unwrap()` on a non-Result/Option value
     /// (literal `().unwrap()`) is vanishingly rare in real test code
@@ -227,8 +232,12 @@ impl<'ast> Visit<'ast> for BodyVisitor {
         if PANIC_CHAIN_METHOD_NAMES
             .iter()
             .any(|&name| node.method == name)
+            && !self
+                .behavioral_facts
+                .iter()
+                .any(|f| matches!(f, BehavioralFact::ResultAsserted))
         {
-            self.behavioral_facts.insert(BehavioralFact::ResultAsserted);
+            self.behavioral_facts.push(BehavioralFact::ResultAsserted);
         }
         syn::visit::visit_expr_method_call(self, node);
     }
@@ -250,7 +259,11 @@ impl<'ast> Visit<'ast> for BodyVisitor {
     ///
     /// **DOES** call `visit::visit_local(self, local)` — discards can
     /// nest inside `if`/`match` arms and inner blocks; recursion finds
-    /// every one. `BTreeSet` dedupes same-kind discards.
+    /// every one. Same-kind discards are deduped at **projection**
+    /// (scrap-rs#112 `Vec` storage): the push is skipped when an equal
+    /// `ResultDiscarded { kind }` is already recorded, so two `Call`
+    /// discards collapse to one entry while a `Call` + `ResultCtor`
+    /// pair both survive.
     fn visit_local(&mut self, local: &'ast syn::Local) {
         // Bare `_` only — `let _: T = ...;` (Pat::Type) is an intentional
         // explicit binding and never projects (hard FP guard, scrap-rs#25).
@@ -258,8 +271,10 @@ impl<'ast> Visit<'ast> for BodyVisitor {
             && let Some(init) = &local.init
             && let Some(kind) = classify_discard_init(&init.expr)
         {
-            self.behavioral_facts
-                .insert(BehavioralFact::ResultDiscarded { kind });
+            let fact = BehavioralFact::ResultDiscarded { kind };
+            if !self.behavioral_facts.iter().any(|f| f == &fact) {
+                self.behavioral_facts.push(fact);
+            }
         }
         syn::visit::visit_local(self, local);
     }
@@ -704,8 +719,8 @@ mod tests {
     /// — helper-delegated assertions are invisible to the parser per
     /// the v0.1 zero-assertion test-helper-delegation discovery
     /// (scrap-rs#30 issue body).
-    fn expected_only_result_asserted() -> BTreeSet<BehavioralFact> {
-        [BehavioralFact::ResultAsserted].into()
+    fn expected_only_result_asserted() -> Vec<BehavioralFact> {
+        vec![BehavioralFact::ResultAsserted]
     }
 
     #[test]
@@ -765,7 +780,11 @@ mod tests {
 
     #[test]
     fn body_visitor_dedupes_multiple_unwrap_chains() {
-        // Two `.unwrap()` calls → one fact entry (BTreeSet dedupes).
+        // Two `.unwrap()` calls → one fact entry. With `Vec` storage
+        // (scrap-rs#112) the presence-fact dedup is enforced at
+        // projection (the guarded push in `visit_expr_method_call`), not
+        // by `BTreeSet` set-admission; the wire carries exactly one
+        // `result_asserted`.
         let item = parse_test_fn(
             "fn it() { let x: Result<u32, ()> = Ok(1); let y: Result<u32, ()> = Ok(2); let _ = x.unwrap(); let _ = y.unwrap(); }",
         );
@@ -773,6 +792,26 @@ mod tests {
         visitor.drive(&item.block);
         assert_eq!(visitor.behavioral_facts.len(), 1);
         assert_eq!(visitor.behavioral_facts, expected_only_result_asserted());
+    }
+
+    #[test]
+    fn body_visitor_distinct_unwrap_chains_project_one_result_asserted() {
+        // scrap-rs#112 projection-dedup pin: two SYNTACTICALLY DISTINCT
+        // panic-chain terminals (`a.unwrap()` then `b.expect(..)`) both
+        // map to the SAME presence fact `ResultAsserted`. With `Vec`
+        // storage the guarded push must collapse them to exactly ONE
+        // entry — proving dedup survives the BTreeSet→Vec migration even
+        // when the two source idents differ.
+        let item = parse_test_fn(
+            "fn it() { let a: Result<u32, ()> = Ok(1); let b: Option<u32> = Some(2); let _ = a.unwrap(); let _ = b.expect(\"two\"); }",
+        );
+        let mut visitor = BodyVisitor::new();
+        visitor.drive(&item.block);
+        assert_eq!(
+            visitor.behavioral_facts,
+            vec![BehavioralFact::ResultAsserted],
+            "two distinct panic-chain terminals project exactly one ResultAsserted",
+        );
     }
 
     #[test]
@@ -804,17 +843,16 @@ mod tests {
         );
         assert_eq!(
             visitor.behavioral_facts,
-            [BehavioralFact::ResultDiscarded {
+            vec![BehavioralFact::ResultDiscarded {
                 kind: ResultDiscardKind::Call,
-            }]
-            .into(),
+            }],
         );
     }
 
     // ─── visit_local (BehavioralFact::ResultDiscarded) ──────────────────
 
     /// Drive a body fragment and return its `behavioral_facts`.
-    fn facts_of(source: &str) -> BTreeSet<BehavioralFact> {
+    fn facts_of(source: &str) -> Vec<BehavioralFact> {
         let item = parse_test_fn(source);
         let mut visitor = BodyVisitor::new();
         visitor.drive(&item.block);
@@ -826,10 +864,9 @@ mod tests {
         // `let _ = compute();` — bare wildcard discard of a free-fn call.
         assert_eq!(
             facts_of("fn it() { let _ = compute(); }"),
-            [BehavioralFact::ResultDiscarded {
+            vec![BehavioralFact::ResultDiscarded {
                 kind: ResultDiscardKind::Call,
-            }]
-            .into(),
+            }],
         );
     }
 
@@ -839,10 +876,9 @@ mod tests {
         // call (non-panic-chain, non-adapter) → Call.
         assert_eq!(
             facts_of("fn it() { let obj = Thing; let _ = obj.do_thing(); }"),
-            [BehavioralFact::ResultDiscarded {
+            vec![BehavioralFact::ResultDiscarded {
                 kind: ResultDiscardKind::Call,
-            }]
-            .into(),
+            }],
         );
     }
 
@@ -850,10 +886,9 @@ mod tests {
     fn discard_of_ok_ctor_projects_result_ctor_kind() {
         assert_eq!(
             facts_of("fn it() { let _ = Ok::<u32, ()>(1); }"),
-            [BehavioralFact::ResultDiscarded {
+            vec![BehavioralFact::ResultDiscarded {
                 kind: ResultDiscardKind::ResultCtor,
-            }]
-            .into(),
+            }],
         );
     }
 
@@ -861,10 +896,9 @@ mod tests {
     fn discard_of_err_ctor_projects_result_ctor_kind() {
         assert_eq!(
             facts_of("fn it() { let _ = Err::<(), u32>(1); }"),
-            [BehavioralFact::ResultDiscarded {
+            vec![BehavioralFact::ResultDiscarded {
                 kind: ResultDiscardKind::ResultCtor,
-            }]
-            .into(),
+            }],
         );
     }
 
@@ -873,10 +907,9 @@ mod tests {
         // `let _ = x.ok();` — Option↔Result adapter.
         assert_eq!(
             facts_of("fn it() { let x: Result<u32, ()> = Ok(1); let _ = x.ok(); }"),
-            [BehavioralFact::ResultDiscarded {
+            vec![BehavioralFact::ResultDiscarded {
                 kind: ResultDiscardKind::ResultAdapter,
-            }]
-            .into(),
+            }],
         );
     }
 
@@ -884,10 +917,9 @@ mod tests {
     fn discard_of_err_adapter_projects_result_adapter_kind() {
         assert_eq!(
             facts_of("fn it() { let x: Result<u32, ()> = Ok(1); let _ = x.err(); }"),
-            [BehavioralFact::ResultDiscarded {
+            vec![BehavioralFact::ResultDiscarded {
                 kind: ResultDiscardKind::ResultAdapter,
-            }]
-            .into(),
+            }],
         );
     }
 
@@ -953,10 +985,9 @@ mod tests {
         // requires an async fn to parse.
         assert_eq!(
             facts_of("async fn it() { let _ = fetch().await; }"),
-            [BehavioralFact::ResultDiscarded {
+            vec![BehavioralFact::ResultDiscarded {
                 kind: ResultDiscardKind::Call,
-            }]
-            .into(),
+            }],
         );
     }
 
@@ -965,10 +996,9 @@ mod tests {
         // `let _ = (foo());` — Expr::Paren recurses to the inner call.
         assert_eq!(
             facts_of("fn it() { let _ = (compute()); }"),
-            [BehavioralFact::ResultDiscarded {
+            vec![BehavioralFact::ResultDiscarded {
                 kind: ResultDiscardKind::Call,
-            }]
-            .into(),
+            }],
         );
     }
 
@@ -987,7 +1017,7 @@ mod tests {
         // still projects ResultAsserted via visit_expr_method_call.
         assert_eq!(
             facts_of("async fn it() { let _ = fetch().await.unwrap(); }"),
-            [BehavioralFact::ResultAsserted].into(),
+            vec![BehavioralFact::ResultAsserted],
         );
     }
 
@@ -998,7 +1028,7 @@ mod tests {
         // returns None so NO contradictory ResultDiscarded is added.
         assert_eq!(
             facts_of("fn it() { let x: Result<u32, ()> = Ok(1); let _ = x.unwrap(); }"),
-            [BehavioralFact::ResultAsserted].into(),
+            vec![BehavioralFact::ResultAsserted],
         );
     }
 
@@ -1007,23 +1037,23 @@ mod tests {
         // visit_local recursion finds discards inside control-flow arms.
         assert_eq!(
             facts_of("fn it() { if true { let _ = compute(); } }"),
-            [BehavioralFact::ResultDiscarded {
+            vec![BehavioralFact::ResultDiscarded {
                 kind: ResultDiscardKind::Call,
-            }]
-            .into(),
+            }],
         );
     }
 
     #[test]
     fn two_same_kind_discards_dedupe() {
-        // BTreeSet dedupes — two Call-kind discards → one fact entry
-        // (line is intentionally NOT carried, so they collapse).
+        // Projection-time dedup (scrap-rs#112 `Vec` storage) — two
+        // Call-kind discards → one fact entry. No per-fact line is
+        // carried, so the two equal `ResultDiscarded { Call }` facts
+        // collapse via the guarded push in `visit_local`.
         assert_eq!(
             facts_of("fn it() { let _ = a(); let _ = b(); }"),
-            [BehavioralFact::ResultDiscarded {
+            vec![BehavioralFact::ResultDiscarded {
                 kind: ResultDiscardKind::Call,
-            }]
-            .into(),
+            }],
         );
     }
 
@@ -1032,15 +1062,14 @@ mod tests {
         // A Call discard and a ResultCtor discard → two distinct facts.
         assert_eq!(
             facts_of("fn it() { let _ = a(); let _ = Ok::<u32, ()>(1); }"),
-            [
+            vec![
                 BehavioralFact::ResultDiscarded {
                     kind: ResultDiscardKind::Call,
                 },
                 BehavioralFact::ResultDiscarded {
                     kind: ResultDiscardKind::ResultCtor,
                 },
-            ]
-            .into(),
+            ],
         );
     }
 }

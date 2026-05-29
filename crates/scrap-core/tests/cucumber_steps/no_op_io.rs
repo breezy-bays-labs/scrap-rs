@@ -38,7 +38,7 @@ fn fixture_identity() -> TestIdentity {
 }
 
 /// Build a `ParsedTest` with the given assertions + behavioral facts.
-fn parsed_test(assertions: Vec<ParsedAssertion>, facts: BTreeSet<BehavioralFact>) -> ParsedTest {
+fn parsed_test(assertions: Vec<ParsedAssertion>, facts: Vec<BehavioralFact>) -> ParsedTest {
     ParsedTest::new(
         fixture_identity(),
         Vec::new(),
@@ -93,7 +93,7 @@ fn when_discard_plus_result_asserted(w: &mut World) {
 
 #[when(regex = r"^a ParsedTest is built with no behavioral facts$")]
 fn when_no_facts(w: &mut World) {
-    w.parsed_test = Some(parsed_test(Vec::new(), BTreeSet::new()));
+    w.parsed_test = Some(parsed_test(Vec::new(), Vec::new()));
     invoke_detect(w);
 }
 

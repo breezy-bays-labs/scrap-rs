@@ -124,7 +124,7 @@ mod tests {
             3,
             Vec::new(),
             BTreeSet::new(),
-            BTreeSet::new(),
+            Vec::new(),
         )
     }
 
@@ -156,7 +156,7 @@ mod tests {
     /// behavioral fact — detector must NOT fire.
     fn test_with_result_asserted() -> ParsedTest {
         let mut pt = smelly_test();
-        pt.behavioral_facts.insert(BehavioralFact::ResultAsserted);
+        pt.behavioral_facts.push(BehavioralFact::ResultAsserted);
         pt
     }
 
@@ -283,7 +283,7 @@ mod tests {
         ));
         pt.implicit_assertion_sources
             .push(AssertionSource::ShouldPanic);
-        pt.behavioral_facts.insert(BehavioralFact::ResultAsserted);
+        pt.behavioral_facts.push(BehavioralFact::ResultAsserted);
         // Add a non-empty `attributes` for completeness (detector doesn't
         // read it, but exercises that vec-bearing builders still pass).
         pt.attributes.push(ParsedAttribute::new("test", None));
@@ -352,9 +352,9 @@ mod tests {
                         _ => AssertionSource::ShouldPanic,
                     })
                     .collect();
-                let mut behavioral_facts = BTreeSet::new();
+                let mut behavioral_facts: Vec<BehavioralFact> = Vec::new();
                 if has_behavioral {
-                    behavioral_facts.insert(BehavioralFact::ResultAsserted);
+                    behavioral_facts.push(BehavioralFact::ResultAsserted);
                 }
                 ParsedTest::new(
                     TestIdentity::new(
@@ -445,9 +445,15 @@ mod tests {
                 .push(AssertionSource::ShouldPanic);
             prop_assert!(detect(&pt_b, &cfg).is_none(), "adding an implicit source must suppress");
 
-            // (c) insert ResultAsserted.
+            // (c) push ResultAsserted (Vec storage, scrap-rs#112) only if
+            // absent, mirroring the parser's projection-time dedup.
             let mut pt_c = pt;
-            pt_c.behavioral_facts.insert(BehavioralFact::ResultAsserted);
+            if !pt_c
+                .behavioral_facts
+                .contains(&BehavioralFact::ResultAsserted)
+            {
+                pt_c.behavioral_facts.push(BehavioralFact::ResultAsserted);
+            }
             prop_assert!(detect(&pt_c, &cfg).is_none(), "adding ResultAsserted must suppress");
         }
     }

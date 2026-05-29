@@ -90,14 +90,34 @@ pub enum ResultDiscardKind {
 /// `rename_all` drift (matches sibling [`crate::domain::assertion_sources::AssertionSource`]
 /// + [`crate::domain::opt_outs::OptOut`] discipline).
 ///
-/// Storage: `BTreeSet<BehavioralFact>` on `ParsedTest` — `Ord` is the
-/// cost of `BTreeSet` admission; deterministic serialization order
-/// mirrors the `OptOut` precedent. **No per-instance line field**: the
-/// `no-op-io` finding span is whole-test, no v0.1 consumer reads a
-/// per-discard line, and a `line` field would defeat the `BTreeSet`
-/// dedup invariant (two identical-shape discards on different lines
-/// would no longer collapse). #32 can add line attribution when ranked
-/// recommendations need it.
+/// Storage: `Vec<BehavioralFact>` on `ParsedTest` (migrated from
+/// `BTreeSet` at scrap-rs#112). Two reasons drove the switch, both
+/// looking ahead to the located, correlation-carrying fact variants
+/// arriving at scrap-rs#26:
+/// 1. **Correlation facts must not dedup-collapse.** A `BTreeSet`
+///    silently merges two facts that compare equal; the #26 located
+///    variants carry distinct `String` path-keys + `Span`s that are
+///    semantically separate observations and must each survive on the
+///    wire. The "≥1 of shape X" presence-fact dedup the two existing
+///    variants relied on now happens at **projection** in the parser
+///    adapter (`scrap4rs::parser::body::BodyVisitor`), not via
+///    set-admission.
+/// 2. **`Span` must not be forced into an `Ord` wire-ordering.**
+///    `BTreeSet` admission demands `Ord`; a `Span`-carrying variant
+///    would force a total order on source coordinates with no
+///    meaningful semantics — the same reason [`crate::domain::types::FilePath`]
+///    refuses to derive `Ord` for the wire contract. A `Vec` preserves
+///    the parser's natural emission order instead.
+///
+/// The `Copy`/`PartialOrd`/`Ord` derives on the enum below stay valid
+/// for the two existing unit/`Copy`-data variants; they become
+/// unused-but-harmless under `Vec` storage and are removed at
+/// scrap-rs#26 when the `String`/`Span`-carrying variants land (they
+/// cannot derive `Copy`/`Ord`). Keeping them now is minimal scope.
+///
+/// **No per-instance line field** (still true): the `no-op-io` finding
+/// span is whole-test, and no v0.1 consumer reads a per-discard line.
+/// Located per-fact spans are scrap-rs#26's surface, not a v0.1 add.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -132,7 +152,6 @@ pub enum BehavioralFact {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeSet;
 
     // ── Wire-key pin: every variant round-trips its documented form ──
 
@@ -178,51 +197,27 @@ mod tests {
         }
     }
 
-    // ── Ord discipline (BTreeSet admission cost; pins declaration order) ──
+    // ── Vec emission-order discipline (post scrap-rs#112 storage) ──
 
     #[test]
-    fn behavioral_fact_ord_result_asserted_before_result_discarded() {
-        // Declaration order is the BTreeSet serialization contract:
-        // ResultAsserted (unit) < ResultDiscarded { .. }. Pin it so a
-        // future reorder is caught at test time.
-        assert!(
-            BehavioralFact::ResultAsserted
-                < BehavioralFact::ResultDiscarded {
-                    kind: ResultDiscardKind::Call,
-                }
-        );
-    }
-
-    #[test]
-    fn result_discard_kind_ord_matches_declaration_order() {
-        assert!(ResultDiscardKind::Call < ResultDiscardKind::ResultCtor);
-        assert!(ResultDiscardKind::ResultCtor < ResultDiscardKind::ResultAdapter);
-    }
-
-    #[test]
-    fn behavioral_fact_btreeset_preserves_deterministic_order() {
-        // Insertion order varies; BTreeSet imposes Ord. The same set,
-        // built in different insertion orders, serializes identically.
-        let mut set_a = BTreeSet::new();
-        set_a.insert(BehavioralFact::ResultDiscarded {
-            kind: ResultDiscardKind::ResultCtor,
-        });
-        set_a.insert(BehavioralFact::ResultAsserted);
-
-        let mut set_b = BTreeSet::new();
-        set_b.insert(BehavioralFact::ResultAsserted);
-        set_b.insert(BehavioralFact::ResultDiscarded {
-            kind: ResultDiscardKind::ResultCtor,
-        });
-
+    fn behavioral_fact_vec_serializes_in_emission_order() {
+        // Storage is now `Vec<BehavioralFact>` (scrap-rs#112): the wire
+        // array reflects **emission order**, NOT `Ord`-sorted order. A
+        // `ResultDiscarded`-then-`ResultAsserted` emission serializes in
+        // exactly that order — the reverse of the BTreeSet's old
+        // `Ord`-sorted "ResultAsserted-first" contract — proving order
+        // now tracks emission rather than declaration order. The
+        // per-fact wire shape (heterogeneous `(string | object)[]`) is
+        // unchanged.
+        let facts = vec![
+            BehavioralFact::ResultDiscarded {
+                kind: ResultDiscardKind::ResultCtor,
+            },
+            BehavioralFact::ResultAsserted,
+        ];
         assert_eq!(
-            serde_json::to_string(&set_a).unwrap(),
-            serde_json::to_string(&set_b).unwrap(),
-        );
-        // And the ResultAsserted-first ordering holds on the wire.
-        assert_eq!(
-            serde_json::to_value(&set_a).unwrap(),
-            serde_json::json!(["result_asserted", {"result_discarded": {"kind": "result_ctor"}}]),
+            serde_json::to_value(&facts).unwrap(),
+            serde_json::json!([{"result_discarded": {"kind": "result_ctor"}}, "result_asserted"]),
         );
     }
 }

@@ -50,10 +50,10 @@ fn parsed_test_with_assertions(assertions: Vec<ParsedAssertion>) -> ParsedTest {
         5,
         Vec::new(),
         BTreeSet::new(),
-        // `behavioral_facts` added to ParsedTest::new at scrap-rs#30; the
-        // tautological-assertion detector does not consult this field
-        // — pass empty.
-        BTreeSet::new(),
+        // `behavioral_facts` added to ParsedTest::new at scrap-rs#30,
+        // migrated to `Vec` at scrap-rs#112; the tautological-assertion
+        // detector does not consult this field — pass empty.
+        Vec::new(),
     )
 }
 

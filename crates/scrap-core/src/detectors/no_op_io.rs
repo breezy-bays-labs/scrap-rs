@@ -136,10 +136,9 @@ mod tests {
     /// fact, no assertions, no implicit sources, no `ResultAsserted`.
     /// Detector fires on this baseline unless cfg disables it.
     fn smelly_test() -> ParsedTest {
-        let mut facts = BTreeSet::new();
-        facts.insert(BehavioralFact::ResultDiscarded {
+        let facts = vec![BehavioralFact::ResultDiscarded {
             kind: ResultDiscardKind::Call,
-        });
+        }];
         ParsedTest::new(
             TestIdentity::new(
                 FilePath::new("a.rs"),
@@ -200,7 +199,7 @@ mod tests {
         // `let _ = x.unwrap();` style: the discard co-exists with a
         // ResultAsserted fact, which is positive evidence → suppressed.
         let mut pt = smelly_test();
-        pt.behavioral_facts.insert(BehavioralFact::ResultAsserted);
+        pt.behavioral_facts.push(BehavioralFact::ResultAsserted);
         assert!(detect(&pt, &DetectorConfig::default()).is_none());
     }
 
@@ -229,7 +228,7 @@ mod tests {
             let mut pt = smelly_test();
             pt.behavioral_facts.clear();
             pt.behavioral_facts
-                .insert(BehavioralFact::ResultDiscarded { kind });
+                .push(BehavioralFact::ResultDiscarded { kind });
             assert!(
                 detect(&pt, &DetectorConfig::default()).is_some(),
                 "kind {kind:?} should fire",
@@ -265,17 +264,24 @@ mod tests {
             any::<bool>(),
         )
             .prop_map(|(discard_kinds, n_assert, n_impl, has_asserted)| {
-                let mut facts = BTreeSet::new();
+                // `Vec` storage (scrap-rs#112) with projection-mirroring
+                // dedup — equal presence facts collapse exactly as the
+                // parser's guarded push does, so the strategy never
+                // produces a fact bag the real parser couldn't emit.
+                let mut facts: Vec<BehavioralFact> = Vec::new();
                 for k in discard_kinds {
                     let kind = match k {
                         0 => ResultDiscardKind::Call,
                         1 => ResultDiscardKind::ResultCtor,
                         _ => ResultDiscardKind::ResultAdapter,
                     };
-                    facts.insert(BehavioralFact::ResultDiscarded { kind });
+                    let fact = BehavioralFact::ResultDiscarded { kind };
+                    if !facts.contains(&fact) {
+                        facts.push(fact);
+                    }
                 }
                 if has_asserted {
-                    facts.insert(BehavioralFact::ResultAsserted);
+                    facts.push(BehavioralFact::ResultAsserted);
                 }
                 let assertions = (0..n_assert)
                     .map(|i| {
@@ -364,7 +370,14 @@ mod tests {
             prop_assert!(detect(&pt_b, &cfg).is_none(), "adding an implicit source must suppress");
 
             let mut pt_c = pt;
-            pt_c.behavioral_facts.insert(BehavioralFact::ResultAsserted);
+            // `Vec` storage (scrap-rs#112): push the presence fact only
+            // if absent, mirroring the parser's projection-time dedup.
+            if !pt_c
+                .behavioral_facts
+                .contains(&BehavioralFact::ResultAsserted)
+            {
+                pt_c.behavioral_facts.push(BehavioralFact::ResultAsserted);
+            }
             prop_assert!(detect(&pt_c, &cfg).is_none(), "adding ResultAsserted must suppress");
         }
     }
