@@ -14,7 +14,7 @@ Hexagonal (ports & adapters), strict dependency direction enforced by
 Cargo crate boundaries: `scrap-core` lists no AST library in its
 deps; adapter crates depend on `scrap-core` and add their own parser
 library. A wrong inward import is a build error, not a review catch.
-See [`adr-hexagonal-layout`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-hexagonal-layout.md)
+See [`adr-hexagonal-layout`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-hexagonal-layout.md)
 for the full layering invariant + per-crate dep table.
 
 ## Phased Detector Roadmap
@@ -46,7 +46,7 @@ taxonomy lands in v0.3.
 ## Wire Envelope
 
 Mirrors crap4rs's nested JSON envelope. See
-[`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md)
+[`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-nested-json-envelope.md)
 for full forward-compat rules. Highlights:
 
 - `schema_version: u32` — bumps only on breaking changes; additive

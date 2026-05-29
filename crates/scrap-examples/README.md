@@ -127,7 +127,7 @@ version on the wire here is a docs-anchor literal that demonstrates
 the shape — it is NOT the live crate version. When scrap4rs publishes
 externally (v1.0), this convention may be revisited.
 
-Wire-envelope ADR: [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md).
+Wire-envelope ADR: [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-nested-json-envelope.md).
 
 ## What this is NOT
 

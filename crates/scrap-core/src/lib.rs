@@ -10,7 +10,7 @@
 //! source languages — links against this crate and provides only its
 //! language-specific parser adapter.
 //!
-//! Per [`adr-hexagonal-layout`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-hexagonal-layout.md),
+//! Per [`adr-hexagonal-layout`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-hexagonal-layout.md),
 //! this crate must never depend on an AST library. `syn`, `swc_*`,
 //! `oxc_*`, `tree-sitter*`, `proc-macro2`, and `quote` are banned
 //! from this crate's source. The ban is enforced structurally

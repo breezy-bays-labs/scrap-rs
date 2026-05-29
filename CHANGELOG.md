@@ -435,7 +435,7 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
   `ParseDiagnosticKind`. The canonical `ParsedAssertion::new(...)`
   constructor signature changes from `(kind, span)` → `(name, raw_args, span)`.
   No `schema_version` bump per
-  [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md)
+  [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-nested-json-envelope.md)
   — `ParsedAssertion` is not part of the truthful-gate wire envelope
   (see `crates/scrap-core/tests/wire_envelope_snapshot.rs`).
 - **Breaking**: `SourcePort::discover_test_files` signature changed

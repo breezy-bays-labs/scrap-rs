@@ -6,7 +6,7 @@
 //! [`scrap_core::domain::parsed::ParsedTestFile`] shape.
 //!
 //! All `syn` types are confined to this module tree — see
-//! [`adr-hexagonal-layout`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-hexagonal-layout.md)
+//! [`adr-hexagonal-layout`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-hexagonal-layout.md)
 //! for the layering invariant. `scrap-core` stays AST-pure; the
 //! `ast-purity` CI grep enforces.
 

@@ -16,7 +16,7 @@
 //!    the fact and emit a `Finding`. AST shape never crosses the port
 //!    boundary.
 //! 3. **`#[non_exhaustive]` on enums only** (per
-//!    [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md)).
+//!    [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-nested-json-envelope.md)).
 //!    Result structs evolve via constructor pattern + serde versioning.
 //! 4. **No raw body source carried** — structural facts only. Body-line
 //!    count is enough for `large-example`; future detectors receive

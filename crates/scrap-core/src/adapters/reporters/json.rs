@@ -1,7 +1,7 @@
 //! v0.1 JSON envelope reporter — free function `emit()` that wraps a
 //! `Report` in the `schema_version: 1` nested envelope.
 //!
-//! Wire shape per [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md)
+//! Wire shape per [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-nested-json-envelope.md)
 //! (D2). Free-function design per
 //! [`crap4rs/adr-free-functions-over-reporter-trait`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/crap4rs/adr-free-functions-over-reporter-trait.md)
 //! (D1) and codified in `crates/scrap-core/src/ports/mod.rs:8-13`.
@@ -94,7 +94,7 @@ use std::num::NonZeroUsize;
 /// `tracked: scrap-rs#21` — CLI flag wiring.
 /// `tracked: scrap-rs#72` — future severity filters land here.
 ///
-/// [`adr-nested-json-envelope`]: https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md
+/// [`adr-nested-json-envelope`]: https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-nested-json-envelope.md
 #[derive(Debug, Clone, Default)]
 pub struct EmitOptions {
     /// `--top N`: truncate `view.shown` to N findings (post-filter).
@@ -271,7 +271,7 @@ struct JsonEnvelope<'a> {
 /// # Ok::<_, serde_json::Error>(())
 /// ```
 ///
-/// [`adr-nested-json-envelope`]: https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md
+/// [`adr-nested-json-envelope`]: https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-nested-json-envelope.md
 pub fn emit<W: std::io::Write>(
     report: &Report,
     meta: &AdapterMeta,

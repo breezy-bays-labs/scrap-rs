@@ -57,4 +57,4 @@ zero-assertion detector against `bad.rs`. The relevant fields:
 - `scrap_score == 10.0` (single smell with penalty 10)
 
 The full v0.1 envelope shape is documented at
-[`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md).
+[`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-nested-json-envelope.md).

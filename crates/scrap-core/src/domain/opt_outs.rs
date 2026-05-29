@@ -8,7 +8,7 @@
 //!
 //! ## Wire shape
 //!
-//! `#[non_exhaustive]` per [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md)
+//! `#[non_exhaustive]` per [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-nested-json-envelope.md)
 //! — consumers must use non-exhaustive matches. Wire keys are
 //! `snake_case` (`no_asserts`, `tautology`, `no_op`); per-variant
 //! `#[serde(rename = "...")]` is belt-and-suspenders against future

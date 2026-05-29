@@ -3,7 +3,7 @@
 //!
 //! Mirrors the [`super::parsed`] pattern: POD-only, `serde`-derive-only,
 //! `#[non_exhaustive]` on the diagnostic-kind enum (per
-//! [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md)),
+//! [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-nested-json-envelope.md)),
 //! canonical `::new` constructor (D10) so detector PRs and adapter
 //! evolutions extend signatures additively.
 

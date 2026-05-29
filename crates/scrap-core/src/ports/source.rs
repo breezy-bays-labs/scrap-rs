@@ -15,7 +15,7 @@
 //! Object-safe (`&self`); usable as `Box<dyn SourcePort>`. No
 //! `Send + Sync` bound on the trait itself — those add at the
 //! `core::analyze<S, P>` call site if/when rayon parallelism arrives
-//! (per [`adr-port-surface-and-domain-conventions`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-port-surface-and-domain-conventions.md)
+//! (per [`adr-port-surface-and-domain-conventions`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-port-surface-and-domain-conventions.md)
 //! D11). Both shipped adapters happen to be `Send + Sync` as an
 //! emergent property; smoke tests in `tests/source_walker.rs` pin both
 //! the deliberate-absence at the trait level and the emergent presence

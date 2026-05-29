@@ -83,7 +83,7 @@ pub enum ResultDiscardKind {
 
 /// Body-shape behavioral facts the adapter parser recognises.
 ///
-/// `#[non_exhaustive]` per [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap4rs/adr-nested-json-envelope.md)'s
+/// `#[non_exhaustive]` per [`adr-nested-json-envelope`](https://github.com/breezy-bays-labs/ops/blob/main/decisions/scrap-rs/adr-nested-json-envelope.md)'s
 /// enum discipline; new variants land additively as detector PRs introduce
 /// new language-shape facts. The wire format is `snake_case`; per-variant
 /// `#[serde(rename = "...")]` is belt-and-suspenders against future
