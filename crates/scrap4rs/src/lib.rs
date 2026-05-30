@@ -8,14 +8,16 @@
 //! For consumer convenience the `scrap_core` modules are re-exported
 //! here, so downstream code that wants the full analyzer surface can
 //! depend on `scrap4rs` alone. This makes `scrap4rs`'s public API a
-//! strict superset of `scrap_core`'s — every module added to
-//! `scrap_core` becomes immediately public on `scrap4rs`. Re-exported
-//! types are identical (no newtype wrap): `scrap4rs::domain::Finding`
-//! and `scrap_core::domain::Finding` are the same type.
+//! strict superset of `scrap_core`'s — every top-level `scrap_core`
+//! module is re-exported here (the `pub use` list below is maintained
+//! by hand; any module added to `scrap_core` must be added to it).
+//! Re-exported types are identical (no newtype wrap):
+//! `scrap4rs::domain::Finding` and `scrap_core::domain::Finding` are
+//! the same type.
 
 #![warn(missing_docs)]
 
-pub use scrap_core::{adapters, cli, core, detectors, domain, ports};
+pub use scrap_core::{adapter_meta, adapters, cli, core, detectors, domain, ports};
 
 pub mod parser;
 
