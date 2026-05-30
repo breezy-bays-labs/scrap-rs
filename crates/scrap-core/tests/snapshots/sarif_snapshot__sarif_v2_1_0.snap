@@ -126,7 +126,7 @@ expression: pretty
           "ruleId": "surface_only_io",
           "level": "warning",
           "message": {
-            "text": "Assert on the substantive payload, not just the response status."
+            "text": "Read the content back and assert on it, not just the file's existence or metadata."
           },
           "locations": [
             {
