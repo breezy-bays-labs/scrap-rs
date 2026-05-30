@@ -1,0 +1,81 @@
+name: Set up Rust
+description: >-
+  Install a Rust toolchain and configure cargo caching for scrap-rs CI
+  jobs. Collapses the repeated dtolnay/rust-toolchain +
+  Swatinem/rust-cache (+ optional taiki-e/install-action) block that
+  every Rust job in ci.yml shares. A LOCAL composite action — referenced
+  by path (`uses: ./.github/actions/setup-rust`), so the calling job MUST
+  run actions/checkout first (the action file has to exist in the
+  workspace). checkout therefore stays in each job, not here.
+
+inputs:
+  toolchain:
+    description: >-
+      Rust toolchain channel/version passed to dtolnay/rust-toolchain.
+      The action is SHA-pinned to the @stable branch HEAD, but dtolnay
+      reads this input — an explicit value (e.g. "1.93") overrides the
+      branch default, so the MSRV job pins 1.93 against the same SHA.
+    required: false
+    default: stable
+  shared-key:
+    description: >-
+      Swatinem/rust-cache shared-key scoping the cache across jobs.
+      The MSRV job passes a distinct "scrap-rs-msrv" key to keep its
+      older-toolchain artifacts out of the stable cache.
+    required: false
+    default: scrap-rs
+  components:
+    description: >-
+      Comma-separated rustup components passed through to
+      dtolnay/rust-toolchain (e.g. "llvm-tools-preview" for the
+      coverage job). Empty adds no extra components.
+    required: false
+    default: ""
+  tools:
+    description: >-
+      Comma-separated taiki-e/install-action tool spec (e.g.
+      "cargo-nextest@0.9,cargo-llvm-cov@0.6"). The install-action step is
+      skipped entirely when empty.
+    required: false
+    default: ""
+  enable-cache:
+    description: >-
+      When "false", skip the Swatinem/rust-cache step entirely. The fmt
+      job sets this to "false" (it has no cache today). Also future-proofs
+      release-relevant workflows, which must neither read a poisoned cache
+      nor save one — scrap-rs has no release workflow during v0.x, so this
+      is dormant until then. See
+      https://docs.zizmor.sh/audits/#cache-poisoning. Defaults to "true".
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # tracks @stable branch
+      with:
+        toolchain: ${{ inputs.toolchain }}
+        components: ${{ inputs.components }}
+
+    - name: Cache cargo registry + target
+      # `enable-cache: false` skips this step (the fmt job has no cache).
+      # `save-if` is hardcoded to main-only here — uniform across every
+      # cache-using job in ci.yml, so it lives in the composite rather
+      # than the input surface. The `github` context resolves inside a
+      # composite step body.
+      if: inputs.enable-cache == 'true'
+      uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      with:
+        shared-key: ${{ inputs.shared-key }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+
+    - name: Install cargo tools
+      # Skipped when `tools` is empty. taiki-e/install-action's `tool:`
+      # input accepts a comma-separated list, so the coverage/scorecard
+      # jobs' two prior invocations (cargo-nextest + cargo-llvm-cov) fold
+      # into one step.
+      if: inputs.tools != ''
+      uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
+      with:
+        tool: ${{ inputs.tools }}

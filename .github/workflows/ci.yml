@@ -39,7 +39,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # tracks @stable branch
+      # fmt has no cache today — `enable-cache: false` preserves that.
+      - uses: ./.github/actions/setup-rust
+        with:
+          enable-cache: false
       - run: cargo fmt --all --check
 
   clippy:
@@ -50,11 +53,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # tracks @stable branch
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          shared-key: scrap-rs
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: ./.github/actions/setup-rust
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:
@@ -75,14 +74,9 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # tracks @stable branch
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: ./.github/actions/setup-rust
         with:
-          shared-key: scrap-rs
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
-        with:
-          tool: cargo-nextest@0.9
+          tools: cargo-nextest@0.9
       # cucumber-rs `harness = false` binaries don't implement libtest's
       # `--list --format terse` interface that nextest uses to enumerate
       # tests, so they fail with exit 2 on enumeration. Mirror the
@@ -126,11 +120,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # tracks @stable branch
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          shared-key: scrap-rs
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: ./.github/actions/setup-rust
       - run: cargo test -p scrap-examples --locked
 
   coverage:
@@ -141,19 +131,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # tracks @stable branch
+      - uses: ./.github/actions/setup-rust
         with:
           components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          shared-key: scrap-rs
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
-        with:
-          tool: cargo-nextest@0.9
-      - uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
-        with:
-          tool: cargo-llvm-cov@0.6
+          tools: cargo-nextest@0.9,cargo-llvm-cov@0.6
       # Threshold rationale: domain-only achieves >95% line coverage
       # trivially (constructors + getters covered by serde tests).
       # Setting at 85% is conservative — accommodates the parser-heavy
@@ -189,11 +170,14 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # tracks @1.93 branch
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      # MSRV pins the toolchain to 1.93 (overriding the action's @stable
+      # branch default) + a distinct cache key so its older-toolchain
+      # artifacts stay out of the stable cache. Same dtolnay SHA — the
+      # channel is the input, not a different pin.
+      - uses: ./.github/actions/setup-rust
         with:
+          toolchain: "1.93"
           shared-key: scrap-rs-msrv
-          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --workspace --all-targets --locked
 
   deny:
@@ -380,11 +364,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # tracks @stable branch
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          shared-key: scrap-rs
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: ./.github/actions/setup-rust
       - run: cargo doc --workspace --no-deps --document-private-items --locked
 
   zizmor:
@@ -489,19 +469,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # tracks @stable branch
+      - uses: ./.github/actions/setup-rust
         with:
           components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          shared-key: scrap-rs
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
-        with:
-          tool: cargo-nextest@0.9
-      - uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
-        with:
-          tool: cargo-llvm-cov@0.6
+          tools: cargo-nextest@0.9,cargo-llvm-cov@0.6
       # Two-step coverage regen mirrors the `coverage:` job — see this
       # job's block-level comment for the cucumber `harness = false`
       # rationale. Same byte-identical recipe across jobs so a future

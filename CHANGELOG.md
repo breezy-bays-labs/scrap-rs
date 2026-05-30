@@ -403,6 +403,26 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
 
 ### Changed
 
+- CI toolchain setup extracted into a local composite action
+  (`.github/actions/setup-rust`), collapsing the repeated
+  `dtolnay/rust-toolchain` + `Swatinem/rust-cache` (+ optional
+  `taiki-e/install-action`) block across all eight Rust jobs in
+  `.github/workflows/ci.yml` (`fmt`, `clippy`, `test`, `scrap-examples`,
+  `coverage`, `msrv`, `docs`, `scorecard`). Inputs: `toolchain`,
+  `shared-key`, `components`, `tools`, `enable-cache`. Behaviour-
+  preserving mechanical refactor — same effective toolchain, components,
+  cache keys, and tool versions per job (CI matrix green, all 15 checks);
+  `save-if: main-only` is hardcoded in the composite (uniform across
+  jobs). `actions/checkout` stays in each job (a local composite can only
+  run post-checkout). The MSRV job now passes `toolchain: "1.93"`
+  explicitly (the prior bare `dtolnay/rust-toolchain` @stable-branch SHA
+  pin with a `# tracks @1.93` comment resolved to stable); note the
+  effective compiler is unchanged because the repo's
+  `rust-toolchain.toml` (`channel = "stable"`) shadows the workflow's
+  toolchain selection for in-directory `cargo` calls — a pre-existing
+  MSRV-enforcement gap independent of this refactor. Mirrors the crap4rs
+  precedent, minus its macOS rustup-reinstall workaround + `cache-bin:
+  false` (neither was ever in scrap-rs CI). Closes scrap-rs#51.
 - `FsWalker::discover_test_files` (`crates/scrap-core/src/adapters/source/fs.rs`)
   decomposed into a `Decision` enum + `classify_entry`, `preflight_root`,
   and `FsWalker::build_walker` helpers (cognitive complexity 30 → 8 on
