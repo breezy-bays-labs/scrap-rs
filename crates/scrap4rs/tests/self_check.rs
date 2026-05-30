@@ -207,15 +207,20 @@ fn test_surface_only_io_self_check() {
     // scrap-rs#26 — `surface-only-io` detector dogfood (the first
     // correlation detector).
     //
+    // NON-REGRESSION GUARD, not positive evidence: scrap4rs's own src
+    // test bodies parse in-memory source STRINGS and have essentially no
+    // real fs-write-then-surface-check sites, so a green run here only
+    // proves the detector does not OVER-fire on the workspace's own code.
+    // The POSITIVE proof that the detector fires correctly is the e2e
+    // suite (`tests/detectors_surface_only_io_e2e.rs`) + the
+    // scrap-examples golden, not this self-check.
+    //
     // The detector emits a `Finding` when, for some `path_key`, a
     // `ParsedTest` carries a FilesystemWrite AND a FilesystemSurfaceCheck
-    // but NO FilesystemRead. scrap4rs's own production tests parse
-    // in-memory source STRINGS (they do not write real files and then
-    // check only their surface), so surface-only-io must NEVER fire. A
-    // non-zero count is a real regression: either a src test genuinely
-    // writes-and-surface-checks-without-reading (fix the test by reading
-    // the content back and asserting on it) or the detector over-fires
-    // (fix the detector + add a runner-shell fixture).
+    // but NO FilesystemRead. A non-zero count is a real regression: either
+    // a src test genuinely writes-and-surface-checks-without-reading (fix
+    // the test by reading the content back and asserting on it) or the
+    // detector over-fires (fix the detector + add a runner-shell fixture).
     //
     // Like its siblings, surface_only_io::detect consults `DetectorConfig`
     // (enabled/penalty) but NOT opt-outs — those live in the pipeline

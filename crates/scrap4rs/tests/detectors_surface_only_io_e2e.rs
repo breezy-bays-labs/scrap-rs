@@ -84,6 +84,23 @@ fn fires_on_tempfile_path_surface_check() {
 }
 
 #[test]
+fn fires_on_try_exists_surface_check() {
+    // SHOULD-FIX: `try_exists()` is the RECOMMENDED existence API. A write
+    // + `try_exists()` (surface only) + no read-back must fire, same as
+    // `exists()`.
+    assert!(fires(
+        r#"
+        #[test]
+        fn writes_then_try_exists() {
+            let p = "/tmp/scrap-e2e-try.txt";
+            std::fs::write(p, b"data").unwrap();
+            assert!(std::path::Path::new(p).try_exists().unwrap());
+        }
+        "#,
+    ));
+}
+
+#[test]
 fn fires_on_metadata_length_only_check() {
     // A write + length-only `metadata().len()` (a SURFACE check, not a
     // read) + no content read-back → fires.

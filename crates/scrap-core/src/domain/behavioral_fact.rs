@@ -60,7 +60,7 @@
 //! `Ord` set-admission, so the removal is non-breaking; the kept derives
 //! are `Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize`.
 //!
-//! TODO(scrap-rs#NN): extract a `BehavioralFactCatalog` query-API
+//! TODO(scrap-rs#117): extract a `BehavioralFactCatalog` query-API
 //! (e.g. `facts_for_key(&str)`, `keys()`) once the taxonomy passes
 //! ~10 variants. After scrap-rs#26 it is at 5 (`ResultAsserted`,
 //! `ResultDiscarded`, `FilesystemWrite`, `FilesystemSurfaceCheck`,
@@ -318,7 +318,14 @@ pub enum FsReadKind {
     /// `File::open(p)` — open a file handle for reading.
     #[serde(rename = "open_read")]
     OpenRead,
-    /// `BufReader::new(File::open(p))` — buffered read over an opened file.
+    /// Buffered read over an opened file. **Reserved — not yet projected
+    /// by the scrap4rs adapter at v0.1.** `BufReader::new(File::open(p))`
+    /// already surfaces a read via its inner `File::open(p)` →
+    /// [`FsReadKind::OpenRead`] (the read-presence the correlation needs),
+    /// so the adapter does not additionally emit a distinct `BufRead`
+    /// fact. The variant is kept on the wire surface for a future adapter
+    /// that wants to distinguish buffered from unbuffered reads without an
+    /// envelope `schema_version` bump.
     #[serde(rename = "buf_read")]
     BufRead,
 }

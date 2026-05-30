@@ -765,24 +765,39 @@ enum FsCallFamily {
 /// `std::fs::write` and a `use std::fs;`-qualified `fs::write` work);
 /// `File::*` matches the `File` type.
 fn fs_call_family(path: &syn::Path) -> Option<FsCallFamily> {
-    let segs: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
-    let leaf = segs.last()?.as_str();
-    // The penultimate segment names the container (`fs` / `File`).
-    let container = if segs.len() >= 2 {
-        segs[segs.len() - 2].as_str()
-    } else {
-        ""
-    };
-    match (container, leaf) {
-        ("fs", "write") => Some(FsCallFamily::Write(FsCallKind::Write)),
-        ("File", "create") => Some(FsCallFamily::Write(FsCallKind::CreateFile)),
-        ("fs", "create_dir" | "create_dir_all") => Some(FsCallFamily::Write(FsCallKind::CreateDir)),
-        ("fs", "read") => Some(FsCallFamily::Read(FsReadKind::Read)),
-        ("fs", "read_to_string") => Some(FsCallFamily::Read(FsReadKind::ReadToString)),
-        ("File", "open") => Some(FsCallFamily::Read(FsReadKind::OpenRead)),
-        ("fs", "metadata") => Some(FsCallFamily::Surface(FsSurfaceCheckKind::Metadata)),
-        _ => None,
+    // Zero-alloc last-two-segment match (per the file's `&Ident == "..."`
+    // convention; no `Vec<String>` build). The container disambiguates so
+    // a bare single-segment leaf is never matched.
+    let segs = &path.segments;
+    let leaf = &segs.last()?.ident;
+    let in_fs = segs.len() >= 2 && segs[segs.len() - 2].ident == "fs";
+    let in_file = segs.len() >= 2 && segs[segs.len() - 2].ident == "File";
+    if in_fs {
+        if leaf == "write" {
+            return Some(FsCallFamily::Write(FsCallKind::Write));
+        }
+        if leaf == "create_dir" || leaf == "create_dir_all" {
+            return Some(FsCallFamily::Write(FsCallKind::CreateDir));
+        }
+        if leaf == "read" {
+            return Some(FsCallFamily::Read(FsReadKind::Read));
+        }
+        if leaf == "read_to_string" {
+            return Some(FsCallFamily::Read(FsReadKind::ReadToString));
+        }
+        if leaf == "metadata" {
+            return Some(FsCallFamily::Surface(FsSurfaceCheckKind::Metadata));
+        }
     }
+    if in_file {
+        if leaf == "create" {
+            return Some(FsCallFamily::Write(FsCallKind::CreateFile));
+        }
+        if leaf == "open" {
+            return Some(FsCallFamily::Read(FsReadKind::OpenRead));
+        }
+    }
+    None
 }
 
 /// Map a surface-check method ident to its [`FsSurfaceCheckKind`], or
@@ -792,8 +807,13 @@ fn fs_call_family(path: &syn::Path) -> Option<FsCallFamily> {
 /// (`p.metadata()?.len()`): reading the length is surface inspection,
 /// not a content read-back. The trailing `.len()` is a method call on
 /// the metadata value (not the path) and projects nothing of its own.
+///
+/// `try_exists()` — the **recommended** existence API (it distinguishes
+/// "doesn't exist" from "couldn't tell") — maps to the same
+/// [`FsSurfaceCheckKind::Exists`] kind: it is still an existence-only
+/// surface check, not a content read-back.
 fn surface_check_kind(method: &syn::Ident) -> Option<FsSurfaceCheckKind> {
-    if method == "exists" {
+    if method == "exists" || method == "try_exists" {
         Some(FsSurfaceCheckKind::Exists)
     } else if method == "is_file" {
         Some(FsSurfaceCheckKind::IsFile)
@@ -832,17 +852,13 @@ fn is_tempfile_ctor(expr: &syn::Expr) -> bool {
     let syn::Expr::Path(p) = call.func.as_ref() else {
         return false;
     };
-    let segs: Vec<&syn::Ident> = p.path.segments.iter().map(|s| &s.ident).collect();
-    let leaf = match segs.last() {
-        Some(l) => *l,
-        None => return false,
+    let segs = &p.path.segments;
+    let Some(leaf) = segs.last().map(|s| &s.ident) else {
+        return false;
     };
-    // `NamedTempFile::new()` — container `NamedTempFile`, leaf `new`.
-    if segs.len() >= 2 {
-        let container = segs[segs.len() - 2];
-        if container == "NamedTempFile" && leaf == "new" {
-            return true;
-        }
+    // `NamedTempFile::new()` — penultimate segment `NamedTempFile`, leaf `new`.
+    if segs.len() >= 2 && segs[segs.len() - 2].ident == "NamedTempFile" && leaf == "new" {
+        return true;
     }
     // `tempfile()` / `tempfile::tempfile()` — leaf `tempfile`.
     leaf == "tempfile"
@@ -1836,8 +1852,10 @@ mod tests {
     #[test]
     fn projects_exists_is_file_is_dir_surface_checks() {
         // Receiver is the path; bound ident `p` resolves to `bind:p`.
+        // `try_exists` (the RECOMMENDED existence API) maps to Exists.
         for (method, kind) in [
             ("exists", FsSurfaceCheckKind::Exists),
+            ("try_exists", FsSurfaceCheckKind::Exists),
             ("is_file", FsSurfaceCheckKind::IsFile),
             ("is_dir", FsSurfaceCheckKind::IsDir),
         ] {
@@ -2159,6 +2177,29 @@ mod tests {
                 }
             )),
             "assert_matches! scrutinee read must project a FilesystemRead: {facts:?}",
+        );
+    }
+
+    #[test]
+    fn nested_tautology_in_assertion_block_is_recorded() {
+        // SHOULD-FIX (soften "no verdict change"): macro descent walking
+        // `assert!({ assert_eq!(a, a); true })`'s block arg re-reaches the
+        // INNER `assert_eq!(a, a)` via `visit_macro`, so it IS recorded as
+        // a tautological-flagged assertion. This is INTENDED — a nested
+        // tautology is a real tautology — so a `ParsedAssertion` with
+        // `arguments_identical: true` must be present. (This is the one
+        // place descent changes an existing detector's input: a body whose
+        // ONLY tautology is nested now surfaces it.)
+        let item = parse_test_fn("fn it() { assert!({ assert_eq!(a, a); true }); }");
+        let mut visitor = BodyVisitor::new();
+        visitor.drive(&item.block);
+        assert!(
+            visitor
+                .assertions
+                .iter()
+                .any(|a| a.name == "assert_eq" && a.arguments_identical),
+            "nested assert_eq!(a, a) must be recorded as a tautological assertion: {:?}",
+            visitor.assertions,
         );
     }
 
