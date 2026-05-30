@@ -187,12 +187,17 @@ impl BodyVisitor {
 /// 4. it appears in a **give-up region** — a non-assertion macro the
 ///    walker doesn't descend (`matches!`, `vec!`, `println!`, any custom
 ///    macro), or the unparseable tail/blob of a partial assertion parse.
-///    Every raw-token ident there is harvested (see [`harvest_idents`]).
+///    Every raw-token identifier AND string-literal path key there is
+///    harvested (see [`harvest_idents`]; the literal `lit:<value>` key was
+///    added at scrap-rs#26 round-3 to close the literal-path bypass).
 ///
 /// The analyzed-vs-give-up partition is shared with the fact-walk via
 /// [`split_assertion_macro_args`], so the two walkers agree by
-/// construction on what counts as analyzed — the property that makes "find
-/// a fire that survives an unanalyzed context" impossible.
+/// construction on what counts as analyzed. This closes the false
+/// positives that arise from an **unanalyzed context** (both ident- and
+/// literal-keyed). It is NOT a general FP-freedom claim — a read through
+/// an analyzed-but-unrecognized fs API is a separate over-fire
+/// (scrap-rs#120).
 struct PoisonScanner {
     /// Count of `Pat::Ident` bindings seen per name.
     bind_counts: HashMap<String, usize>,
@@ -222,6 +227,13 @@ impl PoisonScanner {
 impl<'ast> Visit<'ast> for PoisonScanner {
     fn visit_pat_ident(&mut self, pi: &'ast syn::PatIdent) {
         let name = pi.ident.to_string();
+        // Accepted conservative false-NEGATIVE (scrap-rs#26 round-3): an
+        // or-pattern binds one logical name through multiple `Pat::Ident`
+        // leaves — `let (Ok(p) | Err(p)) = res;` counts `p` twice → ≥2 →
+        // poisoned, silencing a legit fire. This errs toward MISS (the
+        // safe direction for a fail-closed FP guard), so it's left as-is;
+        // no tracking issue (a missed correlation is not a defect of the
+        // FP-safety contract).
         *self.bind_counts.entry(name.clone()).or_insert(0) += 1;
         // A `mut` (or `ref mut`) binding is poison: reassignment-capable.
         if pi.mutability.is_some() {
@@ -323,23 +335,32 @@ enum AssertionArgs {
 /// exprs + the give-up tail (see [`AssertionArgs`]). The single source of
 /// truth for the partition both walkers rely on.
 ///
-/// **Why the fail-closed guarantee is airtight (empty by construction).**
-/// The source file already parsed to a `syn` AST before either walker
-/// runs, so **macro token-streams are the only regions not represented as
-/// AST**. Both visitors fully recurse the AST — every fact/poison override
-/// calls its `syn::visit::*` super, none prunes — and both stop at exactly
-/// one place, `visit_macro`, where both route the tokens through THIS
+/// **Why the unanalyzed-region guarantee holds.** The source file already
+/// parsed to a `syn` AST before either walker runs, so **macro
+/// token-streams are the only regions not represented as AST**. Both
+/// visitors fully recurse the AST — every fact/poison override calls its
+/// `syn::visit::*` super, none prunes — and both stop at exactly one
+/// place, `visit_macro`, where both route the tokens through THIS
 /// function. The fact-walk analyzes `Full`/the `LeadingOnly` scrutinee and
 /// skips the give-up tail/`Unparseable` blob; the poison-walk analyzes the
 /// SAME exprs (counting in-macro bindings) and HARVESTS exactly the
-/// give-up regions the fact-walk skipped. So every region the fact-walk
-/// does not analyze is poison-harvested → any name there resolves to a
-/// fresh unique `opaque:<N>` → its write and check can never co-group. A
-/// false fire would need write+check correlated on a clean key with the
-/// read invisible; a read is invisible only inside a give-up region, which
-/// poisons the name and thereby also breaks the write↔check correlation.
-/// There is no "unanalyzed context" in which a stale key survives to
-/// misfire.
+/// give-up regions the fact-walk skipped.
+///
+/// The harvest ([`harvest_idents`]) poisons **both** path-key shapes
+/// `resolve_path_key` consults the poison set on — identifiers (`bind:` /
+/// binding-map) AND string literals (`lit:<value>`, scrap-rs#26 round-3).
+/// So a write and a check that name the same path (by ident or by string
+/// literal) can never co-group when a read on it is hidden in a give-up
+/// region: that read's path key is poisoned → resolves to a fresh unique
+/// `opaque:<N>` at every use → the write↔check correlation breaks too.
+/// **This closes false positives arising from an unanalyzed context.** It
+/// is NOT a claim of FP-freedom in general: a read through an
+/// *analyzed-but-unrecognized* fs API stays visible-as-clean (a separate
+/// over-fire, tracked at scrap-rs#120 — see the `surface_only_io` module
+/// doc), and a path key shape the harvest can't reconstruct (only idents +
+/// string literals are reconstructed) is not poisoned by name but still
+/// resolves to `opaque` via `resolve_path_key`'s catch-all, so it cannot
+/// false-fire either.
 fn split_assertion_macro_args(tokens: &proc_macro2::TokenStream) -> AssertionArgs {
     use syn::parse::Parser as _;
     let full = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
@@ -368,20 +389,31 @@ fn parse_leading_expr(
     Ok((expr, tail))
 }
 
-/// Recursively harvest every identifier in a raw token stream into
-/// `sink`, descending into `Group`s (so an ident nested in
+/// Recursively harvest every poison key in a raw token stream into
+/// `sink`, descending into `Group`s (so a token nested in
 /// `matches!(...)`'s parens is reached — flat iteration would miss it).
+///
+/// Harvests TWO key shapes, matching the two path-key forms
+/// [`BodyVisitor::resolve_path_key`] consults the poison set on:
+/// - **identifiers** → the bare name (matches the `bind:<ident>` /
+///   binding-map arm);
+/// - **string literals** → the `lit:<value>` key, using the SAME
+///   `syn::LitStr::value()` normalization `resolve_path_key` uses, so the
+///   harvested poison key is byte-identical to the key a `"…"` path
+///   resolves to (closes the literal bypass, scrap-rs#26 round-3 — a
+///   string-literal path that escaped the name-only harvest could
+///   otherwise survive as a clean `lit:` key and false-fire).
 ///
 /// Used at the poison pre-pass's GIVE-UP points: a non-assertion macro
 /// the walker doesn't descend, or the unparseable tail/blob of a partial
-/// assertion parse. Every name in such a region is poisoned (→ fresh
+/// assertion parse. Every key in such a region is poisoned (→ fresh
 /// unique opaque → can't group → suppressed).
 ///
 /// Recall tradeoff (INTENTIONAL, tracked: scrap-rs#119): a path mentioned
-/// inside a formatting/other non-assertion macro (e.g. `println!("{}", p)`)
-/// is harvested → its key is suppressed even if it is a genuine
-/// surface-only-io. Fail-closed trades that recall for zero false
-/// positives in unanalyzed contexts.
+/// inside a formatting/other non-assertion macro (e.g. `println!("{}", p)`
+/// or `dbg!(read("/tmp/x"))`) is harvested → its key is suppressed even if
+/// it is a genuine surface-only-io. Fail-closed trades that recall for
+/// zero false positives in unanalyzed contexts.
 fn harvest_idents(tokens: &proc_macro2::TokenStream, sink: &mut HashSet<String>) {
     for tt in tokens.clone() {
         match tt {
@@ -389,8 +421,18 @@ fn harvest_idents(tokens: &proc_macro2::TokenStream, sink: &mut HashSet<String>)
                 sink.insert(id.to_string());
             }
             proc_macro2::TokenTree::Group(g) => harvest_idents(&g.stream(), sink),
-            // Punct / Literal carry no binding/use name.
-            _ => {}
+            proc_macro2::TokenTree::Literal(lit) => {
+                // Only STRING literals form a path key; parse the single
+                // literal token as a `syn::LitStr` (non-string literals —
+                // int, byte-string — fail to parse and are skipped). The
+                // `lit:<value>` key must match `resolve_path_key` exactly.
+                let one = proc_macro2::TokenStream::from(proc_macro2::TokenTree::Literal(lit));
+                if let Ok(s) = syn::parse2::<syn::LitStr>(one) {
+                    sink.insert(format!("lit:{}", s.value()));
+                }
+            }
+            // Punct carries no poison key.
+            proc_macro2::TokenTree::Punct(_) => {}
         }
     }
 }
@@ -732,12 +774,8 @@ impl BodyVisitor {
     ///   a fresh `opaque:<N>`.
     fn resolve_path_key(&mut self, expr: &syn::Expr) -> String {
         match expr {
-            // String/path literal → `lit:<value>`.
-            syn::Expr::Lit(lit) => match &lit.lit {
-                syn::Lit::Str(s) => format!("lit:{}", s.value()),
-                // Non-string literal (byte string, int, ...) is not a path.
-                _ => self.fresh_opaque_key(),
-            },
+            // String/path literal → `lit:<value>` (poison-checked).
+            syn::Expr::Lit(lit) => self.resolve_literal_key(&lit.lit),
             // Reference `&p` → recurse into `p`.
             syn::Expr::Reference(r) => self.resolve_path_key(&r.expr),
             // Parenthesised `(p)` → recurse.
@@ -747,36 +785,61 @@ impl BodyVisitor {
                 Some(arg) => self.resolve_path_key(arg),
                 None => self.fresh_opaque_key(),
             },
-            // Bare ident → poisoned names route to a fresh opaque key
-            // (never correlatable); clean names resolve through the
-            // binding map, else `bind:<ident>`.
+            // Bare ident → `bind:`/binding-map (poison-checked).
             syn::Expr::Path(p) if p.qself.is_none() && p.path.segments.len() == 1 => {
-                let ident = p.path.segments[0].ident.to_string();
-                if self.poisoned.contains(&ident) {
-                    self.fresh_opaque_key()
-                } else {
-                    self.fs_bindings
-                        .get(&ident)
-                        .cloned()
-                        .unwrap_or_else(|| format!("bind:{ident}"))
-                }
+                self.resolve_ident_key(&p.path.segments[0].ident.to_string())
             }
             // `e.as_path()` / `e.as_ref()` → recurse into the receiver.
             // `f.path()` where `f` is a tempfile handle → that handle's key.
-            syn::Expr::MethodCall(mc) => {
-                if mc.method == "as_path" || mc.method == "as_ref" {
-                    self.resolve_path_key(&mc.receiver)
-                } else if mc.method == "path"
-                    && let Some(key) = self.tempfile_handle_of(&mc.receiver)
-                {
-                    key
-                } else {
-                    self.fresh_opaque_key()
-                }
-            }
+            syn::Expr::MethodCall(mc) => self.resolve_method_path_key(mc),
             // Everything else (format!/concat! macro, field path, call,
             // ...) is unresolvable → a fresh, non-correlating opaque key.
             _ => self.fresh_opaque_key(),
+        }
+    }
+
+    /// Resolve a literal to its `lit:<value>` key, OR a fresh opaque key
+    /// when that key was poisoned by a give-up-region harvest (the same
+    /// literal text appeared in an unanalyzed macro / tail — scrap-rs#26
+    /// round-3 literal-bypass close) or the literal is not a string.
+    fn resolve_literal_key(&mut self, lit: &syn::Lit) -> String {
+        if let syn::Lit::Str(s) = lit {
+            let key = format!("lit:{}", s.value());
+            if !self.poisoned.contains(&key) {
+                return key;
+            }
+        }
+        // Non-string literal, or a poisoned literal path → opaque.
+        self.fresh_opaque_key()
+    }
+
+    /// Resolve a bare ident to its key: a poisoned name (rebound /
+    /// reassigned / `mut` / appeared in a give-up region) routes to a fresh
+    /// opaque key (NEVER `bind:<name>` — a name-based fallback would
+    /// re-collide the pre/post-rebind keys and false-fire, the T2 gate);
+    /// a clean name resolves through the binding map, else `bind:<ident>`.
+    fn resolve_ident_key(&mut self, ident: &str) -> String {
+        if self.poisoned.contains(ident) {
+            return self.fresh_opaque_key();
+        }
+        self.fs_bindings
+            .get(ident)
+            .cloned()
+            .unwrap_or_else(|| format!("bind:{ident}"))
+    }
+
+    /// Resolve a method-call path arg: `e.as_path()` / `e.as_ref()` unwrap
+    /// to the receiver; `f.path()` on a tempfile handle aliases to that
+    /// handle's key; anything else is opaque.
+    fn resolve_method_path_key(&mut self, mc: &syn::ExprMethodCall) -> String {
+        if mc.method == "as_path" || mc.method == "as_ref" {
+            self.resolve_path_key(&mc.receiver)
+        } else if mc.method == "path"
+            && let Some(key) = self.tempfile_handle_of(&mc.receiver)
+        {
+            key
+        } else {
+            self.fresh_opaque_key()
         }
     }
 
@@ -2366,6 +2429,59 @@ mod tests {
             "ident in a Group must be harvested: {sink:?}"
         );
         assert!(sink.contains("read"));
+    }
+
+    #[test]
+    fn harvest_collects_string_literal_lit_keys() {
+        // scrap-rs#26 round-3: a string literal is harvested as its
+        // `lit:<value>` key — byte-identical to what `resolve_path_key`
+        // produces (via the SAME `LitStr::value()` normalization), so a
+        // poisoned literal path matches at resolution. Non-string literals
+        // (int / byte-string) are NOT path keys and are skipped.
+        let tokens: proc_macro2::TokenStream = "read(\"/tmp/x\", 42, b\"bytes\")"
+            .parse()
+            .expect("tokens parse");
+        let mut sink = HashSet::new();
+        harvest_idents(&tokens, &mut sink);
+        assert!(
+            sink.contains("lit:/tmp/x"),
+            "string literal must harvest its lit: key: {sink:?}",
+        );
+        // The int `42` and byte-string `b"bytes"` are not path keys.
+        assert!(!sink.contains("lit:42"));
+        assert!(!sink.contains("lit:bytes"));
+    }
+
+    #[test]
+    fn harvest_literal_key_matches_resolve_path_key() {
+        // Byte-identical pin: the key the harvest poisons for a string
+        // literal must equal the key `resolve_path_key` resolves the same
+        // literal to. An escape-bearing literal exercises `LitStr::value()`
+        // unescaping (raw `\t` in source → a real tab in the value) on both
+        // sides, so any normalization drift would surface here.
+        let src = r#"fn it() { let _ = std::fs::write("a\tb", b"d"); }"#;
+        let write_key = match fs_facts(src).into_iter().next() {
+            Some(BehavioralFact::FilesystemWrite { path_key, .. }) => path_key,
+            other => panic!("expected a write fact, got {other:?}"),
+        };
+        let tokens: proc_macro2::TokenStream = "dbg!(\"a\\tb\")".parse().expect("tokens parse");
+        let mut sink = HashSet::new();
+        harvest_idents(&tokens, &mut sink);
+        assert!(
+            sink.contains(&write_key),
+            "harvest key {sink:?} must contain the resolve_path_key key {write_key:?}",
+        );
+    }
+
+    #[test]
+    fn unknown_macro_poisons_string_literal_path() {
+        // End-to-end at the poison-scan level: a literal path inside an
+        // unknown macro is poisoned by its `lit:` key.
+        let poison = poison_of("fn it() { totally_made_up_macro!(\"/tmp/x\"); }");
+        assert!(
+            poison.contains("lit:/tmp/x"),
+            "literal path in unknown macro must poison its lit: key: {poison:?}",
+        );
     }
 
     #[test]

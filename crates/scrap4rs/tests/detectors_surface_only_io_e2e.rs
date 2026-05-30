@@ -488,10 +488,14 @@ fn does_not_fire_on_read_inside_assert_matches_guard() {
 #[test]
 fn does_not_fire_when_path_appears_in_unknown_macro() {
     // Unknown-macro gate (THE gate): a write + exists on `p`, then `p`
-    // appears in a totally-unknown macro → `p` is harvested from the
-    // unknown macro's give-up region → poisoned → no fire. This is the
-    // by-construction proof that fail-closed covers macros we've never
-    // heard of (custom test macros, future stdlib macros, ...).
+    // appears in a totally-unknown macro → `p`'s ident is harvested from
+    // the unknown macro's give-up region → poisoned → no fire. Together
+    // with the literal-path variant (`does_not_fire_when_literal_path_in_
+    // unknown_macro`), this covers BOTH path-key shapes (ident + string
+    // literal) the resolver consults — so a path named in any macro we've
+    // never heard of cannot false-fire. (This is scoped to unanalyzed
+    // contexts; it is NOT a claim of general FP-freedom — a read through an
+    // analyzed-but-unrecognized API is a separate over-fire, scrap-rs#120.)
     assert!(!fires(
         r#"
         #[test]
@@ -524,4 +528,101 @@ fn fires_on_assert_matches_scrutinee_surface_check() {
         }
         "#,
     ));
+}
+
+// ── Literal-path bypass close (cabinet round-3) ──────────────────────────
+//
+// The give-up harvest poisons NAMES; round-3 extends it to poison STRING
+// LITERALS too. A path written as a string literal that appears in any
+// unanalyzed region (unknown macro, `matches!`, `assert_matches!` guard
+// tail, `dbg!`/`println!`) has its `lit:<value>` key poisoned → opaque →
+// suppressed. Without this, a literal-path key bypassed poison entirely
+// (the read was invisible but the write+check still correlated → FP).
+
+#[test]
+fn does_not_fire_when_literal_path_read_in_unknown_macro() {
+    // The skeptic's claim-buster: a genuine read-back via `dbg!(...)` (an
+    // unanalyzed macro) on a LITERAL path. Before round-3 this FIRED (the
+    // `lit:` key bypassed poison); now the literal `"/tmp/x"` inside `dbg!`
+    // is harvested → its `lit:` key poisoned → no fire.
+    assert!(!fires(
+        r#"
+        #[test]
+        fn literal_read_in_dbg() {
+            std::fs::write("/tmp/scrap-lit-dbg.txt", b"d").unwrap();
+            assert!(std::path::Path::new("/tmp/scrap-lit-dbg.txt").exists());
+            dbg!(std::fs::read_to_string("/tmp/scrap-lit-dbg.txt").unwrap());
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn does_not_fire_when_literal_path_in_matches_macro() {
+    // Literal path read inside `matches!` (a non-assertion give-up region).
+    assert!(!fires(
+        r#"
+        #[test]
+        fn literal_in_matches() -> std::io::Result<()> {
+            std::fs::write("/tmp/scrap-lit-matches.txt", b"data")?;
+            assert!(std::path::Path::new("/tmp/scrap-lit-matches.txt").exists());
+            assert!(matches!(std::fs::read_to_string("/tmp/scrap-lit-matches.txt")?, Ok(_)));
+            Ok(())
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn does_not_fire_when_literal_path_in_assert_matches_guard() {
+    // Literal path read inside the `assert_matches!` GUARD tail (a give-up
+    // region; the scrutinee `flag` is analyzed, the guard is harvested).
+    assert!(!fires(
+        r#"
+        #[test]
+        fn literal_in_am_guard() -> std::io::Result<()> {
+            let flag: std::io::Result<String> = Ok(String::new());
+            std::fs::write("/tmp/scrap-lit-amg.txt", b"data")?;
+            assert!(std::path::Path::new("/tmp/scrap-lit-amg.txt").exists());
+            assert_matches!(flag, Ok(_) if std::fs::read_to_string("/tmp/scrap-lit-amg.txt")? == "data");
+            Ok(())
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn does_not_fire_when_literal_path_in_unknown_macro() {
+    // Literal path appears in a totally-unknown macro → poisoned.
+    assert!(!fires(
+        r#"
+        #[test]
+        fn literal_in_unknown_macro() {
+            std::fs::write("/tmp/scrap-lit-unknown.txt", b"x").unwrap();
+            assert!(std::path::Path::new("/tmp/scrap-lit-unknown.txt").exists());
+            totally_made_up_macro!("/tmp/scrap-lit-unknown.txt");
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn fires_on_literal_positive_control() {
+    // LITERAL POSITIVE CONTROL: a literal path that appears in NO give-up
+    // region must STILL FIRE (proves harvest-literals didn't kill legit
+    // literal-keyed fires). Write + exists on `"/tmp/y"`, no read, no macro
+    // mention elsewhere → fires, penalty 6.
+    let pt = parse_one(
+        r#"
+        #[test]
+        fn literal_only_write_and_exists() {
+            std::fs::write("/tmp/scrap-lit-pos.txt", b"x").unwrap();
+            assert!(std::path::Path::new("/tmp/scrap-lit-pos.txt").exists());
+        }
+        "#,
+    );
+    let finding =
+        detect(&pt, &DetectorConfig::default()).expect("literal positive control must fire");
+    assert_eq!(finding.smells.len(), 1);
+    assert_eq!(finding.smells[0].penalty, 6);
 }
