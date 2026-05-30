@@ -32,7 +32,7 @@
 
 use scrap_core::adapters::source::fs::FsWalker;
 use scrap_core::cli::config::DetectorConfig;
-use scrap_core::detectors::{no_op_io, tautological_assertion, zero_assertion};
+use scrap_core::detectors::{no_op_io, surface_only_io, tautological_assertion, zero_assertion};
 use scrap_core::domain::config::AnalysisConfig;
 use scrap_core::domain::types::{FilePath, SourceRoot};
 use scrap_core::ports::parser::TestParserPort;
@@ -197,6 +197,57 @@ fn test_no_op_io_self_check() {
         "no-op-io self-check failed: {n} test(s) in crates/scrap4rs/src/ trigger the detector:\n  - {list}\n\
          \nEither the test genuinely discards a Result without checking it (inspect or assert on the value, \
          or use .unwrap()/.expect()) or the detector has a false positive (fix the detector + add a fixture).",
+        n = offenders.len(),
+        list = offenders.join("\n  - "),
+    );
+}
+
+#[test]
+fn test_surface_only_io_self_check() {
+    // scrap-rs#26 — `surface-only-io` detector dogfood (the first
+    // correlation detector).
+    //
+    // The detector emits a `Finding` when, for some `path_key`, a
+    // `ParsedTest` carries a FilesystemWrite AND a FilesystemSurfaceCheck
+    // but NO FilesystemRead. scrap4rs's own production tests parse
+    // in-memory source STRINGS (they do not write real files and then
+    // check only their surface), so surface-only-io must NEVER fire. A
+    // non-zero count is a real regression: either a src test genuinely
+    // writes-and-surface-checks-without-reading (fix the test by reading
+    // the content back and asserting on it) or the detector over-fires
+    // (fix the detector + add a runner-shell fixture).
+    //
+    // Like its siblings, surface_only_io::detect consults `DetectorConfig`
+    // (enabled/penalty) but NOT opt-outs — those live in the pipeline
+    // driver (scrap-rs#72). It also deliberately does NOT consult
+    // has_positive_check, so an honest `assert!(p.exists())` would still
+    // fire it (the suppression-reconciliation design point); the self-check
+    // surfaces any such src test rather than silencing it.
+    let tests = parse_scrap4rs_src();
+    assert!(
+        !tests.is_empty(),
+        "self-check guard: expected to find at least one #[test] fn in crates/scrap4rs/src/; \
+         got zero — either the walker regressed or scrap4rs has no tests",
+    );
+
+    let cfg = DetectorConfig::default();
+    let mut offenders: Vec<String> = Vec::new();
+    for parsed in &tests {
+        if surface_only_io::detect(parsed, &cfg).is_some() {
+            offenders.push(format!(
+                "{file}::{name}",
+                file = parsed.identity.file_path,
+                name = parsed.identity.qualified_name.as_str(),
+            ));
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "surface-only-io self-check failed: {n} test(s) in crates/scrap4rs/src/ trigger the detector:\n  - {list}\n\
+         \nEither the test genuinely writes a file and checks only its surface (existence/metadata) without \
+         reading the content back (fix the test by reading + asserting on the content) or the detector has a \
+         false positive (fix the detector + add a runner-shell fixture).",
         n = offenders.len(),
         list = offenders.join("\n  - "),
     );

@@ -30,7 +30,7 @@
 //! `[detectors.<smell>]` table, then calling the detector's
 //! `detect(parsed, cfg)` fn. Wired so far: zero-assertion (#30),
 //! no-op-io (#25), tautological-assertion (#24, wired at #99),
-//! large-example (#31). Still to land: surface-only-io (#26).
+//! large-example (#31), surface-only-io (#26).
 //!
 //! Per scrap-rs#21 cabinet MF-1, `&FileConfig` is imported from
 //! `crate::domain::config` (the POD-types home) NOT from
@@ -39,6 +39,7 @@
 
 pub mod large_example;
 pub mod no_op_io;
+pub mod surface_only_io;
 pub mod tautological_assertion;
 pub mod zero_assertion;
 
@@ -149,6 +150,25 @@ pub fn detect_all(parsed: &ParsedTest, cfg: &FileConfig) -> Vec<Smell> {
     if let Some(finding) = large_example::detect(parsed, large_cfg) {
         smells.extend(finding.smells);
     }
-    // (Future detectors append here. #26 surface-only-io adds ~7 lines.)
+    // Surface-only-io (scrap-rs#26 — the first correlation detector,
+    // penalty 6). Groups the located filesystem facts by `path_key` and
+    // fires when some key shows a write + a surface check but no content
+    // read-back. ORTHOGONAL to the assertion-based smells: it reads only
+    // its own fact families (FilesystemWrite/SurfaceCheck/Read), never the
+    // assertion bag, and deliberately does NOT consult `has_positive_check`
+    // (an honest `assert!(p.exists())` both suppresses zero-assertion AND
+    // fires surface-only-io — both verdicts are right; see the detector's
+    // module docs for the suppression-reconciliation rationale). So it
+    // neither suppresses nor is suppressed by any other detector and can
+    // co-fire / stack with all of them (Option A; precedence policy
+    // deferred to the scrap-rs#32 score aggregator).
+    let surface_cfg = resolve_detector_for_path(
+        cfg,
+        parsed.identity.file_path.as_path(),
+        SmellCategory::SurfaceOnlyIo,
+    );
+    if let Some(finding) = surface_only_io::detect(parsed, surface_cfg) {
+        smells.extend(finding.smells);
+    }
     smells
 }
