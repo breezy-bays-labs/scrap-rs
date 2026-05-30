@@ -165,28 +165,39 @@ impl BodyVisitor {
 
 /// Pre-pass that computes the set of poisoned names for one test body.
 ///
-/// Fail-safe (allowlist) design per scrap-rs#26 cabinet CRITICAL #1:
-/// rather than enumerate every rebind FORM (a denylist that always misses
-/// one), it counts `Pat::Ident` leaves — EVERY pattern binding form
-/// (tuple-`let (a, p)`, struct/slice destructure, `for p in`, `if let` /
-/// `while let`, match arms, closure params, `x @ subpat`) reduces to
-/// `Pat::Ident` leaves that `syn`'s default `Visit` recursion reaches, so
-/// one override (`visit_pat_ident`) covers the open-ended set for free.
+/// **Fail-CLOSED, poison-on-uncertainty (scrap-rs#26 round-2).** A name is
+/// only correlatable if it is provably singly-bound, not `mut`, and never
+/// appears in a token region the walker did not fully analyze. Anything
+/// else is poisoned (→ a fresh unique `opaque:<N>` at every use → can't
+/// group → suppressed). The poison set is the SINGLE suppression
+/// mechanism for the `surface-only-io` correlation; every other escape
+/// hatch (in-macro rebinds, unknown macros, unparseable arg blobs) funnels
+/// here.
 ///
 /// A name is poisoned when ANY of:
-/// 1. it is bound (as a `Pat::Ident`) **two or more times** in the body
-///    — catches re-`let`, shadow, for-loop collision, tuple rebind, …;
-/// 2. any of its bindings carries `mut` (`let mut p` / `ref mut p`) —
-///    `mut` is the prerequisite for reassignment in compiled code;
-/// 3. it appears as the **target of an assignment** (`p = ...` /
-///    `p += ...`) — the only non-pattern rebind, a closed set
-///    (`Expr::Assign` plus the compound-assign `Expr::Binary` ops),
-///    needed because the parser also sees *uncompiled* fixtures where a
-///    reassignment can lack `mut`.
+/// 1. it is bound (as a `Pat::Ident`) **two or more times** anywhere the
+///    scanner reaches — re-`let`, shadow, for-loop collision, tuple
+///    rebind, closure param, in-macro re-binding, … (every binding FORM
+///    reduces to `Pat::Ident` leaves that `syn`'s default `Visit`
+///    recursion catches, so one `visit_pat_ident` override covers the
+///    open-ended set — and `visit_macro` extends that recursion into
+///    ANALYZED assertion-macro args, so in-macro bindings count too);
+/// 2. any of its bindings carries `mut` (`let mut p` / `ref mut p`);
+/// 3. it appears as the **target of an assignment** (`p = ...` / `p += ...`);
+/// 4. it appears in a **give-up region** — a non-assertion macro the
+///    walker doesn't descend (`matches!`, `vec!`, `println!`, any custom
+///    macro), or the unparseable tail/blob of a partial assertion parse.
+///    Every raw-token ident there is harvested (see [`harvest_idents`]).
+///
+/// The analyzed-vs-give-up partition is shared with the fact-walk via
+/// [`split_assertion_macro_args`], so the two walkers agree by
+/// construction on what counts as analyzed — the property that makes "find
+/// a fire that survives an unanalyzed context" impossible.
 struct PoisonScanner {
     /// Count of `Pat::Ident` bindings seen per name.
     bind_counts: HashMap<String, usize>,
-    /// Names directly poisoned by a `mut` binding or an assignment target.
+    /// Names directly poisoned by a `mut` binding, an assignment target,
+    /// or a give-up-region harvest.
     poisoned: HashSet<String>,
 }
 
@@ -238,19 +249,150 @@ impl<'ast> Visit<'ast> for PoisonScanner {
         }
         syn::visit::visit_expr_binary(self, node);
     }
+
+    /// Fail-closed macro handling, mirroring the fact-walk's analyzed /
+    /// give-up partition via [`split_assertion_macro_args`].
+    ///
+    /// - **Recognised assertion macros**: descend into the ANALYZED arg
+    ///   exprs (so in-macro `Pat::Ident` bindings count toward the ≥2
+    ///   trigger and in-macro `mut`/assignment poison directly), and
+    ///   poison-HARVEST the give-up tail/blob (the `assert_matches!`
+    ///   `, Pat if guard` tail, or an unparseable arg list).
+    /// - **Any other macro** (`matches!`, `vec!`, `println!`, custom): the
+    ///   whole token stream is a give-up region — harvest every ident.
+    ///
+    /// This is the home of the fail-closed rule: a name in any region the
+    /// fact-walk won't analyze is poisoned here, so it can never group.
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        let path = compose_macro_path_string(&mac.path);
+        let is_assertion = path
+            .rsplit("::")
+            .next()
+            .is_some_and(|leaf| ASSERTION_MACRO_NAMES.contains(&leaf));
+        if is_assertion {
+            match split_assertion_macro_args(&mac.tokens) {
+                AssertionArgs::Full(args) => {
+                    for e in &args {
+                        self.visit_expr(e);
+                    }
+                }
+                AssertionArgs::LeadingOnly(expr, tail) => {
+                    self.visit_expr(&expr);
+                    // The give-up tail (`, Pat if guard`) — harvest names.
+                    harvest_idents(&tail, &mut self.poisoned);
+                }
+                AssertionArgs::Unparseable(all) => {
+                    harvest_idents(&all, &mut self.poisoned);
+                }
+            }
+        } else {
+            // Non-assertion macro: an unanalyzed region in its entirety.
+            harvest_idents(&mac.tokens, &mut self.poisoned);
+        }
+        // NB: do NOT call `syn::visit::visit_macro` — its default does not
+        // descend into token streams anyway, and we've handled the tokens
+        // explicitly above. (The `self.visit_expr` calls above recurse
+        // into nested macros via this same override.)
+    }
+}
+
+/// The analyzed-vs-give-up partition of a recognised assertion macro's
+/// argument tokens. Computed ONCE by [`split_assertion_macro_args`] and
+/// consumed by BOTH the fact-walk ([`BodyVisitor::walk_assertion_macro_args`])
+/// AND the poison pre-pass ([`PoisonScanner::visit_macro`]) so the two
+/// walkers' notion of "what did we analyze" is identical by construction
+/// (the fail-closed invariant: any region one walker treats as a give-up,
+/// the other does too, and the poison harvest covers exactly the give-up
+/// regions).
+enum AssertionArgs {
+    /// The whole token stream parsed as a comma-separated `Expr` list
+    /// (`assert!(e)` / `assert_eq!(a, b)`). Every arg is analyzed.
+    Full(Vec<syn::Expr>),
+    /// Only the leading `Expr` parsed (`assert_matches!(scrutinee, Pat if
+    /// guard)`'s scrutinee is arg 0); the trailing `, Pat [if guard]`
+    /// tokens are the GIVE-UP tail and must be poison-harvested. The
+    /// `Expr` is boxed so this variant doesn't bloat the enum (`syn::Expr`
+    /// is ~272 bytes; clippy `large_enum_variant`).
+    LeadingOnly(Box<syn::Expr>, proc_macro2::TokenStream),
+    /// Nothing parsed as an `Expr` — the WHOLE token stream is a give-up
+    /// region and must be poison-harvested.
+    Unparseable(proc_macro2::TokenStream),
+}
+
+/// Split a recognised assertion macro's argument tokens into the analyzed
+/// exprs + the give-up tail (see [`AssertionArgs`]). The single source of
+/// truth for the partition both walkers rely on.
+///
+/// **Why the fail-closed guarantee is airtight (empty by construction).**
+/// The source file already parsed to a `syn` AST before either walker
+/// runs, so **macro token-streams are the only regions not represented as
+/// AST**. Both visitors fully recurse the AST — every fact/poison override
+/// calls its `syn::visit::*` super, none prunes — and both stop at exactly
+/// one place, `visit_macro`, where both route the tokens through THIS
+/// function. The fact-walk analyzes `Full`/the `LeadingOnly` scrutinee and
+/// skips the give-up tail/`Unparseable` blob; the poison-walk analyzes the
+/// SAME exprs (counting in-macro bindings) and HARVESTS exactly the
+/// give-up regions the fact-walk skipped. So every region the fact-walk
+/// does not analyze is poison-harvested → any name there resolves to a
+/// fresh unique `opaque:<N>` → its write and check can never co-group. A
+/// false fire would need write+check correlated on a clean key with the
+/// read invisible; a read is invisible only inside a give-up region, which
+/// poisons the name and thereby also breaks the write↔check correlation.
+/// There is no "unanalyzed context" in which a stale key survives to
+/// misfire.
+fn split_assertion_macro_args(tokens: &proc_macro2::TokenStream) -> AssertionArgs {
+    use syn::parse::Parser as _;
+    let full = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
+    if let Ok(args) = full.parse2(tokens.clone()) {
+        return AssertionArgs::Full(args.into_iter().collect());
+    }
+    if let Ok((expr, tail)) = parse_leading_expr.parse2(tokens.clone()) {
+        return AssertionArgs::LeadingOnly(Box::new(expr), tail);
+    }
+    AssertionArgs::Unparseable(tokens.clone())
 }
 
 /// `syn::parse::Parser`-shaped fn that parses ONE leading `Expr` and
-/// consumes (ignores) any trailing tokens. Used as the
-/// `walk_assertion_macro_args` fallback for `assert_matches!(scrutinee,
-/// Pat if guard)`, whose pattern arg makes a whole-`Punctuated<Expr>`
-/// parse fail; the scrutinee is always the leading expr.
-fn parse_leading_expr(input: syn::parse::ParseStream) -> syn::Result<syn::Expr> {
+/// RETURNS the remaining (unconsumed) tokens. Used by
+/// [`split_assertion_macro_args`] for `assert_matches!(scrutinee, Pat if
+/// guard)`, whose pattern arg makes a whole-`Punctuated<Expr>` parse fail;
+/// the scrutinee is the leading expr and the trailing `, Pat if guard` is
+/// the give-up tail the poison pre-pass harvests.
+fn parse_leading_expr(
+    input: syn::parse::ParseStream,
+) -> syn::Result<(syn::Expr, proc_macro2::TokenStream)> {
     let expr: syn::Expr = input.parse()?;
-    // Drain the rest of the stream so the trailing `, Pat if guard` does
-    // not produce an "unexpected token" error that rejects the parse.
-    input.parse::<proc_macro2::TokenStream>()?;
-    Ok(expr)
+    // Capture (not discard) the rest of the stream so the caller can
+    // poison-harvest the `, Pat if guard` tail.
+    let tail: proc_macro2::TokenStream = input.parse()?;
+    Ok((expr, tail))
+}
+
+/// Recursively harvest every identifier in a raw token stream into
+/// `sink`, descending into `Group`s (so an ident nested in
+/// `matches!(...)`'s parens is reached — flat iteration would miss it).
+///
+/// Used at the poison pre-pass's GIVE-UP points: a non-assertion macro
+/// the walker doesn't descend, or the unparseable tail/blob of a partial
+/// assertion parse. Every name in such a region is poisoned (→ fresh
+/// unique opaque → can't group → suppressed).
+///
+/// Recall tradeoff (INTENTIONAL, tracked: scrap-rs#119): a path mentioned
+/// inside a formatting/other non-assertion macro (e.g. `println!("{}", p)`)
+/// is harvested → its key is suppressed even if it is a genuine
+/// surface-only-io. Fail-closed trades that recall for zero false
+/// positives in unanalyzed contexts.
+fn harvest_idents(tokens: &proc_macro2::TokenStream, sink: &mut HashSet<String>) {
+    for tt in tokens.clone() {
+        match tt {
+            proc_macro2::TokenTree::Ident(id) => {
+                sink.insert(id.to_string());
+            }
+            proc_macro2::TokenTree::Group(g) => harvest_idents(&g.stream(), sink),
+            // Punct / Literal carry no binding/use name.
+            _ => {}
+        }
+    }
 }
 
 /// Extract the bare-ident name from an assignment LHS (`p = ...`).
@@ -497,41 +639,36 @@ impl BodyVisitor {
     /// existing overrides, so fs calls (and `.unwrap()` chains) nested
     /// inside the assertion project their facts.
     ///
-    /// Two-tier parse (cabinet CRITICAL #2):
-    /// 1. Parse the whole token stream as a comma-separated `Expr` list
-    ///    (`assert!(e)` / `assert_eq!(a, b)`) and walk every arg.
-    /// 2. If that fails — `assert_matches!(scrutinee, Pat if guard)`'s
-    ///    second arg is a PATTERN, not an `Expr`, so the whole-list parse
-    ///    fails — fall back to walking just the **leading expression**
-    ///    (the scrutinee, always arg 0), ignoring the trailing tokens.
-    ///    This captures `assert_matches!(fs::read_to_string(p)?, ..)`'s
-    ///    read so a genuine read-back is NOT dropped (which would
-    ///    false-fire surface-only-io).
+    /// Uses the shared [`split_assertion_macro_args`] partition so the
+    /// fact-walk analyzes EXACTLY the regions the poison pre-pass treats
+    /// as analyzed:
+    /// - [`AssertionArgs::Full`] → walk every arg expr;
+    /// - [`AssertionArgs::LeadingOnly`] → walk only the scrutinee (arg 0
+    ///   of `assert_matches!`); the tail is a give-up region the poison
+    ///   pre-pass harvested, so any name there is already suppressed and
+    ///   the fact-walk simply skips it;
+    /// - [`AssertionArgs::Unparseable`] → walk nothing.
     ///
-    /// A dropped/unparseable arg can therefore never CAUSE a fire — at
-    /// worst a fact is missed, never spuriously added. If even the
-    /// leading-expr parse fails, nothing is projected (a miss, the
-    /// fail-safe direction).
+    /// A skipped (give-up) arg can therefore never CAUSE a fire: every
+    /// name in it is poisoned by the pre-pass, so it can't group. The
+    /// scrutinee capture keeps a legit scrutinee read-back/surface-check
+    /// analyzable (reducing over-suppression of true positives).
     ///
     /// Lifetime note: the parsed exprs are locally-owned, but
     /// `self.visit_expr(&e)` typechecks because `BodyVisitor` stores only
     /// owned facts (no `&'ast` borrows), so the `Visit<'ast>` lifetime
     /// unifies with the local borrow.
     fn walk_assertion_macro_args(&mut self, tokens: &proc_macro2::TokenStream) {
-        use syn::parse::Parser as _;
-        let full = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
-        if let Ok(args) = full.parse2(tokens.clone()) {
-            for e in &args {
-                syn::visit::Visit::visit_expr(self, e);
+        match split_assertion_macro_args(tokens) {
+            AssertionArgs::Full(args) => {
+                for e in &args {
+                    syn::visit::Visit::visit_expr(self, e);
+                }
             }
-            return;
-        }
-        // Fallback: parse only the leading `Expr` (the scrutinee) and
-        // ignore everything after it. `parse_leading_expr` consumes the
-        // rest of the stream so syn's "unexpected trailing tokens" error
-        // doesn't reject the whole parse.
-        if let Ok(expr) = parse_leading_expr.parse2(tokens.clone()) {
-            syn::visit::Visit::visit_expr(self, &expr);
+            AssertionArgs::LeadingOnly(expr, _tail) => {
+                syn::visit::Visit::visit_expr(self, &expr);
+            }
+            AssertionArgs::Unparseable(_) => {}
         }
     }
 
@@ -2205,6 +2342,79 @@ mod tests {
         assert!(
             fs_facts("fn it() { dbg!(std::path::Path::new(p).exists()); }").is_empty(),
             "dbg! is not an assertion macro — must not descend",
+        );
+    }
+
+    // ── Fail-closed poison harvest (cabinet round-2) ────────────────────
+
+    /// Run the poison pre-pass on a body fragment and return its set.
+    fn poison_of(source: &str) -> std::collections::HashSet<String> {
+        let item = parse_test_fn(source);
+        PoisonScanner::scan(&item.block)
+    }
+
+    #[test]
+    fn harvest_idents_recurses_into_groups() {
+        // Flat token iteration would miss `p` nested inside `matches!(...)`'s
+        // parens; the recursive harvest reaches it.
+        let tokens: proc_macro2::TokenStream =
+            "matches!(read(p), Ok(_))".parse().expect("tokens parse");
+        let mut sink = HashSet::new();
+        harvest_idents(&tokens, &mut sink);
+        assert!(
+            sink.contains("p"),
+            "ident in a Group must be harvested: {sink:?}"
+        );
+        assert!(sink.contains("read"));
+    }
+
+    #[test]
+    fn unknown_macro_poisons_its_idents() {
+        // A non-assertion (unknown) macro is a give-up region: every ident
+        // inside it is harvested into the poison set.
+        let poison = poison_of("fn it() { totally_made_up_macro!(p, q); }");
+        assert!(
+            poison.contains("p"),
+            "unknown-macro ident must poison: {poison:?}"
+        );
+        assert!(poison.contains("q"));
+    }
+
+    #[test]
+    fn assert_matches_guard_tail_poisons_idents() {
+        // The `assert_matches!` give-up TAIL (`, Ok(_) if read(p) == x`)
+        // is harvested → `p` poisoned. The scrutinee (`flag`) is analyzed,
+        // NOT harvested — so a name only in the scrutinee stays clean.
+        let poison = poison_of("fn it() { assert_matches!(flag, Ok(_) if read(p) == \"x\"); }");
+        assert!(
+            poison.contains("p"),
+            "guard-tail ident must poison: {poison:?}"
+        );
+    }
+
+    #[test]
+    fn assert_matches_scrutinee_ident_not_harvested() {
+        // Boundary: the scrutinee is ANALYZED, so an ident appearing ONLY
+        // in the scrutinee (here `subject`, used once) is NOT harvested and
+        // NOT poisoned — proving the harvest cuts at the tail, not the
+        // whole blob. (`flag` in the pattern position is harvested, but
+        // that's a different name.)
+        let poison = poison_of("fn it() { assert_matches!(subject.metadata(), Ok(_)); }");
+        assert!(
+            !poison.contains("subject"),
+            "scrutinee-only ident must NOT be poisoned (tail-harvest, not blob): {poison:?}",
+        );
+    }
+
+    #[test]
+    fn in_macro_closure_param_makes_name_multiply_bound() {
+        // The poison scanner descends into ANALYZED assertion-macro args,
+        // so a closure param `|p|` is a second `Pat::Ident` binding of `p`
+        // (the first being the outer `let p`) → count≥2 → poisoned.
+        let poison = poison_of("fn it() { let p = \"/x\"; assert!([y].iter().any(|p| q(p))); }");
+        assert!(
+            poison.contains("p"),
+            "outer let + in-macro closure param must poison `p`: {poison:?}",
         );
     }
 }

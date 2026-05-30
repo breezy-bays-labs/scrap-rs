@@ -310,16 +310,10 @@ fn does_not_fire_on_tuple_let_rebind() {
 
 #[test]
 fn does_not_fire_on_in_macro_shadow_rebind() {
-    // Disclosure regression: the poison pre-pass (`PoisonScanner`) does
-    // NOT descend into assertion-macro tokens, but the main walk does. A
-    // `let`-shadow INSIDE an assertion macro is handled by the main walk's
-    // forward overwrite of `fs_bindings` (the inner `let p` re-keys `p`),
-    // so the write (outer `p`) and the check (inner `p`) land on different
-    // keys → no fire. The only rebind invisible to BOTH mechanisms is an
-    // in-macro ASSIGNMENT, which needs `mut`, and the only `mut` the
-    // scanner can't see is a top-level fn parameter — and `#[test]` fns
-    // are parameter-less, so that gap is unreachable for an analyzed test.
-    // This pins the benign in-macro-shadow case.
+    // Fail-closed (scrap-rs#26 round-2): `PoisonScanner` now descends into
+    // analyzed assertion-macro args, so the inner `let p` is a SECOND
+    // `Pat::Ident` binding of `p` → count≥2 → poisoned → the outer write
+    // and the in-macro check land on distinct opaque keys → no fire.
     assert!(!fires(
         r#"
         #[test]
@@ -366,6 +360,167 @@ fn fires_on_let_shadowing_with_same_value_regression() {
             std::fs::write(p, b"x").unwrap();
             let p = "/tmp/scrap-shadow-b.txt";
             assert!(std::path::Path::new(p).exists());
+        }
+        "#,
+    ));
+}
+
+// ── Fail-closed: poison-on-uncertainty (cabinet round-2) ─────────────────
+//
+// Any identifier that appears in a token region the walker did NOT fully
+// analyze is poisoned (→ fresh unique opaque → can't group → suppressed).
+// Two mechanisms: (A) `PoisonScanner` descends into ANALYZED
+// assertion-macro args, so in-macro re-bindings count toward the ≥2
+// poison trigger; (B) at give-up points (non-assertion macros, the
+// unparseable tail of a partial assertion parse), every raw-token ident
+// is harvested into the poison set. Each repro below pairs an outer
+// `let`-bound write+check on `p` with an in-macro construct that re-binds
+// or hides `p`; all MUST be suppressed.
+
+#[test]
+fn does_not_fire_on_in_macro_closure_param_rebind() {
+    // Repro 1 (Move A): the closure param `|p|` is a SECOND `Pat::Ident`
+    // binding of `p` → count≥2 → poisoned. `p` is `let`-bound outside so
+    // the count reaches 2 (outer-let + closure-param).
+    assert!(!fires(
+        r#"
+        #[test]
+        fn in_macro_closure_param() {
+            let p = "/tmp/scrap-closure.txt";
+            std::fs::write(p, b"x").unwrap();
+            assert!([make_other()].iter().any(|p| std::path::Path::new(p).exists()));
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn does_not_fire_on_in_macro_tuple_let_rebind() {
+    // Repro 2 (Move A): an in-macro tuple-`let (_a, p)` re-binds `p` →
+    // count≥2 → poisoned.
+    assert!(!fires(
+        r#"
+        #[test]
+        fn in_macro_tuple_let() {
+            let p = "/tmp/scrap-inmacro-tuple.txt";
+            std::fs::write(p, b"x").unwrap();
+            assert!({ let (_a, p) = (1, make_other()); std::path::Path::new(p).exists() });
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn does_not_fire_on_in_macro_if_let_rebind() {
+    // Repro 3 (Move A): an in-macro `if let Some(p)` re-binds `p` →
+    // count≥2 → poisoned.
+    assert!(!fires(
+        r#"
+        #[test]
+        fn in_macro_if_let() {
+            let p = "/tmp/scrap-inmacro-iflet.txt";
+            std::fs::write(p, b"x").unwrap();
+            assert!(if let Some(p) = make_opt() { std::path::Path::new(p).exists() } else { false });
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn does_not_fire_on_in_macro_mut_assign_rebind() {
+    // Repro 4 (Move A): an in-macro `let mut p` + reassignment. The `mut`
+    // binding poisons `p` directly; it is also a second binding (count≥2).
+    assert!(!fires(
+        r#"
+        #[test]
+        fn in_macro_mut_assign() {
+            let p = "/tmp/scrap-inmacro-mut.txt";
+            std::fs::write(p, b"x").unwrap();
+            assert!({ let mut p = make_path(); std::fs::write(&p, b"x").unwrap(); p = make_other(); std::path::Path::new(&p).exists() });
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn does_not_fire_on_read_inside_matches_macro() {
+    // Repro 5 (Move B): `matches!` is NOT an assertion macro, so its tokens
+    // are a give-up region. `p` is harvested from the raw `matches!` tokens
+    // → poisoned. The write + outer `exists()` therefore can't correlate
+    // (and the read inside `matches!` is never captured — correct, the
+    // path is opaque). MUST NOT fire.
+    assert!(!fires(
+        r#"
+        #[test]
+        fn read_inside_matches() -> std::io::Result<()> {
+            let p = "/tmp/scrap-matches.txt";
+            std::fs::write(p, b"data")?;
+            assert!(std::path::Path::new(p).exists());
+            assert!(matches!(std::fs::read_to_string(p)?, Ok(_)));
+            Ok(())
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn does_not_fire_on_read_inside_assert_matches_guard() {
+    // Repro 6 (Move B): the `assert_matches!` GUARD tail (`if <expr>`) is a
+    // give-up region — `parse_leading_expr` captures only the scrutinee
+    // (arg 0 = `flag`), and the guard `fs::read_to_string(p)? == "data"`
+    // is harvested → `p` poisoned. The outer write + exists can't
+    // correlate. MUST NOT fire.
+    assert!(!fires(
+        r#"
+        #[test]
+        fn read_inside_assert_matches_guard() -> std::io::Result<()> {
+            let p = "/tmp/scrap-am-guard.txt";
+            let flag: std::io::Result<()> = Ok(());
+            std::fs::write(p, b"data")?;
+            assert!(std::path::Path::new(p).exists());
+            assert_matches!(flag, Ok(_) if std::fs::read_to_string(p)? == "data");
+            Ok(())
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn does_not_fire_when_path_appears_in_unknown_macro() {
+    // Unknown-macro gate (THE gate): a write + exists on `p`, then `p`
+    // appears in a totally-unknown macro → `p` is harvested from the
+    // unknown macro's give-up region → poisoned → no fire. This is the
+    // by-construction proof that fail-closed covers macros we've never
+    // heard of (custom test macros, future stdlib macros, ...).
+    assert!(!fires(
+        r#"
+        #[test]
+        fn path_in_unknown_macro() {
+            let p = "/tmp/scrap-unknown.txt";
+            std::fs::write(p, b"x").unwrap();
+            assert!(std::path::Path::new(p).exists());
+            totally_made_up_macro!(p);
+        }
+        "#,
+    ));
+}
+
+// ── Over-suppression boundary: harvest the TAIL only, never the blob ─────
+
+#[test]
+fn fires_on_assert_matches_scrutinee_surface_check() {
+    // Boundary proof (guards against whole-blob harvest): the SCRUTINEE of
+    // `assert_matches!` is an ANALYZED region (arg 0). A write + a surface
+    // check on `p` in the scrutinee, with no read, MUST still fire. If the
+    // harvest poisoned the whole macro blob (scrutinee included), `p` would
+    // be poisoned and the detector would go dead here.
+    assert!(fires(
+        r#"
+        #[test]
+        fn assert_matches_scrutinee_surface() {
+            let p = "/tmp/scrap-am-scrutinee.txt";
+            std::fs::write(p, b"data").unwrap();
+            assert_matches!(p.metadata(), Ok(m) if m.len() > 0);
         }
         "#,
     ));

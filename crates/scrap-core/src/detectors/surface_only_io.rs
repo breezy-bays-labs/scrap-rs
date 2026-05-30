@@ -33,29 +33,46 @@
 //! carries a `path_key` identity + a `path_arg_span` position the adapter
 //! computes); the core composes the correlation + verdict here.
 //!
-//! ### Distinct `opaque:` keys never correlate
+//! ### Fail-closed correlation: poison-on-uncertainty
 //!
-//! When the adapter cannot resolve a path expression (`format!(..)`,
-//! `concat!(..)`, a field path, an interprocedural value), OR when a name
-//! is **not provably singly-bound** (it is rebound in any form, reassigned,
-//! or declared `mut` — see the binding-poison pre-pass in
-//! `scrap4rs::parser::body`), it stamps a **distinct** `opaque:<N>` key per
-//! call site. Two opaque sites therefore never group together, so an
-//! unresolvable (or rebound) write and an unresolvable (or rebound) surface
-//! check can never spuriously correlate into a false positive — the
-//! conservative choice (miss rather than misfire). This is the fail-safe
-//! guarantee: a path key only correlates when the adapter can prove both
-//! sites name the same value.
+//! A path key correlates a write with a check **only** when the adapter
+//! can prove both sites name the same value. Two sources of `opaque:<N>`
+//! keys (each call site gets a *distinct* one, so they never group):
 //!
-//! **Structural FP-safety invariant:** a poisoned name resolves to a
-//! *fresh* `opaque:<N>` at every use, and fresh opaque keys are globally
-//! unique, so a poisoned name's facts can never group with any other
-//! fact. Poisoning therefore *strictly removes* correlations — it is
-//! structurally incapable of *causing* a false positive. A binding form
-//! the poison pre-pass fails to recognise can only cause a **miss** (an
-//! under-recognised correlation), never a misfire. (Missing a poison
-//! trigger is the safe direction; the pre-pass over-approximates toward
-//! poison for exactly this reason.)
+//! 1. **Unresolvable path expressions** — `format!(..)`, `concat!(..)`,
+//!    a field path, an interprocedural value.
+//! 2. **Poisoned names** — the binding-poison pre-pass
+//!    (`scrap4rs::parser::body::PoisonScanner`) is **fail-closed**: it
+//!    poisons any name that is multiply-bound, `mut`, an assignment
+//!    target, OR **appears in a token region the walker did not fully
+//!    analyze** (an in-macro rebind, a non-assertion macro such as
+//!    `matches!`/`vec!`/an unknown custom macro, or the unparseable tail
+//!    of a partial assertion parse). A poisoned name resolves to a fresh
+//!    `opaque:<N>` at every use.
+//!
+//! **By-construction FP-safety:** a poisoned name's fresh, globally-unique
+//! opaque keys can never group with any other fact, so poisoning *strictly
+//! removes* correlations — it is structurally incapable of *causing* a
+//! false positive. Because the poison set covers every region the
+//! fact-walk does not analyze (the partition is shared via
+//! `split_assertion_macro_args`, so the two walkers agree by
+//! construction), there is no "unanalyzed context" in which a stale key
+//! can survive to misfire. The cost is the conservative direction: a path
+//! mentioned in an unanalyzed region (e.g. inside a `println!`) is
+//! suppressed even if it is a genuine surface-only-io — an accepted recall
+//! tradeoff, tracked at
+//! [scrap-rs#119](https://github.com/breezy-bays-labs/scrap-rs/issues/119).
+//!
+//! **Scope of the FP-safety guarantee.** It covers false positives that
+//! would arise from an *unanalyzed context* (poisoning closes those). It
+//! does NOT make the detector FP-free in general: read recognition is a
+//! fixed v0.1 API set (`fs::read*`, `File::open`, ...), so a read through
+//! an *analyzed but unrecognized* API — `fs_err::read(p)`, an
+//! extension-trait `.read()`, any container segment that isn't literally
+//! `fs`/`File` — leaves the name clean and can leave a surface-only
+//! finding un-suppressed. That is a read-recognition recall gap (present
+//! since the detector landed, orthogonal to the poison mechanism), tracked
+//! separately; widening the recognized read set is the fix, not poisoning.
 //!
 //! ## Suppression reconciliation — does NOT consult `has_positive_check`
 //!
