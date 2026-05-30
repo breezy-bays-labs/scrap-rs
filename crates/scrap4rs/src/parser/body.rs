@@ -766,38 +766,27 @@ enum FsCallFamily {
 /// `File::*` matches the `File` type.
 fn fs_call_family(path: &syn::Path) -> Option<FsCallFamily> {
     // Zero-alloc last-two-segment match (per the file's `&Ident == "..."`
-    // convention; no `Vec<String>` build). The container disambiguates so
-    // a bare single-segment leaf is never matched.
+    // convention; no `Vec<String>` build). Resolve the container + leaf to
+    // borrowed `&str`s once, then a single flat `match` keeps cyclomatic
+    // complexity low (one decision point, not a per-leaf `if` ladder). The
+    // container disambiguates so a bare single-segment leaf is never matched.
     let segs = &path.segments;
-    let leaf = &segs.last()?.ident;
-    let in_fs = segs.len() >= 2 && segs[segs.len() - 2].ident == "fs";
-    let in_file = segs.len() >= 2 && segs[segs.len() - 2].ident == "File";
-    if in_fs {
-        if leaf == "write" {
-            return Some(FsCallFamily::Write(FsCallKind::Write));
-        }
-        if leaf == "create_dir" || leaf == "create_dir_all" {
-            return Some(FsCallFamily::Write(FsCallKind::CreateDir));
-        }
-        if leaf == "read" {
-            return Some(FsCallFamily::Read(FsReadKind::Read));
-        }
-        if leaf == "read_to_string" {
-            return Some(FsCallFamily::Read(FsReadKind::ReadToString));
-        }
-        if leaf == "metadata" {
-            return Some(FsCallFamily::Surface(FsSurfaceCheckKind::Metadata));
-        }
+    let leaf = segs.last()?.ident.to_string();
+    let container = if segs.len() >= 2 {
+        segs[segs.len() - 2].ident.to_string()
+    } else {
+        String::new()
+    };
+    match (container.as_str(), leaf.as_str()) {
+        ("fs", "write") => Some(FsCallFamily::Write(FsCallKind::Write)),
+        ("File", "create") => Some(FsCallFamily::Write(FsCallKind::CreateFile)),
+        ("fs", "create_dir" | "create_dir_all") => Some(FsCallFamily::Write(FsCallKind::CreateDir)),
+        ("fs", "read") => Some(FsCallFamily::Read(FsReadKind::Read)),
+        ("fs", "read_to_string") => Some(FsCallFamily::Read(FsReadKind::ReadToString)),
+        ("File", "open") => Some(FsCallFamily::Read(FsReadKind::OpenRead)),
+        ("fs", "metadata") => Some(FsCallFamily::Surface(FsSurfaceCheckKind::Metadata)),
+        _ => None,
     }
-    if in_file {
-        if leaf == "create" {
-            return Some(FsCallFamily::Write(FsCallKind::CreateFile));
-        }
-        if leaf == "open" {
-            return Some(FsCallFamily::Read(FsReadKind::OpenRead));
-        }
-    }
-    None
 }
 
 /// Map a surface-check method ident to its [`FsSurfaceCheckKind`], or
