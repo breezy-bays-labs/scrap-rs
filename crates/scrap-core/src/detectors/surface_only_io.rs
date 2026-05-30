@@ -41,38 +41,47 @@
 //!
 //! 1. **Unresolvable path expressions** — `format!(..)`, `concat!(..)`,
 //!    a field path, an interprocedural value.
-//! 2. **Poisoned names** — the binding-poison pre-pass
+//! 2. **Poisoned path keys** — the poison pre-pass
 //!    (`scrap4rs::parser::body::PoisonScanner`) is **fail-closed**: it
-//!    poisons any name that is multiply-bound, `mut`, an assignment
-//!    target, OR **appears in a token region the walker did not fully
-//!    analyze** (an in-macro rebind, a non-assertion macro such as
-//!    `matches!`/`vec!`/an unknown custom macro, or the unparseable tail
-//!    of a partial assertion parse). A poisoned name resolves to a fresh
-//!    `opaque:<N>` at every use.
+//!    poisons any path key (a bound/used **identifier** OR a
+//!    **string-literal** `lit:<value>`) that is multiply-bound, `mut`, an
+//!    assignment target, OR **appears in a token region the walker did not
+//!    fully analyze** (an in-macro rebind, a non-assertion macro such as
+//!    `matches!`/`vec!`/`dbg!`/an unknown custom macro, or the unparseable
+//!    tail of a partial assertion parse). A poisoned key resolves to a
+//!    fresh `opaque:<N>` at every use.
 //!
-//! **By-construction FP-safety:** a poisoned name's fresh, globally-unique
-//! opaque keys can never group with any other fact, so poisoning *strictly
-//! removes* correlations — it is structurally incapable of *causing* a
-//! false positive. Because the poison set covers every region the
-//! fact-walk does not analyze (the partition is shared via
-//! `split_assertion_macro_args`, so the two walkers agree by
-//! construction), there is no "unanalyzed context" in which a stale key
-//! can survive to misfire. The cost is the conservative direction: a path
-//! mentioned in an unanalyzed region (e.g. inside a `println!`) is
-//! suppressed even if it is a genuine surface-only-io — an accepted recall
-//! tradeoff, tracked at
+//! **FP-safety for unanalyzed contexts (by construction):** a poisoned
+//! key's fresh, globally-unique opaque keys can never group with any other
+//! fact, so poisoning *strictly removes* correlations — it is incapable of
+//! *causing* a false positive. Because the poison harvest covers every
+//! region the fact-walk does not analyze (the partition is shared via
+//! `split_assertion_macro_args`, so the two walkers agree by construction)
+//! and harvests **both** path-key shapes the resolver consults
+//! (identifiers and string literals — the literal arm was the
+//! scrap-rs#26-round-3 bypass), no false positive can arise from a read
+//! hidden in an unanalyzed context. The cost is the conservative
+//! direction: a path mentioned in an unanalyzed region (e.g.
+//! `dbg!(read("/tmp/x"))` or `println!("{}", p)`) is suppressed even if it
+//! is a genuine surface-only-io — an accepted recall tradeoff, tracked at
 //! [scrap-rs#119](https://github.com/breezy-bays-labs/scrap-rs/issues/119).
 //!
-//! **Scope of the FP-safety guarantee.** It covers false positives that
-//! would arise from an *unanalyzed context* (poisoning closes those). It
-//! does NOT make the detector FP-free in general: read recognition is a
-//! fixed v0.1 API set (`fs::read*`, `File::open`, ...), so a read through
-//! an *analyzed but unrecognized* API — `fs_err::read(p)`, an
-//! extension-trait `.read()`, any container segment that isn't literally
-//! `fs`/`File` — leaves the name clean and can leave a surface-only
-//! finding un-suppressed. That is a read-recognition recall gap (present
-//! since the detector landed, orthogonal to the poison mechanism), tracked
-//! separately; widening the recognized read set is the fix, not poisoning.
+//! **What this does NOT cover (a separate, tracked false positive).** The
+//! guarantee above is scoped to *unanalyzed contexts*. It does NOT make
+//! the detector FP-free in general: read recognition is a fixed v0.1 API
+//! set, so a genuine content read-back through an **analyzed but
+//! unrecognized** read API — a custom helper (`load(p)`, `slurp(p)`),
+//! `fs_err::*`, `OpenOptions::new().read(true).open(p)`, an extension-trait
+//! `.read*()`, or any container segment that isn't literally `fs`/`File` —
+//! stays visible-as-clean and **over-fires** (the test really does read
+//! the content, but the detector still reports surface-only). This is a
+//! **false positive** (unrecognized read API), NOT a recall gap. Common
+//! std idioms ARE recognized and safe: `fs::read` / `fs::read_to_string`,
+//! `File::open`, `BufReader::new(File::open(..))` (and `tokio::fs::read*`
+//! via the `fs::` container match). Widening the recognized read set is
+//! the fix; it is deferred and
+//! [tracked: scrap-rs#120](https://github.com/breezy-bays-labs/scrap-rs/issues/120),
+//! not addressed by the poison mechanism.
 //!
 //! ## Suppression reconciliation — does NOT consult `has_positive_check`
 //!
