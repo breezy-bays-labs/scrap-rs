@@ -14,6 +14,17 @@ live. See `ops/pipelines/scrap4rs/scrap4rs-20260504-kickstart-plan.md`
 
 ### Added
 
+- `scrap4rs::adapter_meta` — re-export of `scrap_core::adapter_meta`
+  from `crates/scrap4rs/src/lib.rs`. The `pub use scrap_core::{…}` list
+  omitted `adapter_meta` even though `scrap_core` exposes it as a
+  top-level module, breaking the lib docstring's "strict superset of
+  `scrap_core`" promise. The re-export now enumerates all seven core
+  modules (`adapter_meta, adapters, cli, core, detectors, domain,
+  ports`), so downstream code depending on `scrap4rs` alone reaches
+  `scrap4rs::adapter_meta::AdapterMeta` without crossing to
+  `scrap_core`. Audit found `adapter_meta` as the only omission. The
+  docstring is reworded to note the `pub use` list is hand-maintained.
+  Closes scrap-rs#86.
 - `Smell.span: Option<Span>` — additive per-Smell line attribution
   inside a `Finding`. Detectors emit `Some(span)` when they have
   per-assertion location (e.g. a `tautological-assertion` smell can
