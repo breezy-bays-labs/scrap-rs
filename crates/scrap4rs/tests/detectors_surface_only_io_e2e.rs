@@ -138,6 +138,32 @@ fn does_not_fire_when_read_back_is_inside_the_assertion_macro() {
 }
 
 #[test]
+fn does_not_fire_when_read_back_is_inside_assert_matches() {
+    // Cabinet CRITICAL #2: `assert_matches!(fs::read_to_string(p)?, Ok(s)
+    // if ...)`'s SECOND arg is a pattern (not an Expr), so a whole-arglist
+    // `Punctuated<Expr>` parse fails. A naive "drop all facts on parse
+    // failure" loses the read → surface-only-io false-fires on a genuine
+    // read+assert. The leading-Expr fallback captures the scrutinee
+    // (`fs::read_to_string(p)?`, always arg 0) → read projected → suppressed.
+    //
+    // Discriminating: a surface check (`exists()`) is ALSO present, so the
+    // detector WOULD fire if the read-back inside assert_matches! were
+    // dropped. The leading-Expr fallback must capture the read → no fire.
+    assert!(!fires(
+        r#"
+        #[test]
+        fn reads_content_back_in_assert_matches() -> std::io::Result<()> {
+            let p = "/tmp/scrap-e2e-am.txt";
+            std::fs::write(p, b"data")?;
+            assert!(std::path::Path::new(p).exists());
+            assert_matches!(std::fs::read_to_string(p)?, Ok(s) if s == "data");
+            Ok(())
+        }
+        "#,
+    ));
+}
+
+#[test]
 fn does_not_fire_when_only_writing() {
     // A write with no surface check at all is not the smell.
     assert!(!fires(

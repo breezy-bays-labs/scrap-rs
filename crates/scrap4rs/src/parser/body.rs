@@ -240,6 +240,19 @@ impl<'ast> Visit<'ast> for PoisonScanner {
     }
 }
 
+/// `syn::parse::Parser`-shaped fn that parses ONE leading `Expr` and
+/// consumes (ignores) any trailing tokens. Used as the
+/// `walk_assertion_macro_args` fallback for `assert_matches!(scrutinee,
+/// Pat if guard)`, whose pattern arg makes a whole-`Punctuated<Expr>`
+/// parse fail; the scrutinee is always the leading expr.
+fn parse_leading_expr(input: syn::parse::ParseStream) -> syn::Result<syn::Expr> {
+    let expr: syn::Expr = input.parse()?;
+    // Drain the rest of the stream so the trailing `, Pat if guard` does
+    // not produce an "unexpected token" error that rejects the parse.
+    input.parse::<proc_macro2::TokenStream>()?;
+    Ok(expr)
+}
+
 /// Extract the bare-ident name from an assignment LHS (`p = ...`).
 /// Returns `None` for field/index/tuple LHS (those aren't a single
 /// correlatable name, so they need no poisoning here).
@@ -480,24 +493,45 @@ impl<'ast> Visit<'ast> for BodyVisitor {
 
 impl BodyVisitor {
     /// Best-effort walk of a recognised assertion macro's argument exprs
-    /// (scrap-rs#26). Parses the macro tokens as a comma-separated
-    /// `Expr` list and re-drives each through the visitor's existing
-    /// overrides, so fs calls (and `.unwrap()` chains) nested inside the
-    /// assertion project their facts. Token streams that don't parse as
-    /// an `Expr` list are silently skipped (e.g. `assert_matches!`'s
-    /// pattern arg) — an accepted v0.1 limit.
+    /// (scrap-rs#26). Re-drives each parsed arg through the visitor's
+    /// existing overrides, so fs calls (and `.unwrap()` chains) nested
+    /// inside the assertion project their facts.
     ///
-    /// Lifetime note: the parsed `args` are locally-owned, but
+    /// Two-tier parse (cabinet CRITICAL #2):
+    /// 1. Parse the whole token stream as a comma-separated `Expr` list
+    ///    (`assert!(e)` / `assert_eq!(a, b)`) and walk every arg.
+    /// 2. If that fails — `assert_matches!(scrutinee, Pat if guard)`'s
+    ///    second arg is a PATTERN, not an `Expr`, so the whole-list parse
+    ///    fails — fall back to walking just the **leading expression**
+    ///    (the scrutinee, always arg 0), ignoring the trailing tokens.
+    ///    This captures `assert_matches!(fs::read_to_string(p)?, ..)`'s
+    ///    read so a genuine read-back is NOT dropped (which would
+    ///    false-fire surface-only-io).
+    ///
+    /// A dropped/unparseable arg can therefore never CAUSE a fire — at
+    /// worst a fact is missed, never spuriously added. If even the
+    /// leading-expr parse fails, nothing is projected (a miss, the
+    /// fail-safe direction).
+    ///
+    /// Lifetime note: the parsed exprs are locally-owned, but
     /// `self.visit_expr(&e)` typechecks because `BodyVisitor` stores only
     /// owned facts (no `&'ast` borrows), so the `Visit<'ast>` lifetime
     /// unifies with the local borrow.
     fn walk_assertion_macro_args(&mut self, tokens: &proc_macro2::TokenStream) {
         use syn::parse::Parser as _;
-        let parser = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
-        if let Ok(args) = parser.parse2(tokens.clone()) {
+        let full = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
+        if let Ok(args) = full.parse2(tokens.clone()) {
             for e in &args {
                 syn::visit::Visit::visit_expr(self, e);
             }
+            return;
+        }
+        // Fallback: parse only the leading `Expr` (the scrutinee) and
+        // ignore everything after it. `parse_leading_expr` consumes the
+        // rest of the stream so syn's "unexpected trailing tokens" error
+        // doesn't reject the whole parse.
+        if let Ok(expr) = parse_leading_expr.parse2(tokens.clone()) {
+            syn::visit::Visit::visit_expr(self, &expr);
         }
     }
 
@@ -2102,5 +2136,45 @@ mod tests {
     #[test]
     fn unrelated_calls_project_no_fs_facts() {
         assert!(fs_facts("fn it() { let _ = compute(); foo.bar(); v.len(); }").is_empty());
+    }
+
+    // ── assert_matches! scrutinee descent (cabinet CRITICAL #2) ─────────
+
+    #[test]
+    fn assert_matches_scrutinee_read_is_projected() {
+        // `assert_matches!(fs::read_to_string(p)?, Ok(s) if ...)`'s second
+        // arg is a PATTERN, so the whole-arglist `Punctuated<Expr>` parse
+        // fails. The leading-Expr fallback must still capture the
+        // scrutinee `fs::read_to_string(p)?` so its read fact projects
+        // (otherwise a genuine read-back is dropped → false fire).
+        let facts = fs_facts(
+            "fn it() -> std::io::Result<()> { let p = \"/tmp/x\"; assert_matches!(std::fs::read_to_string(p)?, Ok(s) if s == \"x\"); Ok(()) }",
+        );
+        assert!(
+            facts.iter().any(|f| matches!(
+                f,
+                BehavioralFact::FilesystemRead {
+                    kind: FsReadKind::ReadToString,
+                    ..
+                }
+            )),
+            "assert_matches! scrutinee read must project a FilesystemRead: {facts:?}",
+        );
+    }
+
+    #[test]
+    fn non_assertion_macro_does_not_descend() {
+        // Descent is scoped to RECOGNISED assertion macros only. A
+        // top-level `vec![std::fs::write(p, ..)]` and a `dbg!(...)` must
+        // NOT have their inner fs calls projected (the v0.1 boundary holds
+        // for non-assertion macros).
+        assert!(
+            fs_facts("fn it() { let _ = vec![std::fs::write(p, b\"d\")]; }").is_empty(),
+            "vec! is not an assertion macro — must not descend",
+        );
+        assert!(
+            fs_facts("fn it() { dbg!(std::path::Path::new(p).exists()); }").is_empty(),
+            "dbg! is not an assertion macro — must not descend",
+        );
     }
 }
