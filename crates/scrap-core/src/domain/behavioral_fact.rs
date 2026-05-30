@@ -40,7 +40,36 @@
 //! TODO(scrap-rs#73): once `adr-port-surface-and-domain-conventions`
 //! lands, link to it for the dumb-parser/smart-detector boundary (D10)
 //! rationale.
+//!
+//! ## Located filesystem facts (scrap-rs#26)
+//!
+//! The three filesystem variants — [`BehavioralFact::FilesystemWrite`],
+//! [`BehavioralFact::FilesystemSurfaceCheck`],
+//! [`BehavioralFact::FilesystemRead`] — are the first **located**
+//! behavioral facts: each carries the coordinates the adapter computes
+//! per `adr-port-surface-and-domain-conventions` D3 (identity =
+//! `path_key`, position = `path_arg_span`). The `surface-only-io`
+//! detector composes them (D4): it groups facts by `path_key` and fires
+//! when some key has a write + a surface check but no read. The adapter
+//! says *what* (write/check/read at this key); the core says *is-bad*
+//! (the unread surface check). Because these variants carry a `String`
+//! (`path_key`) + a [`crate::domain::types::Span`], the enum can no
+//! longer derive `Copy` / `PartialOrd` / `Ord` — those derives were
+//! removed at scrap-rs#26 (the breadcrumb the pre-#26 module doc above
+//! left). `Vec` storage (scrap-rs#112) already dropped any reliance on
+//! `Ord` set-admission, so the removal is non-breaking; the kept derives
+//! are `Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize`.
+//!
+//! TODO(scrap-rs#117): extract a `BehavioralFactCatalog` query-API
+//! (e.g. `facts_for_key(&str)`, `keys()`) once the taxonomy passes
+//! ~10 variants. After scrap-rs#26 it is at 5 (`ResultAsserted`,
+//! `ResultDiscarded`, `FilesystemWrite`, `FilesystemSurfaceCheck`,
+//! `FilesystemRead`); the per-key grouping currently lives inline in
+//! `surface_only_io::detect`. Defer the catalog until a second
+//! correlation detector (or the v0.3 fact expansion) would otherwise
+//! duplicate the grouping logic.
 
+use crate::domain::types::Span;
 use serde::{Deserialize, Serialize};
 
 /// Heuristic shape of a discarded (`let _ = <expr>;`) initializer, as
@@ -109,17 +138,24 @@ pub enum ResultDiscardKind {
 ///    refuses to derive `Ord` for the wire contract. A `Vec` preserves
 ///    the parser's natural emission order instead.
 ///
-/// The `Copy`/`PartialOrd`/`Ord` derives on the enum below stay valid
-/// for the two existing unit/`Copy`-data variants; they become
-/// unused-but-harmless under `Vec` storage and are removed at
-/// scrap-rs#26 when the `String`/`Span`-carrying variants land (they
-/// cannot derive `Copy`/`Ord`). Keeping them now is minimal scope.
+/// The `Copy`/`PartialOrd`/`Ord` derives were **removed at scrap-rs#26**:
+/// the located filesystem variants below carry a `String` (`path_key`)
+/// and a [`crate::domain::types::Span`], neither of which the located
+/// fact may meaningfully order (the same `Ord`-refusal precedent as
+/// [`crate::domain::types::FilePath`]) — and a `String`-carrying enum
+/// cannot be `Copy`. `Vec` storage (scrap-rs#112) already dropped any
+/// reliance on `Ord` set-admission, so the removal is non-breaking.
+/// Kept derives: `Debug, Clone, PartialEq, Eq, Hash, Serialize,
+/// Deserialize`.
 ///
-/// **No per-instance line field** (still true): the `no-op-io` finding
-/// span is whole-test, and no v0.1 consumer reads a per-discard line.
-/// Located per-fact spans are scrap-rs#26's surface, not a v0.1 add.
+/// **Per-fact located spans (as of scrap-rs#26):** the filesystem
+/// variants carry a `path_arg_span` (the span of the path-argument
+/// expression at the call site). The two original variants
+/// (`ResultAsserted`, `ResultDiscarded`) stay whole-test: their
+/// detectors (`zero-assertion`, `no-op-io`) emit a fn-level verdict and
+/// no v0.1 consumer reads a per-discard line.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BehavioralFact {
     /// Body contains a `.unwrap()` / `.expect(...)` (or the `*_err`
@@ -147,6 +183,151 @@ pub enum BehavioralFact {
         /// The heuristic shape of the discarded initializer.
         kind: ResultDiscardKind,
     },
+    /// A **located** filesystem-write call: the test created or wrote a
+    /// file/dir at `path_key` (e.g. `fs::write(p, ..)`, `File::create(p)`,
+    /// `NamedTempFile::new()`). The first half of the `surface-only-io`
+    /// correlation — a write whose effect on disk a later surface check
+    /// might inspect.
+    ///
+    /// `path_key` is the adapter-computed identity (`lit:<value>` /
+    /// `bind:<ident>` / `tempfile-handle:<N>` / `opaque:<N>` — see
+    /// `scrap4rs::parser::body` for the resolution rules); `path_arg_span`
+    /// locates the path-argument expression. Distinct `opaque:<N>` keys
+    /// never group together, so an unresolvable path can never spuriously
+    /// correlate with another.
+    #[serde(rename = "filesystem_write")]
+    FilesystemWrite {
+        /// The flavour of write/create call recognised.
+        kind: FsCallKind,
+        /// Adapter-computed path identity used for correlation grouping.
+        path_key: String,
+        /// Span of the path-argument expression at the call site.
+        path_arg_span: Span,
+    },
+    /// A **located** filesystem-surface check: the test inspected only
+    /// surface metadata of `path_key` (existence / file-or-dir / length)
+    /// without reading the content back — e.g. `p.exists()`,
+    /// `p.is_file()`, `fs::metadata(p).len()`. The middle term of the
+    /// `surface-only-io` correlation.
+    ///
+    /// A surface check is honest evidence the test looked at *something*
+    /// (`assert!(p.exists())` is a real `ParsedAssertion` that suppresses
+    /// `zero-assertion`) — but checking only the surface, after a write,
+    /// with no content read-back, is exactly the `surface-only-io` smell.
+    #[serde(rename = "filesystem_surface_check")]
+    FilesystemSurfaceCheck {
+        /// The flavour of surface check recognised.
+        kind: FsSurfaceCheckKind,
+        /// Adapter-computed path identity used for correlation grouping.
+        path_key: String,
+        /// Span of the path-argument expression at the call site.
+        path_arg_span: Span,
+    },
+    /// A **located** filesystem read-back of `path_key`'s content — e.g.
+    /// `fs::read_to_string(p)`, `fs::read(p)`, `File::open(p)`,
+    /// `BufReader::new(File::open(p))`. The presence of a read for a key
+    /// **disarms** `surface-only-io` for that key: the test inspected the
+    /// substantive payload, not just the surface.
+    #[serde(rename = "filesystem_read")]
+    FilesystemRead {
+        /// The flavour of read call recognised.
+        kind: FsReadKind,
+        /// Adapter-computed path identity used for correlation grouping.
+        path_key: String,
+        /// Span of the path-argument expression at the call site.
+        path_arg_span: Span,
+    },
+}
+
+/// Flavour of a filesystem **write/create** call the adapter recognises,
+/// driving [`BehavioralFact::FilesystemWrite`].
+///
+/// Language-agnostic by shape, like [`ResultDiscardKind`]: the variant
+/// names describe *what kind of side effect on disk* the call performs,
+/// not Rust-specific API surface, so a future scrap4ts adapter can
+/// populate the same kinds. Wire format is `snake_case`; per-variant
+/// `#[serde(rename = "...")]` is belt-and-suspenders against
+/// `rename_all` drift. No catch-all `Other` — `#[non_exhaustive]` is
+/// the forward-compat hatch.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FsCallKind {
+    /// `fs::write(p, ..)` — write whole-contents to a path.
+    #[serde(rename = "write")]
+    Write,
+    /// `File::create(p)` — create/truncate a file handle.
+    #[serde(rename = "create_file")]
+    CreateFile,
+    /// `fs::create_dir(p)` / `fs::create_dir_all(p)` — create a directory.
+    #[serde(rename = "create_dir")]
+    CreateDir,
+    /// `tempfile::NamedTempFile::new()` / `tempfile::tempfile()` — a temp
+    /// file IS created on disk at construction; the handle aliases a
+    /// `tempfile-handle:<N>` key.
+    #[serde(rename = "tempfile")]
+    Tempfile,
+    /// `OpenOptions::new()…write(true)…open(p)` — open a path for writing.
+    #[serde(rename = "open_write")]
+    OpenWrite,
+}
+
+/// Flavour of a filesystem **surface check** the adapter recognises,
+/// driving [`BehavioralFact::FilesystemSurfaceCheck`]. A surface check
+/// inspects metadata (existence / kind / length) but NOT content.
+///
+/// Same `snake_case` + `#[non_exhaustive]` discipline as
+/// [`FsCallKind`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FsSurfaceCheckKind {
+    /// `p.exists()` / `Path::exists(p)` — existence only.
+    #[serde(rename = "exists")]
+    Exists,
+    /// `p.is_file()` — is-a-file surface predicate.
+    #[serde(rename = "is_file")]
+    IsFile,
+    /// `p.is_dir()` — is-a-directory surface predicate.
+    #[serde(rename = "is_dir")]
+    IsDir,
+    /// `fs::metadata(p)` / `p.metadata()` — metadata only, INCLUDING
+    /// length-only checks like `fs::metadata(p)?.len()`. Reading the
+    /// length is still a surface inspection, NOT a content read-back, so
+    /// it is a surface check (not a [`FsReadKind`]).
+    #[serde(rename = "metadata")]
+    Metadata,
+}
+
+/// Flavour of a filesystem **content read** the adapter recognises,
+/// driving [`BehavioralFact::FilesystemRead`]. A read inspects the
+/// substantive payload and disarms `surface-only-io` for its key.
+///
+/// Same `snake_case` + `#[non_exhaustive]` discipline as
+/// [`FsCallKind`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FsReadKind {
+    /// `fs::read(p)` — read whole-contents to bytes.
+    #[serde(rename = "read")]
+    Read,
+    /// `fs::read_to_string(p)` — read whole-contents to a `String`.
+    #[serde(rename = "read_to_string")]
+    ReadToString,
+    /// `File::open(p)` — open a file handle for reading.
+    #[serde(rename = "open_read")]
+    OpenRead,
+    /// Buffered read over an opened file. **Reserved — not yet projected
+    /// by the scrap4rs adapter at v0.1.** `BufReader::new(File::open(p))`
+    /// already surfaces a read via its inner `File::open(p)` →
+    /// [`FsReadKind::OpenRead`] (the read-presence the correlation needs),
+    /// so the adapter does not additionally emit a distinct `BufRead`
+    /// fact. The variant is kept on the wire surface for a future adapter
+    /// that wants to distinguish buffered from unbuffered reads without an
+    /// envelope `schema_version` bump.
+    #[serde(rename = "buf_read")]
+    BufRead,
 }
 
 #[cfg(test)]
@@ -160,7 +341,7 @@ mod tests {
         // Unit variant → bare snake_case string (the pre-scrap-rs#25 form
         // the mokumo/FFI consumer compiled against; must stay stable).
         let variant = BehavioralFact::ResultAsserted;
-        let json = serde_json::to_value(variant).unwrap();
+        let json = serde_json::to_value(&variant).unwrap();
         assert_eq!(json, serde_json::Value::String("result_asserted".into()));
         let back: BehavioralFact = serde_json::from_value(json).unwrap();
         assert_eq!(back, variant);
@@ -174,7 +355,7 @@ mod tests {
         let variant = BehavioralFact::ResultDiscarded {
             kind: ResultDiscardKind::Call,
         };
-        let json = serde_json::to_value(variant).unwrap();
+        let json = serde_json::to_value(&variant).unwrap();
         assert_eq!(
             json,
             serde_json::json!({"result_discarded": {"kind": "call"}})
@@ -219,5 +400,135 @@ mod tests {
             serde_json::to_value(&facts).unwrap(),
             serde_json::json!([{"result_discarded": {"kind": "result_ctor"}}, "result_asserted"]),
         );
+    }
+
+    // ── Located filesystem facts (scrap-rs#26) ──────────────────────
+
+    /// A sample span reused across the fs-fact wire pins.
+    fn sample_span() -> Span {
+        Span::new(3, 3, 5, 18)
+    }
+
+    #[test]
+    fn behavioral_fact_filesystem_write_serializes_externally_tagged_object() {
+        let variant = BehavioralFact::FilesystemWrite {
+            kind: FsCallKind::Write,
+            path_key: "lit:/tmp/out.txt".into(),
+            path_arg_span: sample_span(),
+        };
+        let json = serde_json::to_value(&variant).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "filesystem_write": {
+                    "kind": "write",
+                    "path_key": "lit:/tmp/out.txt",
+                    "path_arg_span": {
+                        "start_line": 3,
+                        "end_line": 3,
+                        "start_column": 5,
+                        "end_column": 18,
+                    },
+                }
+            }),
+        );
+        let back: BehavioralFact = serde_json::from_value(json).unwrap();
+        assert_eq!(back, variant);
+    }
+
+    #[test]
+    fn behavioral_fact_filesystem_surface_check_serializes_externally_tagged_object() {
+        let variant = BehavioralFact::FilesystemSurfaceCheck {
+            kind: FsSurfaceCheckKind::Exists,
+            path_key: "bind:p".into(),
+            path_arg_span: sample_span(),
+        };
+        let json = serde_json::to_value(&variant).unwrap();
+        assert_eq!(json["filesystem_surface_check"]["kind"], "exists");
+        assert_eq!(json["filesystem_surface_check"]["path_key"], "bind:p");
+        let back: BehavioralFact = serde_json::from_value(json).unwrap();
+        assert_eq!(back, variant);
+    }
+
+    #[test]
+    fn behavioral_fact_filesystem_read_serializes_externally_tagged_object() {
+        let variant = BehavioralFact::FilesystemRead {
+            kind: FsReadKind::ReadToString,
+            path_key: "tempfile-handle:0".into(),
+            path_arg_span: sample_span(),
+        };
+        let json = serde_json::to_value(&variant).unwrap();
+        assert_eq!(json["filesystem_read"]["kind"], "read_to_string");
+        assert_eq!(json["filesystem_read"]["path_key"], "tempfile-handle:0");
+        let back: BehavioralFact = serde_json::from_value(json).unwrap();
+        assert_eq!(back, variant);
+    }
+
+    #[test]
+    fn fs_call_kind_serializes_snake_case() {
+        for (kind, wire) in [
+            (FsCallKind::Write, "write"),
+            (FsCallKind::CreateFile, "create_file"),
+            (FsCallKind::CreateDir, "create_dir"),
+            (FsCallKind::Tempfile, "tempfile"),
+            (FsCallKind::OpenWrite, "open_write"),
+        ] {
+            let json = serde_json::to_value(kind).unwrap();
+            assert_eq!(json, serde_json::Value::String(wire.into()));
+            let back: FsCallKind = serde_json::from_value(json).unwrap();
+            assert_eq!(back, kind);
+        }
+    }
+
+    #[test]
+    fn fs_surface_check_kind_serializes_snake_case() {
+        for (kind, wire) in [
+            (FsSurfaceCheckKind::Exists, "exists"),
+            (FsSurfaceCheckKind::IsFile, "is_file"),
+            (FsSurfaceCheckKind::IsDir, "is_dir"),
+            (FsSurfaceCheckKind::Metadata, "metadata"),
+        ] {
+            let json = serde_json::to_value(kind).unwrap();
+            assert_eq!(json, serde_json::Value::String(wire.into()));
+            let back: FsSurfaceCheckKind = serde_json::from_value(json).unwrap();
+            assert_eq!(back, kind);
+        }
+    }
+
+    #[test]
+    fn fs_read_kind_serializes_snake_case() {
+        for (kind, wire) in [
+            (FsReadKind::Read, "read"),
+            (FsReadKind::ReadToString, "read_to_string"),
+            (FsReadKind::OpenRead, "open_read"),
+            (FsReadKind::BufRead, "buf_read"),
+        ] {
+            let json = serde_json::to_value(kind).unwrap();
+            assert_eq!(json, serde_json::Value::String(wire.into()));
+            let back: FsReadKind = serde_json::from_value(json).unwrap();
+            assert_eq!(back, kind);
+        }
+    }
+
+    #[test]
+    fn located_fs_facts_in_one_vec_do_not_dedup_collapse() {
+        // Two writes to two distinct keys are two events: the `Vec`
+        // storage (scrap-rs#112) preserves both, unlike a set that would
+        // collapse equal-comparing facts. Pins that located facts survive
+        // as separate observations on the wire.
+        let facts = vec![
+            BehavioralFact::FilesystemWrite {
+                kind: FsCallKind::Write,
+                path_key: "lit:a.txt".into(),
+                path_arg_span: sample_span(),
+            },
+            BehavioralFact::FilesystemWrite {
+                kind: FsCallKind::Write,
+                path_key: "lit:b.txt".into(),
+                path_arg_span: sample_span(),
+            },
+        ];
+        let json = serde_json::to_value(&facts).unwrap();
+        assert_eq!(json.as_array().unwrap().len(), 2);
     }
 }

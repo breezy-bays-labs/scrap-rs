@@ -22,8 +22,12 @@
 //! order (useful for debugging which body construct triggered
 //! recognition).
 
+use std::collections::{HashMap, HashSet};
+
 use scrap_core::domain::assertion_sources::{AssertionSource, recognise};
-use scrap_core::domain::behavioral_fact::{BehavioralFact, ResultDiscardKind};
+use scrap_core::domain::behavioral_fact::{
+    BehavioralFact, FsCallKind, FsReadKind, FsSurfaceCheckKind, ResultDiscardKind,
+};
 use scrap_core::domain::parsed::ParsedAssertion;
 use syn::Block;
 use syn::visit::Visit;
@@ -84,10 +88,51 @@ pub(crate) struct BodyVisitor {
     /// scrap-rs#26; the "≥1 of shape X" presence-fact dedup the two
     /// existing variants relied on is enforced here at **projection**
     /// (each push is guarded against an already-present equal fact).
-    /// Mirrors the
+    ///
+    /// The located filesystem facts (scrap-rs#26 —
+    /// [`BehavioralFact::FilesystemWrite`] / `FilesystemSurfaceCheck` /
+    /// `FilesystemRead`) are **NOT** deduped: each is a distinct located
+    /// event (two writes to two keys are two facts), so their pushes are
+    /// unguarded. Mirrors the
     /// [`scrap_core::domain::parsed::ParsedTest::behavioral_facts`]
     /// storage shape.
     pub(crate) behavioral_facts: Vec<BehavioralFact>,
+    /// Light, single-pass intra-body binding map: `ident → path_key`,
+    /// built by a forward scan of the body's `let` statements
+    /// (`visit_local` records each binding before recursing). Used to
+    /// resolve a call-site path argument to a stable `path_key` so the
+    /// `surface-only-io` correlation can group write/check/read facts.
+    ///
+    /// **Fail-safe correlation (poison set, scrap-rs#26 cabinet
+    /// CRITICAL #1):** a name is only correlatable while it is *provably
+    /// singly-bound and not `mut`*. A name that is rebound (in ANY form —
+    /// re-`let`, shadow, `for p in`, tuple-destructure, `if let`, match
+    /// arm, closure param, …), reassigned (`p = ...` / `p += ...`), or
+    /// declared `mut` is **poisoned**: at a call site it resolves to a
+    /// FRESH `opaque:<N>` key (never `bind:<name>`), so a write to its
+    /// pre-rebind value can never correlate with a check on its
+    /// post-rebind value. The poison decision is made by a cheap pre-pass
+    /// ([`PoisonScanner`]) run before the main walk. Unknown binding forms
+    /// default to poisoned (miss, never misfire). See [`Self::poisoned`].
+    ///
+    /// **Limits** (richer dataflow is a v0.3+ follow-up): no field paths
+    /// (`self.tmp.path()` is opaque); no interprocedural resolution; no
+    /// `format!`/`concat!` reduction — each of those resolves to a
+    /// DISTINCT `opaque:<N>` key so it can never spuriously correlate with
+    /// another unresolved path. Bindings introduced INSIDE a non-assertion
+    /// macro are not poison-tracked, but the main walk also never projects
+    /// facts from such a name, so no false positive arises.
+    fs_bindings: HashMap<String, String>,
+    /// Names that are NOT safe to correlate (see [`Self::fs_bindings`]).
+    /// Populated once by [`PoisonScanner`] before the main walk; a
+    /// poisoned ident always resolves to a fresh `opaque:<N>` key.
+    poisoned: HashSet<String>,
+    /// Monotonic counter for `opaque:<N>` keys — one per unresolvable
+    /// path-argument site, so two opaque sites never share a key.
+    opaque_counter: usize,
+    /// Monotonic counter for `tempfile-handle:<N>` keys — one per
+    /// `NamedTempFile::new()` / `tempfile()` binding.
+    tempfile_counter: usize,
 }
 
 impl BodyVisitor {
@@ -96,15 +141,330 @@ impl BodyVisitor {
             assertions: Vec::new(),
             implicit_assertion_sources: Vec::new(),
             behavioral_facts: Vec::new(),
+            fs_bindings: HashMap::new(),
+            poisoned: HashSet::new(),
+            opaque_counter: 0,
+            tempfile_counter: 0,
         }
     }
 
     /// Drive the walk over a test fn's `&syn::Block`. Wrapper over
     /// `visit_block` so the caller doesn't have to import the Visit
     /// trait.
+    ///
+    /// Runs the binding-poison pre-pass ([`PoisonScanner`]) FIRST so the
+    /// main walk's path-key resolution can consult the poison set on the
+    /// very first call site (the scan must complete before any resolution
+    /// happens — a forward-only scan would miss a rebind that occurs
+    /// after the first use).
     pub(crate) fn drive(&mut self, block: &Block) {
+        self.poisoned = PoisonScanner::scan(block);
         self.visit_block(block);
     }
+}
+
+/// Pre-pass that computes the set of poisoned names for one test body.
+///
+/// **Fail-CLOSED, poison-on-uncertainty (scrap-rs#26 round-2).** A name is
+/// only correlatable if it is provably singly-bound, not `mut`, and never
+/// appears in a token region the walker did not fully analyze. Anything
+/// else is poisoned (→ a fresh unique `opaque:<N>` at every use → can't
+/// group → suppressed). The poison set is the SINGLE suppression
+/// mechanism for the `surface-only-io` correlation; every other escape
+/// hatch (in-macro rebinds, unknown macros, unparseable arg blobs) funnels
+/// here.
+///
+/// A name is poisoned when ANY of:
+/// 1. it is bound (as a `Pat::Ident`) **two or more times** anywhere the
+///    scanner reaches — re-`let`, shadow, for-loop collision, tuple
+///    rebind, closure param, in-macro re-binding, … (every binding FORM
+///    reduces to `Pat::Ident` leaves that `syn`'s default `Visit`
+///    recursion catches, so one `visit_pat_ident` override covers the
+///    open-ended set — and `visit_macro` extends that recursion into
+///    ANALYZED assertion-macro args, so in-macro bindings count too);
+/// 2. any of its bindings carries `mut` (`let mut p` / `ref mut p`);
+/// 3. it appears as the **target of an assignment** (`p = ...` / `p += ...`);
+/// 4. it appears in a **give-up region** — a non-assertion macro the
+///    walker doesn't descend (`matches!`, `vec!`, `println!`, any custom
+///    macro), or the unparseable tail/blob of a partial assertion parse.
+///    Every raw-token identifier AND string-literal path key there is
+///    harvested (see [`harvest_idents`]; the literal `lit:<value>` key was
+///    added at scrap-rs#26 round-3 to close the literal-path bypass).
+///
+/// The analyzed-vs-give-up partition is shared with the fact-walk via
+/// [`split_assertion_macro_args`], so the two walkers agree by
+/// construction on what counts as analyzed. This closes the false
+/// positives that arise from an **unanalyzed context** (both ident- and
+/// literal-keyed). It is NOT a general FP-freedom claim — a read through
+/// an analyzed-but-unrecognized fs API is a separate over-fire
+/// (scrap-rs#120).
+struct PoisonScanner {
+    /// Count of `Pat::Ident` bindings seen per name.
+    bind_counts: HashMap<String, usize>,
+    /// Names directly poisoned by a `mut` binding, an assignment target,
+    /// or a give-up-region harvest.
+    poisoned: HashSet<String>,
+}
+
+impl PoisonScanner {
+    /// Scan `block` and return the poisoned-name set.
+    fn scan(block: &Block) -> HashSet<String> {
+        let mut scanner = Self {
+            bind_counts: HashMap::new(),
+            poisoned: HashSet::new(),
+        };
+        scanner.visit_block(block);
+        // A name bound 2+ times is poisoned (rebind / shadow / collision).
+        for (name, count) in &scanner.bind_counts {
+            if *count >= 2 {
+                scanner.poisoned.insert(name.clone());
+            }
+        }
+        scanner.poisoned
+    }
+}
+
+impl<'ast> Visit<'ast> for PoisonScanner {
+    fn visit_pat_ident(&mut self, pi: &'ast syn::PatIdent) {
+        let name = pi.ident.to_string();
+        // Accepted conservative false-NEGATIVE (scrap-rs#26 round-3): an
+        // or-pattern binds one logical name through multiple `Pat::Ident`
+        // leaves — `let (Ok(p) | Err(p)) = res;` counts `p` twice → ≥2 →
+        // poisoned, silencing a legit fire. This errs toward MISS (the
+        // safe direction for a fail-closed FP guard), so it's left as-is;
+        // no tracking issue (a missed correlation is not a defect of the
+        // FP-safety contract).
+        *self.bind_counts.entry(name.clone()).or_insert(0) += 1;
+        // A `mut` (or `ref mut`) binding is poison: reassignment-capable.
+        if pi.mutability.is_some() {
+            self.poisoned.insert(name);
+        }
+        syn::visit::visit_pat_ident(self, pi);
+    }
+
+    fn visit_expr_assign(&mut self, node: &'ast syn::ExprAssign) {
+        // `p = ...` — the assigned target name is poison. Also covers a
+        // compound-assign that syn models as `Expr::Assign` in 2.0.
+        if let Some(name) = assign_target_ident(&node.left) {
+            self.poisoned.insert(name);
+        }
+        syn::visit::visit_expr_assign(self, node);
+    }
+
+    fn visit_expr_binary(&mut self, node: &'ast syn::ExprBinary) {
+        // Compound assignment (`p += ...`, `p *= ...`, ...) is an
+        // `Expr::Binary` with an `*Assign` op in syn 2.0; poison the LHS.
+        if is_compound_assign(&node.op)
+            && let Some(name) = assign_target_ident(&node.left)
+        {
+            self.poisoned.insert(name);
+        }
+        syn::visit::visit_expr_binary(self, node);
+    }
+
+    /// Fail-closed macro handling, mirroring the fact-walk's analyzed /
+    /// give-up partition via [`split_assertion_macro_args`].
+    ///
+    /// - **Recognised assertion macros**: descend into the ANALYZED arg
+    ///   exprs (so in-macro `Pat::Ident` bindings count toward the ≥2
+    ///   trigger and in-macro `mut`/assignment poison directly), and
+    ///   poison-HARVEST the give-up tail/blob (the `assert_matches!`
+    ///   `, Pat if guard` tail, or an unparseable arg list).
+    /// - **Any other macro** (`matches!`, `vec!`, `println!`, custom): the
+    ///   whole token stream is a give-up region — harvest every ident.
+    ///
+    /// This is the home of the fail-closed rule: a name in any region the
+    /// fact-walk won't analyze is poisoned here, so it can never group.
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        let path = compose_macro_path_string(&mac.path);
+        let is_assertion = path
+            .rsplit("::")
+            .next()
+            .is_some_and(|leaf| ASSERTION_MACRO_NAMES.contains(&leaf));
+        if is_assertion {
+            match split_assertion_macro_args(&mac.tokens) {
+                AssertionArgs::Full(args) => {
+                    for e in &args {
+                        self.visit_expr(e);
+                    }
+                }
+                AssertionArgs::LeadingOnly(expr, tail) => {
+                    self.visit_expr(&expr);
+                    // The give-up tail (`, Pat if guard`) — harvest names.
+                    harvest_idents(&tail, &mut self.poisoned);
+                }
+                AssertionArgs::Unparseable(all) => {
+                    harvest_idents(&all, &mut self.poisoned);
+                }
+            }
+        } else {
+            // Non-assertion macro: an unanalyzed region in its entirety.
+            harvest_idents(&mac.tokens, &mut self.poisoned);
+        }
+        // NB: do NOT call `syn::visit::visit_macro` — its default does not
+        // descend into token streams anyway, and we've handled the tokens
+        // explicitly above. (The `self.visit_expr` calls above recurse
+        // into nested macros via this same override.)
+    }
+}
+
+/// The analyzed-vs-give-up partition of a recognised assertion macro's
+/// argument tokens. Computed ONCE by [`split_assertion_macro_args`] and
+/// consumed by BOTH the fact-walk ([`BodyVisitor::walk_assertion_macro_args`])
+/// AND the poison pre-pass ([`PoisonScanner::visit_macro`]) so the two
+/// walkers' notion of "what did we analyze" is identical by construction
+/// (the fail-closed invariant: any region one walker treats as a give-up,
+/// the other does too, and the poison harvest covers exactly the give-up
+/// regions).
+enum AssertionArgs {
+    /// The whole token stream parsed as a comma-separated `Expr` list
+    /// (`assert!(e)` / `assert_eq!(a, b)`). Every arg is analyzed.
+    Full(Vec<syn::Expr>),
+    /// Only the leading `Expr` parsed (`assert_matches!(scrutinee, Pat if
+    /// guard)`'s scrutinee is arg 0); the trailing `, Pat [if guard]`
+    /// tokens are the GIVE-UP tail and must be poison-harvested. The
+    /// `Expr` is boxed so this variant doesn't bloat the enum (`syn::Expr`
+    /// is ~272 bytes; clippy `large_enum_variant`).
+    LeadingOnly(Box<syn::Expr>, proc_macro2::TokenStream),
+    /// Nothing parsed as an `Expr` — the WHOLE token stream is a give-up
+    /// region and must be poison-harvested.
+    Unparseable(proc_macro2::TokenStream),
+}
+
+/// Split a recognised assertion macro's argument tokens into the analyzed
+/// exprs + the give-up tail (see [`AssertionArgs`]). The single source of
+/// truth for the partition both walkers rely on.
+///
+/// **Why the unanalyzed-region guarantee holds.** The source file already
+/// parsed to a `syn` AST before either walker runs, so **macro
+/// token-streams are the only regions not represented as AST**. Both
+/// visitors fully recurse the AST — every fact/poison override calls its
+/// `syn::visit::*` super, none prunes — and both stop at exactly one
+/// place, `visit_macro`, where both route the tokens through THIS
+/// function. The fact-walk analyzes `Full`/the `LeadingOnly` scrutinee and
+/// skips the give-up tail/`Unparseable` blob; the poison-walk analyzes the
+/// SAME exprs (counting in-macro bindings) and HARVESTS exactly the
+/// give-up regions the fact-walk skipped.
+///
+/// The harvest ([`harvest_idents`]) poisons **both** path-key shapes
+/// `resolve_path_key` consults the poison set on — identifiers (`bind:` /
+/// binding-map) AND string literals (`lit:<value>`, scrap-rs#26 round-3).
+/// So a write and a check that name the same path (by ident or by string
+/// literal) can never co-group when a read on it is hidden in a give-up
+/// region: that read's path key is poisoned → resolves to a fresh unique
+/// `opaque:<N>` at every use → the write↔check correlation breaks too.
+/// **This closes false positives arising from an unanalyzed context.** It
+/// is NOT a claim of FP-freedom in general: a read through an
+/// *analyzed-but-unrecognized* fs API stays visible-as-clean (a separate
+/// over-fire, tracked at scrap-rs#120 — see the `surface_only_io` module
+/// doc), and a path key shape the harvest can't reconstruct (only idents +
+/// string literals are reconstructed) is not poisoned by name but still
+/// resolves to `opaque` via `resolve_path_key`'s catch-all, so it cannot
+/// false-fire either.
+fn split_assertion_macro_args(tokens: &proc_macro2::TokenStream) -> AssertionArgs {
+    use syn::parse::Parser as _;
+    let full = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
+    if let Ok(args) = full.parse2(tokens.clone()) {
+        return AssertionArgs::Full(args.into_iter().collect());
+    }
+    if let Ok((expr, tail)) = parse_leading_expr.parse2(tokens.clone()) {
+        return AssertionArgs::LeadingOnly(Box::new(expr), tail);
+    }
+    AssertionArgs::Unparseable(tokens.clone())
+}
+
+/// `syn::parse::Parser`-shaped fn that parses ONE leading `Expr` and
+/// RETURNS the remaining (unconsumed) tokens. Used by
+/// [`split_assertion_macro_args`] for `assert_matches!(scrutinee, Pat if
+/// guard)`, whose pattern arg makes a whole-`Punctuated<Expr>` parse fail;
+/// the scrutinee is the leading expr and the trailing `, Pat if guard` is
+/// the give-up tail the poison pre-pass harvests.
+fn parse_leading_expr(
+    input: syn::parse::ParseStream,
+) -> syn::Result<(syn::Expr, proc_macro2::TokenStream)> {
+    let expr: syn::Expr = input.parse()?;
+    // Capture (not discard) the rest of the stream so the caller can
+    // poison-harvest the `, Pat if guard` tail.
+    let tail: proc_macro2::TokenStream = input.parse()?;
+    Ok((expr, tail))
+}
+
+/// Recursively harvest every poison key in a raw token stream into
+/// `sink`, descending into `Group`s (so a token nested in
+/// `matches!(...)`'s parens is reached — flat iteration would miss it).
+///
+/// Harvests TWO key shapes, matching the two path-key forms
+/// [`BodyVisitor::resolve_path_key`] consults the poison set on:
+/// - **identifiers** → the bare name (matches the `bind:<ident>` /
+///   binding-map arm);
+/// - **string literals** → the `lit:<value>` key, using the SAME
+///   `syn::LitStr::value()` normalization `resolve_path_key` uses, so the
+///   harvested poison key is byte-identical to the key a `"…"` path
+///   resolves to (closes the literal bypass, scrap-rs#26 round-3 — a
+///   string-literal path that escaped the name-only harvest could
+///   otherwise survive as a clean `lit:` key and false-fire).
+///
+/// Used at the poison pre-pass's GIVE-UP points: a non-assertion macro
+/// the walker doesn't descend, or the unparseable tail/blob of a partial
+/// assertion parse. Every key in such a region is poisoned (→ fresh
+/// unique opaque → can't group → suppressed).
+///
+/// Recall tradeoff (INTENTIONAL, tracked: scrap-rs#119): a path mentioned
+/// inside a formatting/other non-assertion macro (e.g. `println!("{}", p)`
+/// or `dbg!(read("/tmp/x"))`) is harvested → its key is suppressed even if
+/// it is a genuine surface-only-io. Fail-closed trades that recall for
+/// zero false positives in unanalyzed contexts.
+fn harvest_idents(tokens: &proc_macro2::TokenStream, sink: &mut HashSet<String>) {
+    for tt in tokens.clone() {
+        match tt {
+            proc_macro2::TokenTree::Ident(id) => {
+                sink.insert(id.to_string());
+            }
+            proc_macro2::TokenTree::Group(g) => harvest_idents(&g.stream(), sink),
+            proc_macro2::TokenTree::Literal(lit) => {
+                // Only STRING literals form a path key; parse the single
+                // literal token as a `syn::LitStr` (non-string literals —
+                // int, byte-string — fail to parse and are skipped). The
+                // `lit:<value>` key must match `resolve_path_key` exactly.
+                let one = proc_macro2::TokenStream::from(proc_macro2::TokenTree::Literal(lit));
+                if let Ok(s) = syn::parse2::<syn::LitStr>(one) {
+                    sink.insert(format!("lit:{}", s.value()));
+                }
+            }
+            // Punct carries no poison key.
+            proc_macro2::TokenTree::Punct(_) => {}
+        }
+    }
+}
+
+/// Extract the bare-ident name from an assignment LHS (`p = ...`).
+/// Returns `None` for field/index/tuple LHS (those aren't a single
+/// correlatable name, so they need no poisoning here).
+fn assign_target_ident(target: &syn::Expr) -> Option<String> {
+    if let syn::Expr::Path(p) = target
+        && p.qself.is_none()
+        && p.path.segments.len() == 1
+    {
+        return Some(p.path.segments[0].ident.to_string());
+    }
+    None
+}
+
+/// `true` for the compound-assignment binary ops (`+=`, `-=`, `*=`, ...).
+fn is_compound_assign(op: &syn::BinOp) -> bool {
+    matches!(
+        op,
+        syn::BinOp::AddAssign(_)
+            | syn::BinOp::SubAssign(_)
+            | syn::BinOp::MulAssign(_)
+            | syn::BinOp::DivAssign(_)
+            | syn::BinOp::RemAssign(_)
+            | syn::BinOp::BitXorAssign(_)
+            | syn::BinOp::BitAndAssign(_)
+            | syn::BinOp::BitOrAssign(_)
+            | syn::BinOp::ShlAssign(_)
+            | syn::BinOp::ShrAssign(_)
+    )
 }
 
 impl<'ast> Visit<'ast> for BodyVisitor {
@@ -113,12 +473,21 @@ impl<'ast> Visit<'ast> for BodyVisitor {
     /// `compose_macro_path_string` (NOT `quote!`/`TokenStream`) so
     /// `recognise()`'s exact-string lookups stay accurate.
     ///
-    /// **v0.1 boundary: do NOT call `visit::visit_macro(self, mac)` here.**
-    /// The parser inspects the macro's immediate path identity only;
-    /// token-stream descent is out of scope. Wrapped/custom macros
-    /// (e.g. a hypothetical `my_proptest!` wrapping `proptest!`) are
-    /// tracked under v0.3+ surface if real codebases push back at
-    /// adoption time.
+    /// **v0.1 token-stream descent boundary (relaxed at scrap-rs#26 for
+    /// assertion macros only):** the parser does NOT call the generic
+    /// `visit::visit_macro(self, mac)`. For the RECOGNISED assertion
+    /// macros ([`ASSERTION_MACRO_NAMES`]) it now best-effort parses the
+    /// argument tokens and re-walks each arg through the existing
+    /// overrides, so a filesystem call nested inside an assertion —
+    /// `assert!(p.exists())`, `assert_eq!(fs::read_to_string(p)?, "x")` —
+    /// projects its located fact. This is load-bearing for the
+    /// `surface-only-io` correlation, whose canonical idioms put the
+    /// surface check and the read-back INSIDE assertion macros. It
+    /// extends the existing precedent that already parses assertion-macro
+    /// tokens upstream (`super::tautology::extract_tautology_facts`).
+    /// Non-assertion macros (`proptest!`, `vec!`, `println!`, `dbg!`) are
+    /// still NOT descended into — a `dbg!(fs::read(p))` going unrecognised
+    /// is an accepted v0.3+ note.
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
         let path = compose_macro_path_string(&mac.path);
 
@@ -141,6 +510,13 @@ impl<'ast> Visit<'ast> for BodyVisitor {
                 arguments_identical,
                 single_arg_value,
             ));
+
+            // scrap-rs#26: descend into the assertion's argument exprs so
+            // fs calls nested in the assertion project their located
+            // facts. Best-effort: tokens that don't parse as a
+            // comma-separated `Expr` list (e.g. `assert_matches!(x,
+            // Some(_))` — the pattern arg isn't an `Expr`) are dropped.
+            self.walk_assertion_macro_args(&mac.tokens);
         }
 
         // Implicit-assertion sources via the recognise() contract
@@ -196,6 +572,11 @@ impl<'ast> Visit<'ast> for BodyVisitor {
             if let Some(src) = recognise(&path_str) {
                 self.implicit_assertion_sources.push(src);
             }
+            // scrap-rs#26: free-function filesystem calls. The recognised
+            // path leaf (`write` / `create` / `read` / `open` / ...) keys
+            // off the LAST segment so both `std::fs::write` and a bare
+            // `write` (rare) match; the family disambiguates by segment.
+            self.project_fs_call(&expr_path.path, call.args.first());
         }
         syn::visit::visit_expr_call(self, call);
     }
@@ -238,6 +619,8 @@ impl<'ast> Visit<'ast> for BodyVisitor {
         {
             self.behavioral_facts.push(BehavioralFact::ResultAsserted);
         }
+        // scrap-rs#26: method-form filesystem facts.
+        self.project_fs_method_call(node);
         syn::visit::visit_expr_method_call(self, node);
     }
 
@@ -275,7 +658,508 @@ impl<'ast> Visit<'ast> for BodyVisitor {
                 self.behavioral_facts.push(fact);
             }
         }
+
+        // scrap-rs#26 binding map: `let <ident> = <rhs>;` records
+        // `ident → path_key` (forward scan; recorded BEFORE recursing so
+        // a later statement's use resolves through it). A tempfile ctor on
+        // the RHS additionally emits a `FilesystemWrite{Tempfile}` — the
+        // temp file IS created on disk at construction — and binds the
+        // ident to its `tempfile-handle:<N>` key so `f.path()` aliases back.
+        if let Some(ident) = local_binding_ident(&local.pat)
+            && let Some(init) = &local.init
+        {
+            self.record_fs_binding(&ident, &init.expr);
+        }
+
         syn::visit::visit_local(self, local);
+    }
+}
+
+impl BodyVisitor {
+    /// Best-effort walk of a recognised assertion macro's argument exprs
+    /// (scrap-rs#26). Re-drives each parsed arg through the visitor's
+    /// existing overrides, so fs calls (and `.unwrap()` chains) nested
+    /// inside the assertion project their facts.
+    ///
+    /// Uses the shared [`split_assertion_macro_args`] partition so the
+    /// fact-walk analyzes EXACTLY the regions the poison pre-pass treats
+    /// as analyzed:
+    /// - [`AssertionArgs::Full`] → walk every arg expr;
+    /// - [`AssertionArgs::LeadingOnly`] → walk only the scrutinee (arg 0
+    ///   of `assert_matches!`); the tail is a give-up region the poison
+    ///   pre-pass harvested, so any name there is already suppressed and
+    ///   the fact-walk simply skips it;
+    /// - [`AssertionArgs::Unparseable`] → walk nothing.
+    ///
+    /// A skipped (give-up) arg can therefore never CAUSE a fire: every
+    /// name in it is poisoned by the pre-pass, so it can't group. The
+    /// scrutinee capture keeps a legit scrutinee read-back/surface-check
+    /// analyzable (reducing over-suppression of true positives).
+    ///
+    /// Lifetime note: the parsed exprs are locally-owned, but
+    /// `self.visit_expr(&e)` typechecks because `BodyVisitor` stores only
+    /// owned facts (no `&'ast` borrows), so the `Visit<'ast>` lifetime
+    /// unifies with the local borrow.
+    fn walk_assertion_macro_args(&mut self, tokens: &proc_macro2::TokenStream) {
+        match split_assertion_macro_args(tokens) {
+            AssertionArgs::Full(args) => {
+                for e in &args {
+                    syn::visit::Visit::visit_expr(self, e);
+                }
+            }
+            AssertionArgs::LeadingOnly(expr, _tail) => {
+                syn::visit::Visit::visit_expr(self, &expr);
+            }
+            AssertionArgs::Unparseable(_) => {}
+        }
+    }
+
+    /// Record a `let <ident> = <rhs>;` binding into [`Self::fs_bindings`].
+    ///
+    /// If the RHS (after unwrapping one `?` / `.unwrap()` / `.expect(..)`
+    /// terminal) is a tempfile constructor, emit a
+    /// `FilesystemWrite{Tempfile}` at the binding and map `ident →
+    /// tempfile-handle:<N>`. Otherwise map `ident →
+    /// resolve_path_key(rhs)` so a later `fs::write(<ident>, ..)` /
+    /// `<ident>.exists()` resolves to the same key.
+    fn record_fs_binding(&mut self, ident: &str, rhs: &syn::Expr) {
+        if is_tempfile_ctor(unwrap_fallible_terminal(rhs)) {
+            let key = self.fresh_tempfile_key();
+            // Located write: the path-arg span is the ctor expression
+            // itself (there is no separate path argument).
+            self.behavioral_facts.push(BehavioralFact::FilesystemWrite {
+                kind: FsCallKind::Tempfile,
+                path_key: key.clone(),
+                path_arg_span: span_from_spanned(rhs),
+            });
+            self.fs_bindings.insert(ident.to_string(), key);
+        } else {
+            let key = self.resolve_path_key(rhs);
+            self.fs_bindings.insert(ident.to_string(), key);
+        }
+    }
+
+    /// Mint a fresh `tempfile-handle:<N>` key.
+    fn fresh_tempfile_key(&mut self) -> String {
+        let key = format!("tempfile-handle:{}", self.tempfile_counter);
+        self.tempfile_counter += 1;
+        key
+    }
+
+    /// Mint a fresh `opaque:<N>` key — each unresolvable path-argument
+    /// site gets a DISTINCT N so opaque keys never correlate.
+    fn fresh_opaque_key(&mut self) -> String {
+        let key = format!("opaque:{}", self.opaque_counter);
+        self.opaque_counter += 1;
+        key
+    }
+
+    /// Resolve a path-argument expression to a stable `path_key`.
+    ///
+    /// The SINGLE source of truth for path-key resolution: the binding
+    /// RHS, every write/read path argument, AND every surface-check
+    /// receiver all route through here, so a write-site key and a
+    /// check-site key for the same path are byte-identical (correlation
+    /// hinges on this). Unwraps ONE level of the transparent wrappers
+    /// `&e`, `e.as_path()`, `e.as_ref()`, `Path::new(<lit>)`, then:
+    /// - string/path literal → `lit:<value>`;
+    /// - bare ident, **not poisoned** → `fs_bindings` lookup, else
+    ///   `bind:<ident>`;
+    /// - bare ident, **poisoned** (rebound / reassigned / `mut`) → a fresh
+    ///   `opaque:<N>` (NEVER `bind:<name>` — a name-based fallback would
+    ///   re-collide the pre- and post-rebind keys and false-fire; this is
+    ///   the cabinet's T2 gate, scrap-rs#26 CRITICAL #1);
+    /// - `f.path()` where `f` is a tempfile-handle binding → that handle;
+    /// - anything else (`format!`, `concat!`, field path, method chain) →
+    ///   a fresh `opaque:<N>`.
+    fn resolve_path_key(&mut self, expr: &syn::Expr) -> String {
+        match expr {
+            // String/path literal → `lit:<value>` (poison-checked).
+            syn::Expr::Lit(lit) => self.resolve_literal_key(&lit.lit),
+            // Reference `&p` → recurse into `p`.
+            syn::Expr::Reference(r) => self.resolve_path_key(&r.expr),
+            // Parenthesised `(p)` → recurse.
+            syn::Expr::Paren(p) => self.resolve_path_key(&p.expr),
+            // `Path::new(<lit>)` → recurse into the single argument.
+            syn::Expr::Call(call) if call_is_path_new(&call.func) => match call.args.first() {
+                Some(arg) => self.resolve_path_key(arg),
+                None => self.fresh_opaque_key(),
+            },
+            // Bare ident → `bind:`/binding-map (poison-checked).
+            syn::Expr::Path(p) if p.qself.is_none() && p.path.segments.len() == 1 => {
+                self.resolve_ident_key(&p.path.segments[0].ident.to_string())
+            }
+            // `e.as_path()` / `e.as_ref()` → recurse into the receiver.
+            // `f.path()` where `f` is a tempfile handle → that handle's key.
+            syn::Expr::MethodCall(mc) => self.resolve_method_path_key(mc),
+            // Everything else (format!/concat! macro, field path, call,
+            // ...) is unresolvable → a fresh, non-correlating opaque key.
+            _ => self.fresh_opaque_key(),
+        }
+    }
+
+    /// Resolve a literal to its `lit:<value>` key, OR a fresh opaque key
+    /// when that key was poisoned by a give-up-region harvest (the same
+    /// literal text appeared in an unanalyzed macro / tail — scrap-rs#26
+    /// round-3 literal-bypass close) or the literal is not a string.
+    fn resolve_literal_key(&mut self, lit: &syn::Lit) -> String {
+        if let syn::Lit::Str(s) = lit {
+            let key = format!("lit:{}", s.value());
+            if !self.poisoned.contains(&key) {
+                return key;
+            }
+        }
+        // Non-string literal, or a poisoned literal path → opaque.
+        self.fresh_opaque_key()
+    }
+
+    /// Resolve a bare ident to its key: a poisoned name (rebound /
+    /// reassigned / `mut` / appeared in a give-up region) routes to a fresh
+    /// opaque key (NEVER `bind:<name>` — a name-based fallback would
+    /// re-collide the pre/post-rebind keys and false-fire, the T2 gate);
+    /// a clean name resolves through the binding map, else `bind:<ident>`.
+    fn resolve_ident_key(&mut self, ident: &str) -> String {
+        if self.poisoned.contains(ident) {
+            return self.fresh_opaque_key();
+        }
+        self.fs_bindings
+            .get(ident)
+            .cloned()
+            .unwrap_or_else(|| format!("bind:{ident}"))
+    }
+
+    /// Resolve a method-call path arg: `e.as_path()` / `e.as_ref()` unwrap
+    /// to the receiver; `f.path()` on a tempfile handle aliases to that
+    /// handle's key; anything else is opaque.
+    fn resolve_method_path_key(&mut self, mc: &syn::ExprMethodCall) -> String {
+        if mc.method == "as_path" || mc.method == "as_ref" {
+            self.resolve_path_key(&mc.receiver)
+        } else if mc.method == "path"
+            && let Some(key) = self.tempfile_handle_of(&mc.receiver)
+        {
+            key
+        } else {
+            self.fresh_opaque_key()
+        }
+    }
+
+    /// If `expr` is a bare ident bound to a `tempfile-handle:<N>` key,
+    /// return that key. Used so `f.path()` aliases back to the tempfile.
+    ///
+    /// A **poisoned** handle name (rebound / reassigned / `mut`) returns
+    /// `None` so the caller falls through to a fresh opaque key — same
+    /// fail-safe rule as the bare-ident resolution: a rebound tempfile
+    /// handle must not alias its pre-rebind value's key.
+    fn tempfile_handle_of(&self, expr: &syn::Expr) -> Option<String> {
+        if let syn::Expr::Path(p) = expr
+            && p.qself.is_none()
+            && p.path.segments.len() == 1
+        {
+            let ident = p.path.segments[0].ident.to_string();
+            if self.poisoned.contains(&ident) {
+                return None;
+            }
+            if let Some(key) = self.fs_bindings.get(&ident)
+                && key.starts_with("tempfile-handle:")
+            {
+                return Some(key.clone());
+            }
+        }
+        None
+    }
+}
+
+impl BodyVisitor {
+    /// Project a free-function filesystem call (`std::fs::write(p, ..)`,
+    /// `File::create(p)`, `fs::read_to_string(p)`, `File::open(p)`,
+    /// `fs::metadata(p)`, ...) into the matching located fact.
+    ///
+    /// `func_path` is the call's func path; `first_arg` is its first
+    /// positional argument (the path, for the calls we recognise). The
+    /// recognised call family is keyed off the path's last TWO segments
+    /// so `File::create` vs `fs::create_dir` disambiguate (a bare
+    /// `create` is ambiguous and intentionally NOT matched). `OpenOptions`
+    /// open-write is method-form and handled in `project_fs_method_call`.
+    fn project_fs_call(&mut self, func_path: &syn::Path, first_arg: Option<&syn::Expr>) {
+        let Some(family) = fs_call_family(func_path) else {
+            return;
+        };
+        // `File::open` / `fs::read*` need the path arg; so do the writes.
+        let Some(arg) = first_arg else {
+            return;
+        };
+        let key = self.resolve_path_key(arg);
+        let span = span_from_spanned(arg);
+        let fact = match family {
+            FsCallFamily::Write(kind) => BehavioralFact::FilesystemWrite {
+                kind,
+                path_key: key,
+                path_arg_span: span,
+            },
+            FsCallFamily::Read(kind) => BehavioralFact::FilesystemRead {
+                kind,
+                path_key: key,
+                path_arg_span: span,
+            },
+            FsCallFamily::Surface(kind) => BehavioralFact::FilesystemSurfaceCheck {
+                kind,
+                path_key: key,
+                path_arg_span: span,
+            },
+        };
+        // Located events — NOT deduped (two writes to two keys = two facts).
+        self.behavioral_facts.push(fact);
+    }
+
+    /// Project a method-form filesystem fact:
+    /// - `p.exists()` / `p.is_file()` / `p.is_dir()` / `p.metadata()` →
+    ///   `FilesystemSurfaceCheck` on `key(receiver)` (the RECEIVER is the
+    ///   path);
+    /// - `OpenOptions::new()…write(true)…open(p)` → `FilesystemWrite`
+    ///   `{OpenWrite}` on `key(p)` (the open-write builder chain).
+    ///
+    /// `File::open(p)` is a free-function `Call`, handled in
+    /// `project_fs_call`, not here.
+    fn project_fs_method_call(&mut self, node: &syn::ExprMethodCall) {
+        // Surface checks: receiver is the path.
+        if let Some(kind) = surface_check_kind(&node.method) {
+            let key = self.resolve_path_key(&node.receiver);
+            self.behavioral_facts
+                .push(BehavioralFact::FilesystemSurfaceCheck {
+                    kind,
+                    path_key: key,
+                    path_arg_span: span_from_spanned(&node.receiver),
+                });
+            return;
+        }
+        // OpenOptions write-open: `<builder>.open(p)` where the receiver
+        // chain configures a write (`.write(true)` / `.append(true)` /
+        // `.create(true)` / `.create_new(true)`). The path is the ARGUMENT.
+        if node.method == "open"
+            && receiver_is_write_openoptions(&node.receiver)
+            && let Some(arg) = node.args.first()
+        {
+            let key = self.resolve_path_key(arg);
+            self.behavioral_facts.push(BehavioralFact::FilesystemWrite {
+                kind: FsCallKind::OpenWrite,
+                path_key: key,
+                path_arg_span: span_from_spanned(arg),
+            });
+        }
+    }
+}
+
+/// The filesystem-call family a recognised free-function path maps to.
+enum FsCallFamily {
+    Write(FsCallKind),
+    Read(FsReadKind),
+    Surface(FsSurfaceCheckKind),
+}
+
+/// Recognise a free-function filesystem call by its path's last two
+/// segments. Returns the family + kind, or `None` for non-fs calls.
+///
+/// Disambiguation rule: matches on `<container>::<leaf>` so a bare
+/// single-segment leaf (e.g. `create`, `open`) is NOT matched (too
+/// ambiguous). `fs::*` matches any module named `fs` (so both
+/// `std::fs::write` and a `use std::fs;`-qualified `fs::write` work);
+/// `File::*` matches the `File` type; `Path::*` matches the UFCS surface
+/// checks `Path::exists(p)` / `try_exists` / `is_file` / `is_dir` (those
+/// parse as free-function `Call`s, so they route here rather than through
+/// the method-call surface-check path — round-4 #2 recall-gap fix).
+fn fs_call_family(path: &syn::Path) -> Option<FsCallFamily> {
+    // Zero-alloc last-two-segment dispatch (per the file's `&Ident ==
+    // "..."` convention; no string allocation). Resolve the container to a
+    // small enum once, then dispatch on the leaf per container — each
+    // per-container helper is a flat `if`-chain that stays low-CC, and the
+    // top-level `match` is a single decision point. The container
+    // disambiguates so a bare single-segment leaf is never matched.
+    let segs = &path.segments;
+    let leaf = &segs.last()?.ident;
+    let container = (segs.len() >= 2).then(|| &segs[segs.len() - 2].ident);
+    match container {
+        Some(c) if c == "fs" => fs_module_call_family(leaf),
+        Some(c) if c == "File" => file_type_call_family(leaf),
+        // UFCS surface checks: `Path::exists(p)` / `try_exists` / `is_file`
+        // / `is_dir` are free-function Calls (round-4 #2 recall-gap fix).
+        Some(c) if c == "Path" => surface_check_kind(leaf).map(FsCallFamily::Surface),
+        _ => None,
+    }
+}
+
+/// Leaf dispatch for `fs::<leaf>` calls.
+fn fs_module_call_family(leaf: &syn::Ident) -> Option<FsCallFamily> {
+    if leaf == "write" {
+        Some(FsCallFamily::Write(FsCallKind::Write))
+    } else if leaf == "create_dir" || leaf == "create_dir_all" {
+        Some(FsCallFamily::Write(FsCallKind::CreateDir))
+    } else if leaf == "read" {
+        Some(FsCallFamily::Read(FsReadKind::Read))
+    } else if leaf == "read_to_string" {
+        Some(FsCallFamily::Read(FsReadKind::ReadToString))
+    } else if leaf == "metadata" {
+        Some(FsCallFamily::Surface(FsSurfaceCheckKind::Metadata))
+    } else {
+        None
+    }
+}
+
+/// Leaf dispatch for `File::<leaf>` calls.
+fn file_type_call_family(leaf: &syn::Ident) -> Option<FsCallFamily> {
+    if leaf == "create" {
+        Some(FsCallFamily::Write(FsCallKind::CreateFile))
+    } else if leaf == "open" {
+        Some(FsCallFamily::Read(FsReadKind::OpenRead))
+    } else {
+        None
+    }
+}
+
+/// Map a surface-check method ident to its [`FsSurfaceCheckKind`], or
+/// `None` if the method is not a recognised surface check.
+///
+/// `metadata()` is a surface check, INCLUDING length-only follow-ups
+/// (`p.metadata()?.len()`): reading the length is surface inspection,
+/// not a content read-back. The trailing `.len()` is a method call on
+/// the metadata value (not the path) and projects nothing of its own.
+///
+/// `try_exists()` — the **recommended** existence API (it distinguishes
+/// "doesn't exist" from "couldn't tell") — maps to the same
+/// [`FsSurfaceCheckKind::Exists`] kind: it is still an existence-only
+/// surface check, not a content read-back.
+fn surface_check_kind(method: &syn::Ident) -> Option<FsSurfaceCheckKind> {
+    if method == "exists" || method == "try_exists" {
+        Some(FsSurfaceCheckKind::Exists)
+    } else if method == "is_file" {
+        Some(FsSurfaceCheckKind::IsFile)
+    } else if method == "is_dir" {
+        Some(FsSurfaceCheckKind::IsDir)
+    } else if method == "metadata" {
+        Some(FsSurfaceCheckKind::Metadata)
+    } else {
+        None
+    }
+}
+
+/// `true` when a call's func path is `Path::new` (used to unwrap one
+/// level: `Path::new(<lit>)` resolves to `key(<lit>)`). Matches on the
+/// last two segments so `std::path::Path::new` and a bare `Path::new`
+/// both qualify.
+fn call_is_path_new(func: &syn::Expr) -> bool {
+    if let syn::Expr::Path(p) = func {
+        let segs = &p.path.segments;
+        if segs.len() >= 2 {
+            let leaf = &segs[segs.len() - 1].ident;
+            let container = &segs[segs.len() - 2].ident;
+            return container == "Path" && leaf == "new";
+        }
+    }
+    false
+}
+
+/// `true` when `expr` is a `NamedTempFile::new()` or `tempfile()` /
+/// `tempfile::tempfile()` constructor call (the temp file IS created on
+/// disk at construction). Used only at a `let`-binding RHS.
+fn is_tempfile_ctor(expr: &syn::Expr) -> bool {
+    let syn::Expr::Call(call) = expr else {
+        return false;
+    };
+    let syn::Expr::Path(p) = call.func.as_ref() else {
+        return false;
+    };
+    let segs = &p.path.segments;
+    let Some(leaf) = segs.last().map(|s| &s.ident) else {
+        return false;
+    };
+    // `NamedTempFile::new()` — penultimate segment `NamedTempFile`, leaf `new`.
+    if segs.len() >= 2 && segs[segs.len() - 2].ident == "NamedTempFile" && leaf == "new" {
+        return true;
+    }
+    // `tempfile()` / `tempfile::tempfile()` — leaf `tempfile`.
+    leaf == "tempfile"
+}
+
+/// Unwrap ONE fallible terminal (`<e>?`, `<e>.unwrap()`, `<e>.expect(..)`)
+/// off `expr` so a `let f = NamedTempFile::new()?;` RHS reduces to the
+/// bare ctor for `is_tempfile_ctor`. Non-fallible exprs pass through.
+fn unwrap_fallible_terminal(expr: &syn::Expr) -> &syn::Expr {
+    match expr {
+        syn::Expr::Try(t) => &t.expr,
+        syn::Expr::MethodCall(mc) if mc.method == "unwrap" || mc.method == "expect" => &mc.receiver,
+        other => other,
+    }
+}
+
+/// `true` when a method-call receiver chain is an `OpenOptions` builder
+/// configured for writing — `OpenOptions::new()` somewhere at the chain
+/// root AND at least one write-ENABLING option (`.write(true)` /
+/// `.append(true)` / `.create(true)` / `.create_new(true)` — with a
+/// literal `true` arg) on the chain. Walks the receiver chain.
+fn receiver_is_write_openoptions(receiver: &syn::Expr) -> bool {
+    chain_has_openoptions_root(receiver) && chain_has_write_option(receiver)
+}
+
+/// `true` when a method call's first argument is the literal `true`.
+/// Used to distinguish `OpenOptions::new().write(true)` (enables writing)
+/// from `.write(false)` (disables it — the flags default false and only
+/// ENABLE on a literal `true`, so a name-only match would false-project a
+/// write; bot-review FP, scrap-rs#26 round-4).
+fn method_call_has_true_arg(mc: &syn::ExprMethodCall) -> bool {
+    matches!(
+        mc.args.first(),
+        Some(syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Bool(b),
+            ..
+        })) if b.value
+    )
+}
+
+/// `true` when the receiver chain's root is `OpenOptions::new()`.
+fn chain_has_openoptions_root(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::MethodCall(mc) => chain_has_openoptions_root(&mc.receiver),
+        syn::Expr::Call(call) => {
+            if let syn::Expr::Path(p) = call.func.as_ref() {
+                let segs = &p.path.segments;
+                if segs.len() >= 2 {
+                    let leaf = &segs[segs.len() - 1].ident;
+                    let container = &segs[segs.len() - 2].ident;
+                    return container == "OpenOptions" && leaf == "new";
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// `true` when some method in the receiver chain ENABLES writing — a
+/// `.write` / `.append` / `.create` / `.create_new` call whose first arg
+/// is the literal `true`. A `.write(false)` (etc.) does NOT enable writing
+/// and is skipped (the chain is still walked for an earlier enabling call).
+fn chain_has_write_option(expr: &syn::Expr) -> bool {
+    if let syn::Expr::MethodCall(mc) = expr {
+        let m = &mc.method;
+        if (m == "write" || m == "append" || m == "create" || m == "create_new")
+            && method_call_has_true_arg(mc)
+        {
+            return true;
+        }
+        return chain_has_write_option(&mc.receiver);
+    }
+    false
+}
+
+/// Extract the bound ident from a `let` pattern when it is a plain
+/// `Pat::Ident` (`let p = ...`). Returns `None` for `Pat::Wild`
+/// (`let _ = ...` — owned by the discard path), `Pat::Type`
+/// (`let p: T = ...` — still a binding, but we keep v0.1 narrow to the
+/// bare-ident form), tuples, refs, and `mut`/`ref` patterns are flattened
+/// to the ident.
+fn local_binding_ident(pat: &syn::Pat) -> Option<String> {
+    match pat {
+        syn::Pat::Ident(pi) => Some(pi.ident.to_string()),
+        _ => None,
     }
 }
 
@@ -1069,6 +1953,706 @@ mod tests {
                     kind: ResultDiscardKind::ResultCtor,
                 },
             ],
+        );
+    }
+
+    // ─── scrap-rs#26: located filesystem fact projection ────────────────
+
+    /// A `(family-tag, path_key)` projection of one located fs fact.
+    /// Drops the `path_arg_span` (driven by syn source positions, not
+    /// load-bearing for these assertions) and the kind detail (asserted
+    /// separately) so the tests read as `("write", "lit:/tmp/x")`.
+    fn fs_keys(source: &str) -> Vec<(&'static str, String)> {
+        facts_of(source)
+            .into_iter()
+            .filter_map(|f| match f {
+                BehavioralFact::FilesystemWrite { path_key, .. } => Some(("write", path_key)),
+                BehavioralFact::FilesystemSurfaceCheck { path_key, .. } => {
+                    Some(("surface", path_key))
+                }
+                BehavioralFact::FilesystemRead { path_key, .. } => Some(("read", path_key)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// All located fs facts (kept whole, for kind assertions). Filters out
+    /// the non-located `ResultAsserted` / `ResultDiscarded` noise.
+    fn fs_facts(source: &str) -> Vec<BehavioralFact> {
+        facts_of(source)
+            .into_iter()
+            .filter(|f| {
+                matches!(
+                    f,
+                    BehavioralFact::FilesystemWrite { .. }
+                        | BehavioralFact::FilesystemSurfaceCheck { .. }
+                        | BehavioralFact::FilesystemRead { .. }
+                )
+            })
+            .collect()
+    }
+
+    // ── Per-kind write projection ───────────────────────────────────────
+
+    #[test]
+    fn projects_fs_write_with_literal_key() {
+        assert_eq!(
+            fs_facts(r#"fn it() { let _ = std::fs::write("/tmp/x.txt", b"d"); }"#),
+            vec![BehavioralFact::FilesystemWrite {
+                kind: FsCallKind::Write,
+                path_key: "lit:/tmp/x.txt".into(),
+                path_arg_span: span_of_first_write(
+                    r#"fn it() { let _ = std::fs::write("/tmp/x.txt", b"d"); }"#
+                ),
+            }],
+        );
+    }
+
+    /// Helper to recover the exact span of the first write fact, so the
+    /// per-kind equality test above pins the real syn-derived span rather
+    /// than a fabricated one.
+    fn span_of_first_write(source: &str) -> scrap_core::domain::types::Span {
+        match fs_facts(source).into_iter().next() {
+            Some(BehavioralFact::FilesystemWrite { path_arg_span, .. }) => path_arg_span,
+            other => panic!("expected a write fact, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn projects_file_create_as_create_file_write() {
+        // `File::create(p)?;` — Try form avoids a `.unwrap()` ResultAsserted.
+        let facts =
+            fs_facts(r#"fn it() -> std::io::Result<()> { File::create("/tmp/y")?; Ok(()) }"#);
+        assert_eq!(facts.len(), 1);
+        assert!(matches!(
+            facts[0],
+            BehavioralFact::FilesystemWrite {
+                kind: FsCallKind::CreateFile,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn projects_create_dir_and_create_dir_all_as_create_dir() {
+        for src in [
+            r#"fn it() -> std::io::Result<()> { std::fs::create_dir("/tmp/d")?; Ok(()) }"#,
+            r#"fn it() -> std::io::Result<()> { std::fs::create_dir_all("/tmp/d/e")?; Ok(()) }"#,
+        ] {
+            let facts = fs_facts(src);
+            assert_eq!(facts.len(), 1, "src: {src}");
+            assert!(
+                matches!(
+                    facts[0],
+                    BehavioralFact::FilesystemWrite {
+                        kind: FsCallKind::CreateDir,
+                        ..
+                    }
+                ),
+                "src: {src}",
+            );
+        }
+    }
+
+    #[test]
+    fn projects_openoptions_write_open_as_open_write() {
+        let facts = fs_facts(
+            r#"fn it() -> std::io::Result<()> { OpenOptions::new().write(true).open("/tmp/w")?; Ok(()) }"#,
+        );
+        assert_eq!(facts.len(), 1);
+        assert!(matches!(
+            facts[0],
+            BehavioralFact::FilesystemWrite {
+                kind: FsCallKind::OpenWrite,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn openoptions_read_only_open_does_not_project_write() {
+        // `.read(true).open(p)` is a READ-configured open — NOT a write.
+        // It also is not `File::open`, so it projects no fs fact at all.
+        let facts = fs_facts(
+            r#"fn it() -> std::io::Result<()> { OpenOptions::new().read(true).open("/tmp/r")?; Ok(()) }"#,
+        );
+        assert!(
+            facts.is_empty(),
+            "read-only OpenOptions must not project a write: {facts:?}"
+        );
+    }
+
+    #[test]
+    fn openoptions_write_false_does_not_project_write() {
+        // CodeRabbit FP (round-4 #1): `.write(false)` / `.append(false)` /
+        // `.create(false)` / `.create_new(false)` DISABLE the option (the
+        // flags default false and only enable on literal `true`). A
+        // name-only match would mis-project a write; the literal-`true`
+        // gate must reject these.
+        for opt in ["write", "append", "create", "create_new"] {
+            let src = format!(
+                "fn it() -> std::io::Result<()> {{ OpenOptions::new().{opt}(false).open(\"/tmp/x\")?; Ok(()) }}"
+            );
+            assert!(
+                fs_facts(&src).is_empty(),
+                "OpenOptions::new().{opt}(false).open(..) must NOT project a write: {:?}",
+                fs_facts(&src),
+            );
+        }
+    }
+
+    #[test]
+    fn openoptions_write_true_still_projects_open_write() {
+        // Regression guard: the literal-`true` gate must NOT break the
+        // happy path — each write-enabling option with `(true)` still
+        // projects an OpenWrite.
+        for opt in ["write", "append", "create", "create_new"] {
+            let src = format!(
+                "fn it() -> std::io::Result<()> {{ OpenOptions::new().{opt}(true).open(\"/tmp/x\")?; Ok(()) }}"
+            );
+            let facts = fs_facts(&src);
+            assert_eq!(facts.len(), 1, "opt {opt}");
+            assert!(
+                matches!(
+                    facts[0],
+                    BehavioralFact::FilesystemWrite {
+                        kind: FsCallKind::OpenWrite,
+                        ..
+                    }
+                ),
+                "opt {opt}",
+            );
+        }
+    }
+
+    // ── UFCS surface checks (round-4 #2 recall gap) ─────────────────────
+
+    #[test]
+    fn projects_ufcs_path_surface_checks() {
+        // CodeRabbit recall gap: `Path::exists(p)` / `Path::try_exists(p)`
+        // / `Path::is_file(p)` / `Path::is_dir(p)` are free-function Calls
+        // (UFCS), so they route through `fs_call_family`. They must be
+        // recognised as surface checks on the first arg.
+        for (method, kind) in [
+            ("exists", FsSurfaceCheckKind::Exists),
+            ("try_exists", FsSurfaceCheckKind::Exists),
+            ("is_file", FsSurfaceCheckKind::IsFile),
+            ("is_dir", FsSurfaceCheckKind::IsDir),
+        ] {
+            let src = format!("fn it() {{ let _ = std::path::Path::{method}(p); }}");
+            let facts = fs_facts(&src);
+            assert_eq!(facts.len(), 1, "UFCS Path::{method}");
+            assert_eq!(
+                facts[0],
+                BehavioralFact::FilesystemSurfaceCheck {
+                    kind,
+                    path_key: "bind:p".into(),
+                    path_arg_span: match &facts[0] {
+                        BehavioralFact::FilesystemSurfaceCheck { path_arg_span, .. } =>
+                            *path_arg_span,
+                        _ => unreachable!(),
+                    },
+                },
+                "UFCS Path::{method}",
+            );
+        }
+    }
+
+    // ── Per-kind surface-check projection ───────────────────────────────
+
+    #[test]
+    fn projects_exists_is_file_is_dir_surface_checks() {
+        // Receiver is the path; bound ident `p` resolves to `bind:p`.
+        // `try_exists` (the RECOMMENDED existence API) maps to Exists.
+        for (method, kind) in [
+            ("exists", FsSurfaceCheckKind::Exists),
+            ("try_exists", FsSurfaceCheckKind::Exists),
+            ("is_file", FsSurfaceCheckKind::IsFile),
+            ("is_dir", FsSurfaceCheckKind::IsDir),
+        ] {
+            let src = format!("fn it() {{ let _ = p.{method}(); }}");
+            let facts = fs_facts(&src);
+            assert_eq!(facts.len(), 1, "method {method}");
+            assert_eq!(
+                facts[0],
+                BehavioralFact::FilesystemSurfaceCheck {
+                    kind,
+                    path_key: "bind:p".into(),
+                    path_arg_span: match &facts[0] {
+                        BehavioralFact::FilesystemSurfaceCheck { path_arg_span, .. } =>
+                            *path_arg_span,
+                        _ => unreachable!(),
+                    },
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn projects_metadata_len_only_as_surface_check_not_read() {
+        // `fs::metadata(&p)?.len()` — a length-only check is a SURFACE
+        // check, never a read. The trailing `.len()` projects nothing.
+        let facts = fs_facts(
+            r"fn it() -> std::io::Result<()> { let n = std::fs::metadata(&p)?.len(); let _ = n; Ok(()) }",
+        );
+        assert_eq!(facts.len(), 1);
+        assert!(matches!(
+            facts[0],
+            BehavioralFact::FilesystemSurfaceCheck {
+                kind: FsSurfaceCheckKind::Metadata,
+                ..
+            }
+        ));
+    }
+
+    // ── Per-kind read projection ────────────────────────────────────────
+
+    #[test]
+    fn projects_read_and_read_to_string_and_file_open() {
+        for (src, kind) in [
+            (
+                r#"fn it() -> std::io::Result<()> { let _b = std::fs::read("/tmp/x")?; Ok(()) }"#,
+                FsReadKind::Read,
+            ),
+            (
+                r#"fn it() -> std::io::Result<()> { let _s = std::fs::read_to_string("/tmp/x")?; Ok(()) }"#,
+                FsReadKind::ReadToString,
+            ),
+            (
+                r#"fn it() -> std::io::Result<()> { let _f = File::open("/tmp/x")?; Ok(()) }"#,
+                FsReadKind::OpenRead,
+            ),
+        ] {
+            let facts = fs_facts(src);
+            assert_eq!(facts.len(), 1, "src: {src}");
+            assert_eq!(
+                facts[0],
+                BehavioralFact::FilesystemRead {
+                    kind,
+                    path_key: "lit:/tmp/x".into(),
+                    path_arg_span: match &facts[0] {
+                        BehavioralFact::FilesystemRead { path_arg_span, .. } => *path_arg_span,
+                        _ => unreachable!(),
+                    },
+                },
+                "src: {src}",
+            );
+        }
+    }
+
+    #[test]
+    fn projects_bufreader_file_open_as_read() {
+        // `BufReader::new(File::open(p))` — the inner `File::open` is a
+        // free-function Call that recursion reaches → OpenRead read fact.
+        let facts = fs_facts(
+            r#"fn it() -> std::io::Result<()> { let _r = std::io::BufReader::new(File::open("/tmp/x")?); Ok(()) }"#,
+        );
+        assert!(
+            facts.iter().any(|f| matches!(
+                f,
+                BehavioralFact::FilesystemRead {
+                    kind: FsReadKind::OpenRead,
+                    ..
+                }
+            )),
+            "BufReader::new(File::open(..)) must surface a read: {facts:?}",
+        );
+    }
+
+    // ── Path-key aliasing forms ─────────────────────────────────────────
+
+    #[test]
+    fn aliasing_let_binding_to_literal_resolves_to_lit_key() {
+        // `let p = "/tmp/x"; fs::write(p, ..);` — the bound ident resolves
+        // through the binding map to the literal's `lit:` key, so a later
+        // surface check on the SAME ident correlates.
+        assert_eq!(
+            fs_keys(
+                r#"fn it() { let p = "/tmp/x"; let _ = std::fs::write(p, b"d"); let _ = p.exists(); }"#
+            ),
+            vec![
+                ("write", "lit:/tmp/x".into()),
+                ("surface", "lit:/tmp/x".into())
+            ],
+        );
+    }
+
+    #[test]
+    fn aliasing_reference_unwraps_one_level() {
+        // `fs::write(&p, ..)` resolves `&p` → `p` → `bind:p`.
+        assert_eq!(
+            fs_keys(r#"fn it() { let _ = std::fs::write(&p, b"d"); }"#),
+            vec![("write", "bind:p".into())],
+        );
+    }
+
+    #[test]
+    fn aliasing_path_new_literal_unwraps_to_lit_key() {
+        // `Path::new("/tmp/x")` → `lit:/tmp/x` (one-level unwrap).
+        assert_eq!(
+            fs_keys(
+                r#"fn it() -> std::io::Result<()> { File::create(Path::new("/tmp/x"))?; Ok(()) }"#
+            ),
+            vec![("write", "lit:/tmp/x".into())],
+        );
+    }
+
+    #[test]
+    fn aliasing_as_path_unwraps_to_receiver() {
+        // `p.as_path()` → `p` → `bind:p`.
+        assert_eq!(
+            fs_keys(r#"fn it() { let _ = std::fs::write(p.as_path(), b"d"); }"#),
+            vec![("write", "bind:p".into())],
+        );
+    }
+
+    #[test]
+    fn aliasing_tempfile_path_resolves_to_handle_key() {
+        // `let f = NamedTempFile::new()?;` emits a Tempfile WRITE at the
+        // binding (key tempfile-handle:0), and `f.path().exists()` aliases
+        // the receiver back to that same handle → write + surface on ONE key.
+        assert_eq!(
+            fs_keys(
+                r"fn it() -> std::io::Result<()> { let f = NamedTempFile::new()?; let _ = f.path().exists(); Ok(()) }"
+            ),
+            vec![
+                ("write", "tempfile-handle:0".into()),
+                ("surface", "tempfile-handle:0".into()),
+            ],
+        );
+    }
+
+    #[test]
+    fn aliasing_opaque_format_path_gets_distinct_opaque_keys() {
+        // `format!(..)` is unresolvable → a DISTINCT opaque key per site.
+        // Two such sites must NOT share a key (so they can't correlate).
+        let keys = fs_keys(
+            r#"fn it() { let _ = std::fs::write(format!("/tmp/{}", a), b"d"); let _ = std::fs::metadata(format!("/tmp/{}", b)); }"#,
+        );
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0].0, "write");
+        assert_eq!(keys[1].0, "surface");
+        assert!(keys[0].1.starts_with("opaque:"));
+        assert!(keys[1].1.starts_with("opaque:"));
+        assert_ne!(
+            keys[0].1, keys[1].1,
+            "distinct opaque sites must get distinct keys"
+        );
+    }
+
+    // ── Rebind-poison resolution (cabinet CRITICAL #1) ──────────────────
+
+    #[test]
+    fn poisoned_rebound_ident_resolves_to_distinct_opaque_keys() {
+        // T2 at the projection level: a `mut` (rebound) name must resolve
+        // to a FRESH opaque key at EACH site — never a shared `bind:p` (a
+        // name-based fallback would re-collide and false-fire). The write
+        // and the surface check land on TWO DIFFERENT opaque keys, so the
+        // detector cannot correlate them.
+        let keys = fs_keys(
+            "fn it() { let mut p = make_path(); let _ = std::fs::write(&p, b\"d\"); p = make_other(); let _ = p.exists(); }",
+        );
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0].0, "write");
+        assert_eq!(keys[1].0, "surface");
+        assert!(
+            keys[0].1.starts_with("opaque:"),
+            "poisoned write key must be opaque, got {}",
+            keys[0].1,
+        );
+        assert!(
+            keys[1].1.starts_with("opaque:"),
+            "poisoned check key must be opaque, got {}",
+            keys[1].1,
+        );
+        assert_ne!(
+            keys[0].1, keys[1].1,
+            "a poisoned name must yield DISTINCT opaque keys per site (never a shared bind:p)",
+        );
+    }
+
+    #[test]
+    fn singly_bound_non_mut_ident_shares_one_key_across_sites() {
+        // Positive control at the projection level (guards against
+        // over-poisoning): a clean singly-bound non-`mut` name resolves to
+        // the SAME key at the write and the check, so they correlate. The
+        // `let p = make_path();` binding maps `p` to the resolved key of
+        // its (non-literal) RHS — a single `opaque:0` — and both `&p` and
+        // `p.exists()` look that up, so they SHARE it (not two distinct
+        // opaque keys, which is the poisoned case).
+        let keys = fs_keys(
+            "fn it() { let p = make_path(); let _ = std::fs::write(&p, b\"d\"); let _ = p.exists(); }",
+        );
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0].0, "write");
+        assert_eq!(keys[1].0, "surface");
+        assert_eq!(
+            keys[0].1, keys[1].1,
+            "a clean singly-bound name must share ONE key across sites (so it correlates)",
+        );
+    }
+
+    #[test]
+    fn unbound_clean_ident_resolves_to_shared_bind_key() {
+        // A name that is NEVER `let`-bound in the body (e.g. a fn
+        // parameter `p`) and is not poisoned falls back to `bind:<ident>`
+        // — and shares it across sites, so a write + check on a param path
+        // correlates. Pins the `bind:p` fallback path distinctly from the
+        // let-bound case above.
+        let keys = fs_keys(
+            "fn it(p: &std::path::Path) { let _ = std::fs::write(p, b\"d\"); let _ = p.exists(); }",
+        );
+        assert_eq!(
+            keys,
+            vec![("write", "bind:p".into()), ("surface", "bind:p".into())],
+            "an unbound, un-poisoned name must share its `bind:` key across sites",
+        );
+    }
+
+    // ── Read-back round-trip on the same key ────────────────────────────
+
+    #[test]
+    fn write_then_read_back_emit_read_on_same_key() {
+        // `fs::write(p, ..); fs::read_to_string(p);` — both resolve `p` to
+        // the SAME `lit:` key, so the write and the read correlate.
+        let keys = fs_keys(
+            r#"fn it() -> std::io::Result<()> { std::fs::write("/tmp/x", b"d")?; let _s = std::fs::read_to_string("/tmp/x")?; Ok(()) }"#,
+        );
+        assert_eq!(
+            keys,
+            vec![
+                ("write", "lit:/tmp/x".into()),
+                ("read", "lit:/tmp/x".into())
+            ],
+        );
+    }
+
+    // ── Located events are NOT deduped ──────────────────────────────────
+
+    #[test]
+    fn two_writes_to_different_keys_are_two_events() {
+        // Located facts must NOT dedup (contrast the presence-fact dedup
+        // for ResultAsserted/ResultDiscarded). Two writes to two keys → two.
+        assert_eq!(
+            fs_keys(
+                r#"fn it() { let _ = std::fs::write("/tmp/a", b"d"); let _ = std::fs::write("/tmp/b", b"d"); }"#
+            ),
+            vec![
+                ("write", "lit:/tmp/a".into()),
+                ("write", "lit:/tmp/b".into())
+            ],
+        );
+    }
+
+    #[test]
+    fn two_writes_to_same_key_are_still_two_events() {
+        // Even same-key located facts are NOT deduped — they are distinct
+        // observations (distinct spans). The detector's grouping collapses
+        // them at correlation time, not at projection time.
+        assert_eq!(
+            fs_keys(
+                r#"fn it() { let _ = std::fs::write("/tmp/a", b"d"); let _ = std::fs::write("/tmp/a", b"e"); }"#
+            ),
+            vec![
+                ("write", "lit:/tmp/a".into()),
+                ("write", "lit:/tmp/a".into())
+            ],
+        );
+    }
+
+    // ── Non-fs calls project nothing ────────────────────────────────────
+
+    #[test]
+    fn unrelated_calls_project_no_fs_facts() {
+        assert!(fs_facts("fn it() { let _ = compute(); foo.bar(); v.len(); }").is_empty());
+    }
+
+    // ── assert_matches! scrutinee descent (cabinet CRITICAL #2) ─────────
+
+    #[test]
+    fn assert_matches_scrutinee_read_is_projected() {
+        // `assert_matches!(fs::read_to_string(p)?, Ok(s) if ...)`'s second
+        // arg is a PATTERN, so the whole-arglist `Punctuated<Expr>` parse
+        // fails. The leading-Expr fallback must still capture the
+        // scrutinee `fs::read_to_string(p)?` so its read fact projects
+        // (otherwise a genuine read-back is dropped → false fire).
+        let facts = fs_facts(
+            "fn it() -> std::io::Result<()> { let p = \"/tmp/x\"; assert_matches!(std::fs::read_to_string(p)?, Ok(s) if s == \"x\"); Ok(()) }",
+        );
+        assert!(
+            facts.iter().any(|f| matches!(
+                f,
+                BehavioralFact::FilesystemRead {
+                    kind: FsReadKind::ReadToString,
+                    ..
+                }
+            )),
+            "assert_matches! scrutinee read must project a FilesystemRead: {facts:?}",
+        );
+    }
+
+    #[test]
+    fn nested_tautology_in_assertion_block_is_recorded() {
+        // SHOULD-FIX (soften "no verdict change"): macro descent walking
+        // `assert!({ assert_eq!(a, a); true })`'s block arg re-reaches the
+        // INNER `assert_eq!(a, a)` via `visit_macro`, so it IS recorded as
+        // a tautological-flagged assertion. This is INTENDED — a nested
+        // tautology is a real tautology — so a `ParsedAssertion` with
+        // `arguments_identical: true` must be present. (This is the one
+        // place descent changes an existing detector's input: a body whose
+        // ONLY tautology is nested now surfaces it.)
+        let item = parse_test_fn("fn it() { assert!({ assert_eq!(a, a); true }); }");
+        let mut visitor = BodyVisitor::new();
+        visitor.drive(&item.block);
+        assert!(
+            visitor
+                .assertions
+                .iter()
+                .any(|a| a.name == "assert_eq" && a.arguments_identical),
+            "nested assert_eq!(a, a) must be recorded as a tautological assertion: {:?}",
+            visitor.assertions,
+        );
+    }
+
+    #[test]
+    fn non_assertion_macro_does_not_descend() {
+        // Descent is scoped to RECOGNISED assertion macros only. A
+        // top-level `vec![std::fs::write(p, ..)]` and a `dbg!(...)` must
+        // NOT have their inner fs calls projected (the v0.1 boundary holds
+        // for non-assertion macros).
+        assert!(
+            fs_facts("fn it() { let _ = vec![std::fs::write(p, b\"d\")]; }").is_empty(),
+            "vec! is not an assertion macro — must not descend",
+        );
+        assert!(
+            fs_facts("fn it() { dbg!(std::path::Path::new(p).exists()); }").is_empty(),
+            "dbg! is not an assertion macro — must not descend",
+        );
+    }
+
+    // ── Fail-closed poison harvest (cabinet round-2) ────────────────────
+
+    /// Run the poison pre-pass on a body fragment and return its set.
+    fn poison_of(source: &str) -> std::collections::HashSet<String> {
+        let item = parse_test_fn(source);
+        PoisonScanner::scan(&item.block)
+    }
+
+    #[test]
+    fn harvest_idents_recurses_into_groups() {
+        // Flat token iteration would miss `p` nested inside `matches!(...)`'s
+        // parens; the recursive harvest reaches it.
+        let tokens: proc_macro2::TokenStream =
+            "matches!(read(p), Ok(_))".parse().expect("tokens parse");
+        let mut sink = HashSet::new();
+        harvest_idents(&tokens, &mut sink);
+        assert!(
+            sink.contains("p"),
+            "ident in a Group must be harvested: {sink:?}"
+        );
+        assert!(sink.contains("read"));
+    }
+
+    #[test]
+    fn harvest_collects_string_literal_lit_keys() {
+        // scrap-rs#26 round-3: a string literal is harvested as its
+        // `lit:<value>` key — byte-identical to what `resolve_path_key`
+        // produces (via the SAME `LitStr::value()` normalization), so a
+        // poisoned literal path matches at resolution. Non-string literals
+        // (int / byte-string) are NOT path keys and are skipped.
+        let tokens: proc_macro2::TokenStream = "read(\"/tmp/x\", 42, b\"bytes\")"
+            .parse()
+            .expect("tokens parse");
+        let mut sink = HashSet::new();
+        harvest_idents(&tokens, &mut sink);
+        assert!(
+            sink.contains("lit:/tmp/x"),
+            "string literal must harvest its lit: key: {sink:?}",
+        );
+        // The int `42` and byte-string `b"bytes"` are not path keys.
+        assert!(!sink.contains("lit:42"));
+        assert!(!sink.contains("lit:bytes"));
+    }
+
+    #[test]
+    fn harvest_literal_key_matches_resolve_path_key() {
+        // Byte-identical pin: the key the harvest poisons for a string
+        // literal must equal the key `resolve_path_key` resolves the same
+        // literal to. An escape-bearing literal exercises `LitStr::value()`
+        // unescaping (raw `\t` in source → a real tab in the value) on both
+        // sides, so any normalization drift would surface here.
+        let src = r#"fn it() { let _ = std::fs::write("a\tb", b"d"); }"#;
+        let write_key = match fs_facts(src).into_iter().next() {
+            Some(BehavioralFact::FilesystemWrite { path_key, .. }) => path_key,
+            other => panic!("expected a write fact, got {other:?}"),
+        };
+        let tokens: proc_macro2::TokenStream = "dbg!(\"a\\tb\")".parse().expect("tokens parse");
+        let mut sink = HashSet::new();
+        harvest_idents(&tokens, &mut sink);
+        assert!(
+            sink.contains(&write_key),
+            "harvest key {sink:?} must contain the resolve_path_key key {write_key:?}",
+        );
+    }
+
+    #[test]
+    fn unknown_macro_poisons_string_literal_path() {
+        // End-to-end at the poison-scan level: a literal path inside an
+        // unknown macro is poisoned by its `lit:` key.
+        let poison = poison_of("fn it() { totally_made_up_macro!(\"/tmp/x\"); }");
+        assert!(
+            poison.contains("lit:/tmp/x"),
+            "literal path in unknown macro must poison its lit: key: {poison:?}",
+        );
+    }
+
+    #[test]
+    fn unknown_macro_poisons_its_idents() {
+        // A non-assertion (unknown) macro is a give-up region: every ident
+        // inside it is harvested into the poison set.
+        let poison = poison_of("fn it() { totally_made_up_macro!(p, q); }");
+        assert!(
+            poison.contains("p"),
+            "unknown-macro ident must poison: {poison:?}"
+        );
+        assert!(poison.contains("q"));
+    }
+
+    #[test]
+    fn assert_matches_guard_tail_poisons_idents() {
+        // The `assert_matches!` give-up TAIL (`, Ok(_) if read(p) == x`)
+        // is harvested → `p` poisoned. The scrutinee (`flag`) is analyzed,
+        // NOT harvested — so a name only in the scrutinee stays clean.
+        let poison = poison_of("fn it() { assert_matches!(flag, Ok(_) if read(p) == \"x\"); }");
+        assert!(
+            poison.contains("p"),
+            "guard-tail ident must poison: {poison:?}"
+        );
+    }
+
+    #[test]
+    fn assert_matches_scrutinee_ident_not_harvested() {
+        // Boundary: the scrutinee is ANALYZED, so an ident appearing ONLY
+        // in the scrutinee (here `subject`, used once) is NOT harvested and
+        // NOT poisoned — proving the harvest cuts at the tail, not the
+        // whole blob. (`flag` in the pattern position is harvested, but
+        // that's a different name.)
+        let poison = poison_of("fn it() { assert_matches!(subject.metadata(), Ok(_)); }");
+        assert!(
+            !poison.contains("subject"),
+            "scrutinee-only ident must NOT be poisoned (tail-harvest, not blob): {poison:?}",
+        );
+    }
+
+    #[test]
+    fn in_macro_closure_param_makes_name_multiply_bound() {
+        // The poison scanner descends into ANALYZED assertion-macro args,
+        // so a closure param `|p|` is a second `Pat::Ident` binding of `p`
+        // (the first being the outer `let p`) → count≥2 → poisoned.
+        let poison = poison_of("fn it() { let p = \"/x\"; assert!([y].iter().any(|p| q(p))); }");
+        assert!(
+            poison.contains("p"),
+            "outer let + in-macro closure param must poison `p`: {poison:?}",
         );
     }
 }

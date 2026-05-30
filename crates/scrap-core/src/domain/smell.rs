@@ -167,7 +167,7 @@ impl Smell {
             }
             SmellCategory::NoOpIo => "Inspect or assert on the data returned by the I/O call.",
             SmellCategory::SurfaceOnlyIo => {
-                "Assert on the substantive payload, not just the response status."
+                "Read the content back and assert on it, not just the file's existence or metadata."
             }
             SmellCategory::LargeExample => {
                 "Split this example into focused tests or extract setup helpers."

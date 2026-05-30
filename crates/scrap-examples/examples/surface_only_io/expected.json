@@ -1,0 +1,113 @@
+{
+  "language": "rust",
+  "result": {
+    "files": [
+      {
+        "file_path": "crates/scrap-examples/examples/surface_only_io/bad.rs",
+        "findings": [
+          {
+            "exceeds_threshold": false,
+            "opt_outs": [],
+            "scrap_score": 6.0,
+            "smells": [
+              {
+                "actionability": "auto_refactor",
+                "ai_actionability_message": "Read the content back and assert on it, not just the file's existence or metadata.",
+                "category": "surface_only_io",
+                "penalty": 6,
+                "severity": "moderate",
+                "span": {
+                  "end_column": 1,
+                  "end_line": 30,
+                  "start_column": 1,
+                  "start_line": 23
+                }
+              }
+            ],
+            "test": {
+              "file_path": "crates/scrap-examples/examples/surface_only_io/bad.rs",
+              "qualified_name": "writes_a_file_but_only_checks_existence",
+              "span": {
+                "end_column": 1,
+                "end_line": 30,
+                "start_column": 1,
+                "start_line": 23
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "passed": false,
+    "summary": {
+      "average_scrap_score": 6.0,
+      "by_severity": {
+        "moderate": 1
+      },
+      "by_smell": {
+        "surface_only_io": 1
+      },
+      "exceeding_threshold": 0,
+      "max_scrap_score": 6.0,
+      "total_files": 1,
+      "total_tests": 1
+    }
+  },
+  "schema_version": 1,
+  "threshold_mode": "default",
+  "timestamp": "2026-05-27T00:00:00Z",
+  "tool": "scrap4rs",
+  "tool_version": "0.1.0",
+  "view": {
+    "eligible_count": 1,
+    "shown": [
+      {
+        "exceeds_threshold": false,
+        "opt_outs": [],
+        "scrap_score": 6.0,
+        "smells": [
+          {
+            "actionability": "auto_refactor",
+            "ai_actionability_message": "Read the content back and assert on it, not just the file's existence or metadata.",
+            "category": "surface_only_io",
+            "penalty": 6,
+            "severity": "moderate",
+            "span": {
+              "end_column": 1,
+              "end_line": 30,
+              "start_column": 1,
+              "start_line": 23
+            }
+          }
+        ],
+        "test": {
+          "file_path": "crates/scrap-examples/examples/surface_only_io/bad.rs",
+          "qualified_name": "writes_a_file_but_only_checks_existence",
+          "span": {
+            "end_column": 1,
+            "end_line": 30,
+            "start_column": 1,
+            "start_line": 23
+          }
+        }
+      }
+    ],
+    "shown_summary": {
+      "average_scrap_score": 6.0,
+      "by_severity": {
+        "moderate": 1
+      },
+      "by_smell": {
+        "surface_only_io": 1
+      },
+      "exceeding_threshold": 0,
+      "max_scrap_score": 6.0,
+      "total_files": 1,
+      "total_tests": 1
+    },
+    "spec": {
+      "only_failing": false
+    },
+    "truncated": false
+  }
+}
