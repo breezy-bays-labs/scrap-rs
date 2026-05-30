@@ -168,9 +168,16 @@ Feature: scrap4rs syn-based test parser — TestParserPort contract
   # `let _: () = ...;` false-positive guard — neither of which scrap-core
   # can exercise without importing scrap4rs.
 
+  # The fixture body is `let _ = std::fs::write("...", b"data");`. As of
+  # scrap-rs#26 the `std::fs::write(...)` call ALSO projects a located
+  # `FilesystemWrite` fact (the first half of the surface-only-io
+  # correlation), so the body now carries TWO behavioral facts: the
+  # `ResultDiscarded { Call }` discard shape this scenario asserts, AND
+  # the `FilesystemWrite { Write }`. The scenario's contract is the
+  # presence of the `ResultDiscarded` fact (second `Then` line).
   Scenario: A bare `let _ = call();` discard projects a ResultDiscarded fact
     When I parse the fixture tests/fixtures/true_positives/no_op_io.rs
-    Then test "writes_a_file_but_checks_nothing" has 1 behavioral fact
+    Then test "writes_a_file_but_checks_nothing" has 2 behavioral facts
     And test "writes_a_file_but_checks_nothing" has the ResultDiscarded fact of kind Call
 
   Scenario: A type-ascribed `let _: () = call();` does NOT project a discard (FP guard)
