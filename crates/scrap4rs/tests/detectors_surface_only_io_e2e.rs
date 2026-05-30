@@ -309,6 +309,30 @@ fn does_not_fire_on_tuple_let_rebind() {
 }
 
 #[test]
+fn does_not_fire_on_in_macro_shadow_rebind() {
+    // Disclosure regression: the poison pre-pass (`PoisonScanner`) does
+    // NOT descend into assertion-macro tokens, but the main walk does. A
+    // `let`-shadow INSIDE an assertion macro is handled by the main walk's
+    // forward overwrite of `fs_bindings` (the inner `let p` re-keys `p`),
+    // so the write (outer `p`) and the check (inner `p`) land on different
+    // keys → no fire. The only rebind invisible to BOTH mechanisms is an
+    // in-macro ASSIGNMENT, which needs `mut`, and the only `mut` the
+    // scanner can't see is a top-level fn parameter — and `#[test]` fns
+    // are parameter-less, so that gap is unreachable for an analyzed test.
+    // This pins the benign in-macro-shadow case.
+    assert!(!fires(
+        r#"
+        #[test]
+        fn in_macro_shadow() {
+            let p = "/tmp/scrap-inmacro-a.txt";
+            std::fs::write(p, b"x").unwrap();
+            assert!({ let p = "/tmp/scrap-inmacro-b.txt"; std::path::Path::new(p).exists() });
+        }
+        "#,
+    ));
+}
+
+#[test]
 fn fires_on_singly_bound_non_mut_name_positive_control() {
     // T5 — POSITIVE CONTROL: the canonical singly-bound, non-`mut` case
     // MUST STILL FIRE. If the poison pre-pass over-poisons (e.g. treats

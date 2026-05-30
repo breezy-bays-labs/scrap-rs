@@ -47,6 +47,16 @@
 //! guarantee: a path key only correlates when the adapter can prove both
 //! sites name the same value.
 //!
+//! **Structural FP-safety invariant:** a poisoned name resolves to a
+//! *fresh* `opaque:<N>` at every use, and fresh opaque keys are globally
+//! unique, so a poisoned name's facts can never group with any other
+//! fact. Poisoning therefore *strictly removes* correlations — it is
+//! structurally incapable of *causing* a false positive. A binding form
+//! the poison pre-pass fails to recognise can only cause a **miss** (an
+//! under-recognised correlation), never a misfire. (Missing a poison
+//! trigger is the safe direction; the pre-pass over-approximates toward
+//! poison for exactly this reason.)
+//!
 //! ## Suppression reconciliation — does NOT consult `has_positive_check`
 //!
 //! `surface-only-io` deliberately does **not** call
