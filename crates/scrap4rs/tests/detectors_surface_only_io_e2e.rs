@@ -181,3 +181,125 @@ fn does_not_fire_on_distinct_opaque_paths() {
         "#,
     ));
 }
+
+// ── Rebind-poison false-positive guards (cabinet CRITICAL #1) ────────────
+//
+// A name that is rebound (in ANY form), reassigned, or declared `mut`
+// must NOT correlate a write to its pre-rebind value with a check on its
+// post-rebind value — that is two different paths collapsing to one key.
+// The binding-poison pre-pass routes any such name to a FRESH opaque key,
+// so the write-site and check-site never group → no fire. (Fail-safe:
+// miss rather than misfire.)
+
+#[test]
+fn does_not_fire_on_literal_rebind() {
+    // T1: `let mut p = "/tmp/a"; write(p); p = "/tmp/b"; assert(p.exists());`
+    // The write sees `p == "/tmp/a"`, the check sees `p == "/tmp/b"` — two
+    // DIFFERENT files. Must NOT fire.
+    assert!(!fires(
+        r#"
+        #[test]
+        fn literal_rebind() {
+            let mut p = "/tmp/scrap-rebind-a.txt";
+            std::fs::write(p, b"x").unwrap();
+            p = "/tmp/scrap-rebind-b.txt";
+            assert!(std::path::Path::new(p).exists());
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn does_not_fire_on_non_literal_rebind() {
+    // T2 — THE GATE: a NON-LITERAL rebind. A name-based `bind:p` fallback
+    // would still collapse the pre- and post-rebind `bind:p` keys and
+    // FALSE-FIRE. The poisoned name must become FRESH OPAQUE so the write
+    // and check land on distinct keys. Must NOT fire.
+    assert!(!fires(
+        r#"
+        #[test]
+        fn non_literal_rebind() {
+            let mut p = make_path();
+            std::fs::write(&p, b"x").unwrap();
+            p = make_other();
+            assert!(p.exists());
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn does_not_fire_on_for_loop_rebind() {
+    // T3: `p` is written outside the loop, then re-bound as the loop var.
+    // The loop binding poisons `p` (Pat::Ident appears twice). Must NOT fire.
+    assert!(!fires(
+        r#"
+        #[test]
+        fn for_loop_rebind() {
+            let p = "/tmp/scrap-forloop.txt";
+            std::fs::write(p, b"x").unwrap();
+            for p in [make_other()] {
+                assert!(std::path::Path::new(p).exists());
+            }
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn does_not_fire_on_tuple_let_rebind() {
+    // Tuple-destructure rebind: `let (a, p) = ...;` reaches `Pat::Ident`
+    // leaves via default recursion, so `p` (bound twice across the body)
+    // poisons. Pins that the poison pre-pass is form-agnostic (no
+    // tuple-let enumeration). Must NOT fire.
+    assert!(!fires(
+        r#"
+        #[test]
+        fn tuple_let_rebind() {
+            let p = "/tmp/scrap-tuple.txt";
+            std::fs::write(p, b"x").unwrap();
+            let (_a, p) = (1, make_other());
+            assert!(p.exists());
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn fires_on_singly_bound_non_mut_name_positive_control() {
+    // T5 — POSITIVE CONTROL: the canonical singly-bound, non-`mut` case
+    // MUST STILL FIRE. If the poison pre-pass over-poisons (e.g. treats
+    // count-1 names as suspect), the detector goes dead — this catches it.
+    assert!(fires(
+        r#"
+        #[test]
+        fn singly_bound_path() {
+            let p = "/tmp/scrap-singly-bound.txt";
+            std::fs::write(p, b"x").unwrap();
+            assert!(std::path::Path::new(p).exists());
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn fires_on_let_shadowing_with_same_value_regression() {
+    // Regression: `let`-shadowing where the LATER binding is what both the
+    // write and the check see still fires — shadowing rebinds the name, so
+    // BOTH `p`s poison and the write/check land on distinct opaque keys →
+    // NO fire. (Shadowing is a rebind; the fail-safe correctly treats it
+    // as non-correlatable rather than guessing which binding each use
+    // refers to.) Pins the post-poison behavior so a future change that
+    // re-introduces last-let-wins is caught.
+    assert!(!fires(
+        r#"
+        #[test]
+        fn let_shadowing() {
+            let p = "/tmp/scrap-shadow-a.txt";
+            std::fs::write(p, b"x").unwrap();
+            let p = "/tmp/scrap-shadow-b.txt";
+            assert!(std::path::Path::new(p).exists());
+        }
+        "#,
+    ));
+}

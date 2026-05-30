@@ -36,11 +36,16 @@
 //! ### Distinct `opaque:` keys never correlate
 //!
 //! When the adapter cannot resolve a path expression (`format!(..)`,
-//! `concat!(..)`, a field path, an interprocedural value), it stamps a
-//! **distinct** `opaque:<N>` key per call site. Two opaque sites
-//! therefore never group together, so an unresolvable write and an
-//! unresolvable surface check can never spuriously correlate into a
-//! false positive — the conservative choice (miss rather than misfire).
+//! `concat!(..)`, a field path, an interprocedural value), OR when a name
+//! is **not provably singly-bound** (it is rebound in any form, reassigned,
+//! or declared `mut` — see the binding-poison pre-pass in
+//! `scrap4rs::parser::body`), it stamps a **distinct** `opaque:<N>` key per
+//! call site. Two opaque sites therefore never group together, so an
+//! unresolvable (or rebound) write and an unresolvable (or rebound) surface
+//! check can never spuriously correlate into a false positive — the
+//! conservative choice (miss rather than misfire). This is the fail-safe
+//! guarantee: a path key only correlates when the adapter can prove both
+//! sites name the same value.
 //!
 //! ## Suppression reconciliation — does NOT consult `has_positive_check`
 //!

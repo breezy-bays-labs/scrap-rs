@@ -22,7 +22,7 @@
 //! order (useful for debugging which body construct triggered
 //! recognition).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use scrap_core::domain::assertion_sources::{AssertionSource, recognise};
 use scrap_core::domain::behavioral_fact::{
@@ -103,13 +103,30 @@ pub(crate) struct BodyVisitor {
     /// resolve a call-site path argument to a stable `path_key` so the
     /// `surface-only-io` correlation can group write/check/read facts.
     ///
-    /// **Limits** (richer dataflow is a v0.3+ follow-up): no reassignment
-    /// tracking (last `let` wins, but `x = ...` assignment is invisible);
-    /// no field paths (`self.tmp.path()` is opaque); no interprocedural
-    /// resolution; no `format!`/`concat!` reduction — each of those
-    /// resolves to a DISTINCT `opaque:<N>` key so it can never spuriously
-    /// correlate with another unresolved path.
+    /// **Fail-safe correlation (poison set, scrap-rs#26 cabinet
+    /// CRITICAL #1):** a name is only correlatable while it is *provably
+    /// singly-bound and not `mut`*. A name that is rebound (in ANY form —
+    /// re-`let`, shadow, `for p in`, tuple-destructure, `if let`, match
+    /// arm, closure param, …), reassigned (`p = ...` / `p += ...`), or
+    /// declared `mut` is **poisoned**: at a call site it resolves to a
+    /// FRESH `opaque:<N>` key (never `bind:<name>`), so a write to its
+    /// pre-rebind value can never correlate with a check on its
+    /// post-rebind value. The poison decision is made by a cheap pre-pass
+    /// ([`PoisonScanner`]) run before the main walk. Unknown binding forms
+    /// default to poisoned (miss, never misfire). See [`Self::poisoned`].
+    ///
+    /// **Limits** (richer dataflow is a v0.3+ follow-up): no field paths
+    /// (`self.tmp.path()` is opaque); no interprocedural resolution; no
+    /// `format!`/`concat!` reduction — each of those resolves to a
+    /// DISTINCT `opaque:<N>` key so it can never spuriously correlate with
+    /// another unresolved path. Bindings introduced INSIDE a non-assertion
+    /// macro are not poison-tracked, but the main walk also never projects
+    /// facts from such a name, so no false positive arises.
     fs_bindings: HashMap<String, String>,
+    /// Names that are NOT safe to correlate (see [`Self::fs_bindings`]).
+    /// Populated once by [`PoisonScanner`] before the main walk; a
+    /// poisoned ident always resolves to a fresh `opaque:<N>` key.
+    poisoned: HashSet<String>,
     /// Monotonic counter for `opaque:<N>` keys — one per unresolvable
     /// path-argument site, so two opaque sites never share a key.
     opaque_counter: usize,
@@ -125,6 +142,7 @@ impl BodyVisitor {
             implicit_assertion_sources: Vec::new(),
             behavioral_facts: Vec::new(),
             fs_bindings: HashMap::new(),
+            poisoned: HashSet::new(),
             opaque_counter: 0,
             tempfile_counter: 0,
         }
@@ -133,9 +151,123 @@ impl BodyVisitor {
     /// Drive the walk over a test fn's `&syn::Block`. Wrapper over
     /// `visit_block` so the caller doesn't have to import the Visit
     /// trait.
+    ///
+    /// Runs the binding-poison pre-pass ([`PoisonScanner`]) FIRST so the
+    /// main walk's path-key resolution can consult the poison set on the
+    /// very first call site (the scan must complete before any resolution
+    /// happens — a forward-only scan would miss a rebind that occurs
+    /// after the first use).
     pub(crate) fn drive(&mut self, block: &Block) {
+        self.poisoned = PoisonScanner::scan(block);
         self.visit_block(block);
     }
+}
+
+/// Pre-pass that computes the set of poisoned names for one test body.
+///
+/// Fail-safe (allowlist) design per scrap-rs#26 cabinet CRITICAL #1:
+/// rather than enumerate every rebind FORM (a denylist that always misses
+/// one), it counts `Pat::Ident` leaves — EVERY pattern binding form
+/// (tuple-`let (a, p)`, struct/slice destructure, `for p in`, `if let` /
+/// `while let`, match arms, closure params, `x @ subpat`) reduces to
+/// `Pat::Ident` leaves that `syn`'s default `Visit` recursion reaches, so
+/// one override (`visit_pat_ident`) covers the open-ended set for free.
+///
+/// A name is poisoned when ANY of:
+/// 1. it is bound (as a `Pat::Ident`) **two or more times** in the body
+///    — catches re-`let`, shadow, for-loop collision, tuple rebind, …;
+/// 2. any of its bindings carries `mut` (`let mut p` / `ref mut p`) —
+///    `mut` is the prerequisite for reassignment in compiled code;
+/// 3. it appears as the **target of an assignment** (`p = ...` /
+///    `p += ...`) — the only non-pattern rebind, a closed set
+///    (`Expr::Assign` plus the compound-assign `Expr::Binary` ops),
+///    needed because the parser also sees *uncompiled* fixtures where a
+///    reassignment can lack `mut`.
+struct PoisonScanner {
+    /// Count of `Pat::Ident` bindings seen per name.
+    bind_counts: HashMap<String, usize>,
+    /// Names directly poisoned by a `mut` binding or an assignment target.
+    poisoned: HashSet<String>,
+}
+
+impl PoisonScanner {
+    /// Scan `block` and return the poisoned-name set.
+    fn scan(block: &Block) -> HashSet<String> {
+        let mut scanner = Self {
+            bind_counts: HashMap::new(),
+            poisoned: HashSet::new(),
+        };
+        scanner.visit_block(block);
+        // A name bound 2+ times is poisoned (rebind / shadow / collision).
+        for (name, count) in &scanner.bind_counts {
+            if *count >= 2 {
+                scanner.poisoned.insert(name.clone());
+            }
+        }
+        scanner.poisoned
+    }
+}
+
+impl<'ast> Visit<'ast> for PoisonScanner {
+    fn visit_pat_ident(&mut self, pi: &'ast syn::PatIdent) {
+        let name = pi.ident.to_string();
+        *self.bind_counts.entry(name.clone()).or_insert(0) += 1;
+        // A `mut` (or `ref mut`) binding is poison: reassignment-capable.
+        if pi.mutability.is_some() {
+            self.poisoned.insert(name);
+        }
+        syn::visit::visit_pat_ident(self, pi);
+    }
+
+    fn visit_expr_assign(&mut self, node: &'ast syn::ExprAssign) {
+        // `p = ...` — the assigned target name is poison. Also covers a
+        // compound-assign that syn models as `Expr::Assign` in 2.0.
+        if let Some(name) = assign_target_ident(&node.left) {
+            self.poisoned.insert(name);
+        }
+        syn::visit::visit_expr_assign(self, node);
+    }
+
+    fn visit_expr_binary(&mut self, node: &'ast syn::ExprBinary) {
+        // Compound assignment (`p += ...`, `p *= ...`, ...) is an
+        // `Expr::Binary` with an `*Assign` op in syn 2.0; poison the LHS.
+        if is_compound_assign(&node.op)
+            && let Some(name) = assign_target_ident(&node.left)
+        {
+            self.poisoned.insert(name);
+        }
+        syn::visit::visit_expr_binary(self, node);
+    }
+}
+
+/// Extract the bare-ident name from an assignment LHS (`p = ...`).
+/// Returns `None` for field/index/tuple LHS (those aren't a single
+/// correlatable name, so they need no poisoning here).
+fn assign_target_ident(target: &syn::Expr) -> Option<String> {
+    if let syn::Expr::Path(p) = target
+        && p.qself.is_none()
+        && p.path.segments.len() == 1
+    {
+        return Some(p.path.segments[0].ident.to_string());
+    }
+    None
+}
+
+/// `true` for the compound-assignment binary ops (`+=`, `-=`, `*=`, ...).
+fn is_compound_assign(op: &syn::BinOp) -> bool {
+    matches!(
+        op,
+        syn::BinOp::AddAssign(_)
+            | syn::BinOp::SubAssign(_)
+            | syn::BinOp::MulAssign(_)
+            | syn::BinOp::DivAssign(_)
+            | syn::BinOp::RemAssign(_)
+            | syn::BinOp::BitXorAssign(_)
+            | syn::BinOp::BitAndAssign(_)
+            | syn::BinOp::BitOrAssign(_)
+            | syn::BinOp::ShlAssign(_)
+            | syn::BinOp::ShrAssign(_)
+    )
 }
 
 impl<'ast> Visit<'ast> for BodyVisitor {
@@ -418,7 +550,12 @@ impl BodyVisitor {
     /// hinges on this). Unwraps ONE level of the transparent wrappers
     /// `&e`, `e.as_path()`, `e.as_ref()`, `Path::new(<lit>)`, then:
     /// - string/path literal → `lit:<value>`;
-    /// - bare ident → `fs_bindings` lookup, else `bind:<ident>`;
+    /// - bare ident, **not poisoned** → `fs_bindings` lookup, else
+    ///   `bind:<ident>`;
+    /// - bare ident, **poisoned** (rebound / reassigned / `mut`) → a fresh
+    ///   `opaque:<N>` (NEVER `bind:<name>` — a name-based fallback would
+    ///   re-collide the pre- and post-rebind keys and false-fire; this is
+    ///   the cabinet's T2 gate, scrap-rs#26 CRITICAL #1);
     /// - `f.path()` where `f` is a tempfile-handle binding → that handle;
     /// - anything else (`format!`, `concat!`, field path, method chain) →
     ///   a fresh `opaque:<N>`.
@@ -439,13 +576,19 @@ impl BodyVisitor {
                 Some(arg) => self.resolve_path_key(arg),
                 None => self.fresh_opaque_key(),
             },
-            // Bare ident → binding-map lookup, else `bind:<ident>`.
+            // Bare ident → poisoned names route to a fresh opaque key
+            // (never correlatable); clean names resolve through the
+            // binding map, else `bind:<ident>`.
             syn::Expr::Path(p) if p.qself.is_none() && p.path.segments.len() == 1 => {
                 let ident = p.path.segments[0].ident.to_string();
-                self.fs_bindings
-                    .get(&ident)
-                    .cloned()
-                    .unwrap_or_else(|| format!("bind:{ident}"))
+                if self.poisoned.contains(&ident) {
+                    self.fresh_opaque_key()
+                } else {
+                    self.fs_bindings
+                        .get(&ident)
+                        .cloned()
+                        .unwrap_or_else(|| format!("bind:{ident}"))
+                }
             }
             // `e.as_path()` / `e.as_ref()` → recurse into the receiver.
             // `f.path()` where `f` is a tempfile handle → that handle's key.
@@ -468,12 +611,20 @@ impl BodyVisitor {
 
     /// If `expr` is a bare ident bound to a `tempfile-handle:<N>` key,
     /// return that key. Used so `f.path()` aliases back to the tempfile.
+    ///
+    /// A **poisoned** handle name (rebound / reassigned / `mut`) returns
+    /// `None` so the caller falls through to a fresh opaque key — same
+    /// fail-safe rule as the bare-ident resolution: a rebound tempfile
+    /// handle must not alias its pre-rebind value's key.
     fn tempfile_handle_of(&self, expr: &syn::Expr) -> Option<String> {
         if let syn::Expr::Path(p) = expr
             && p.qself.is_none()
             && p.path.segments.len() == 1
         {
             let ident = p.path.segments[0].ident.to_string();
+            if self.poisoned.contains(&ident) {
+                return None;
+            }
             if let Some(key) = self.fs_bindings.get(&ident)
                 && key.starts_with("tempfile-handle:")
             {
@@ -1823,6 +1974,75 @@ mod tests {
         assert_ne!(
             keys[0].1, keys[1].1,
             "distinct opaque sites must get distinct keys"
+        );
+    }
+
+    // ── Rebind-poison resolution (cabinet CRITICAL #1) ──────────────────
+
+    #[test]
+    fn poisoned_rebound_ident_resolves_to_distinct_opaque_keys() {
+        // T2 at the projection level: a `mut` (rebound) name must resolve
+        // to a FRESH opaque key at EACH site — never a shared `bind:p` (a
+        // name-based fallback would re-collide and false-fire). The write
+        // and the surface check land on TWO DIFFERENT opaque keys, so the
+        // detector cannot correlate them.
+        let keys = fs_keys(
+            "fn it() { let mut p = make_path(); let _ = std::fs::write(&p, b\"d\"); p = make_other(); let _ = p.exists(); }",
+        );
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0].0, "write");
+        assert_eq!(keys[1].0, "surface");
+        assert!(
+            keys[0].1.starts_with("opaque:"),
+            "poisoned write key must be opaque, got {}",
+            keys[0].1,
+        );
+        assert!(
+            keys[1].1.starts_with("opaque:"),
+            "poisoned check key must be opaque, got {}",
+            keys[1].1,
+        );
+        assert_ne!(
+            keys[0].1, keys[1].1,
+            "a poisoned name must yield DISTINCT opaque keys per site (never a shared bind:p)",
+        );
+    }
+
+    #[test]
+    fn singly_bound_non_mut_ident_shares_one_key_across_sites() {
+        // Positive control at the projection level (guards against
+        // over-poisoning): a clean singly-bound non-`mut` name resolves to
+        // the SAME key at the write and the check, so they correlate. The
+        // `let p = make_path();` binding maps `p` to the resolved key of
+        // its (non-literal) RHS — a single `opaque:0` — and both `&p` and
+        // `p.exists()` look that up, so they SHARE it (not two distinct
+        // opaque keys, which is the poisoned case).
+        let keys = fs_keys(
+            "fn it() { let p = make_path(); let _ = std::fs::write(&p, b\"d\"); let _ = p.exists(); }",
+        );
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0].0, "write");
+        assert_eq!(keys[1].0, "surface");
+        assert_eq!(
+            keys[0].1, keys[1].1,
+            "a clean singly-bound name must share ONE key across sites (so it correlates)",
+        );
+    }
+
+    #[test]
+    fn unbound_clean_ident_resolves_to_shared_bind_key() {
+        // A name that is NEVER `let`-bound in the body (e.g. a fn
+        // parameter `p`) and is not poisoned falls back to `bind:<ident>`
+        // — and shares it across sites, so a write + check on a param path
+        // correlates. Pins the `bind:p` fallback path distinctly from the
+        // let-bound case above.
+        let keys = fs_keys(
+            "fn it(p: &std::path::Path) { let _ = std::fs::write(p, b\"d\"); let _ = p.exists(); }",
+        );
+        assert_eq!(
+            keys,
+            vec![("write", "bind:p".into()), ("surface", "bind:p".into())],
+            "an unbound, un-poisoned name must share its `bind:` key across sites",
         );
     }
 
