@@ -963,29 +963,55 @@ enum FsCallFamily {
 /// single-segment leaf (e.g. `create`, `open`) is NOT matched (too
 /// ambiguous). `fs::*` matches any module named `fs` (so both
 /// `std::fs::write` and a `use std::fs;`-qualified `fs::write` work);
-/// `File::*` matches the `File` type.
+/// `File::*` matches the `File` type; `Path::*` matches the UFCS surface
+/// checks `Path::exists(p)` / `try_exists` / `is_file` / `is_dir` (those
+/// parse as free-function `Call`s, so they route here rather than through
+/// the method-call surface-check path — round-4 #2 recall-gap fix).
 fn fs_call_family(path: &syn::Path) -> Option<FsCallFamily> {
-    // Zero-alloc last-two-segment match (per the file's `&Ident == "..."`
-    // convention; no `Vec<String>` build). Resolve the container + leaf to
-    // borrowed `&str`s once, then a single flat `match` keeps cyclomatic
-    // complexity low (one decision point, not a per-leaf `if` ladder). The
-    // container disambiguates so a bare single-segment leaf is never matched.
+    // Zero-alloc last-two-segment dispatch (per the file's `&Ident ==
+    // "..."` convention; no string allocation). Resolve the container to a
+    // small enum once, then dispatch on the leaf per container — each
+    // per-container helper is a flat `if`-chain that stays low-CC, and the
+    // top-level `match` is a single decision point. The container
+    // disambiguates so a bare single-segment leaf is never matched.
     let segs = &path.segments;
-    let leaf = segs.last()?.ident.to_string();
-    let container = if segs.len() >= 2 {
-        segs[segs.len() - 2].ident.to_string()
-    } else {
-        String::new()
-    };
-    match (container.as_str(), leaf.as_str()) {
-        ("fs", "write") => Some(FsCallFamily::Write(FsCallKind::Write)),
-        ("File", "create") => Some(FsCallFamily::Write(FsCallKind::CreateFile)),
-        ("fs", "create_dir" | "create_dir_all") => Some(FsCallFamily::Write(FsCallKind::CreateDir)),
-        ("fs", "read") => Some(FsCallFamily::Read(FsReadKind::Read)),
-        ("fs", "read_to_string") => Some(FsCallFamily::Read(FsReadKind::ReadToString)),
-        ("File", "open") => Some(FsCallFamily::Read(FsReadKind::OpenRead)),
-        ("fs", "metadata") => Some(FsCallFamily::Surface(FsSurfaceCheckKind::Metadata)),
+    let leaf = &segs.last()?.ident;
+    let container = (segs.len() >= 2).then(|| &segs[segs.len() - 2].ident);
+    match container {
+        Some(c) if c == "fs" => fs_module_call_family(leaf),
+        Some(c) if c == "File" => file_type_call_family(leaf),
+        // UFCS surface checks: `Path::exists(p)` / `try_exists` / `is_file`
+        // / `is_dir` are free-function Calls (round-4 #2 recall-gap fix).
+        Some(c) if c == "Path" => surface_check_kind(leaf).map(FsCallFamily::Surface),
         _ => None,
+    }
+}
+
+/// Leaf dispatch for `fs::<leaf>` calls.
+fn fs_module_call_family(leaf: &syn::Ident) -> Option<FsCallFamily> {
+    if leaf == "write" {
+        Some(FsCallFamily::Write(FsCallKind::Write))
+    } else if leaf == "create_dir" || leaf == "create_dir_all" {
+        Some(FsCallFamily::Write(FsCallKind::CreateDir))
+    } else if leaf == "read" {
+        Some(FsCallFamily::Read(FsReadKind::Read))
+    } else if leaf == "read_to_string" {
+        Some(FsCallFamily::Read(FsReadKind::ReadToString))
+    } else if leaf == "metadata" {
+        Some(FsCallFamily::Surface(FsSurfaceCheckKind::Metadata))
+    } else {
+        None
+    }
+}
+
+/// Leaf dispatch for `File::<leaf>` calls.
+fn file_type_call_family(leaf: &syn::Ident) -> Option<FsCallFamily> {
+    if leaf == "create" {
+        Some(FsCallFamily::Write(FsCallKind::CreateFile))
+    } else if leaf == "open" {
+        Some(FsCallFamily::Read(FsReadKind::OpenRead))
+    } else {
+        None
     }
 }
 
@@ -1066,11 +1092,26 @@ fn unwrap_fallible_terminal(expr: &syn::Expr) -> &syn::Expr {
 
 /// `true` when a method-call receiver chain is an `OpenOptions` builder
 /// configured for writing — `OpenOptions::new()` somewhere at the chain
-/// root AND at least one write-enabling option
-/// (`.write(true)` / `.append(true)` / `.create(true)` /
-/// `.create_new(true)`) on the chain. Walks the receiver chain.
+/// root AND at least one write-ENABLING option (`.write(true)` /
+/// `.append(true)` / `.create(true)` / `.create_new(true)` — with a
+/// literal `true` arg) on the chain. Walks the receiver chain.
 fn receiver_is_write_openoptions(receiver: &syn::Expr) -> bool {
     chain_has_openoptions_root(receiver) && chain_has_write_option(receiver)
+}
+
+/// `true` when a method call's first argument is the literal `true`.
+/// Used to distinguish `OpenOptions::new().write(true)` (enables writing)
+/// from `.write(false)` (disables it — the flags default false and only
+/// ENABLE on a literal `true`, so a name-only match would false-project a
+/// write; bot-review FP, scrap-rs#26 round-4).
+fn method_call_has_true_arg(mc: &syn::ExprMethodCall) -> bool {
+    matches!(
+        mc.args.first(),
+        Some(syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Bool(b),
+            ..
+        })) if b.value
+    )
 }
 
 /// `true` when the receiver chain's root is `OpenOptions::new()`.
@@ -1092,11 +1133,16 @@ fn chain_has_openoptions_root(expr: &syn::Expr) -> bool {
     }
 }
 
-/// `true` when some method in the receiver chain enables writing.
+/// `true` when some method in the receiver chain ENABLES writing — a
+/// `.write` / `.append` / `.create` / `.create_new` call whose first arg
+/// is the literal `true`. A `.write(false)` (etc.) does NOT enable writing
+/// and is skipped (the chain is still walked for an earlier enabling call).
 fn chain_has_write_option(expr: &syn::Expr) -> bool {
     if let syn::Expr::MethodCall(mc) = expr {
         let m = &mc.method;
-        if m == "write" || m == "append" || m == "create" || m == "create_new" {
+        if (m == "write" || m == "append" || m == "create" || m == "create_new")
+            && method_call_has_true_arg(mc)
+        {
             return true;
         }
         return chain_has_write_option(&mc.receiver);
@@ -2034,6 +2080,82 @@ mod tests {
             facts.is_empty(),
             "read-only OpenOptions must not project a write: {facts:?}"
         );
+    }
+
+    #[test]
+    fn openoptions_write_false_does_not_project_write() {
+        // CodeRabbit FP (round-4 #1): `.write(false)` / `.append(false)` /
+        // `.create(false)` / `.create_new(false)` DISABLE the option (the
+        // flags default false and only enable on literal `true`). A
+        // name-only match would mis-project a write; the literal-`true`
+        // gate must reject these.
+        for opt in ["write", "append", "create", "create_new"] {
+            let src = format!(
+                "fn it() -> std::io::Result<()> {{ OpenOptions::new().{opt}(false).open(\"/tmp/x\")?; Ok(()) }}"
+            );
+            assert!(
+                fs_facts(&src).is_empty(),
+                "OpenOptions::new().{opt}(false).open(..) must NOT project a write: {:?}",
+                fs_facts(&src),
+            );
+        }
+    }
+
+    #[test]
+    fn openoptions_write_true_still_projects_open_write() {
+        // Regression guard: the literal-`true` gate must NOT break the
+        // happy path — each write-enabling option with `(true)` still
+        // projects an OpenWrite.
+        for opt in ["write", "append", "create", "create_new"] {
+            let src = format!(
+                "fn it() -> std::io::Result<()> {{ OpenOptions::new().{opt}(true).open(\"/tmp/x\")?; Ok(()) }}"
+            );
+            let facts = fs_facts(&src);
+            assert_eq!(facts.len(), 1, "opt {opt}");
+            assert!(
+                matches!(
+                    facts[0],
+                    BehavioralFact::FilesystemWrite {
+                        kind: FsCallKind::OpenWrite,
+                        ..
+                    }
+                ),
+                "opt {opt}",
+            );
+        }
+    }
+
+    // ── UFCS surface checks (round-4 #2 recall gap) ─────────────────────
+
+    #[test]
+    fn projects_ufcs_path_surface_checks() {
+        // CodeRabbit recall gap: `Path::exists(p)` / `Path::try_exists(p)`
+        // / `Path::is_file(p)` / `Path::is_dir(p)` are free-function Calls
+        // (UFCS), so they route through `fs_call_family`. They must be
+        // recognised as surface checks on the first arg.
+        for (method, kind) in [
+            ("exists", FsSurfaceCheckKind::Exists),
+            ("try_exists", FsSurfaceCheckKind::Exists),
+            ("is_file", FsSurfaceCheckKind::IsFile),
+            ("is_dir", FsSurfaceCheckKind::IsDir),
+        ] {
+            let src = format!("fn it() {{ let _ = std::path::Path::{method}(p); }}");
+            let facts = fs_facts(&src);
+            assert_eq!(facts.len(), 1, "UFCS Path::{method}");
+            assert_eq!(
+                facts[0],
+                BehavioralFact::FilesystemSurfaceCheck {
+                    kind,
+                    path_key: "bind:p".into(),
+                    path_arg_span: match &facts[0] {
+                        BehavioralFact::FilesystemSurfaceCheck { path_arg_span, .. } =>
+                            *path_arg_span,
+                        _ => unreachable!(),
+                    },
+                },
+                "UFCS Path::{method}",
+            );
+        }
     }
 
     // ── Per-kind surface-check projection ───────────────────────────────

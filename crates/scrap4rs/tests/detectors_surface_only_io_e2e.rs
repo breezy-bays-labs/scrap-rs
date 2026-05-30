@@ -626,3 +626,57 @@ fn fires_on_literal_positive_control() {
     assert_eq!(finding.smells.len(), 1);
     assert_eq!(finding.smells[0].penalty, 6);
 }
+
+// ── Recognition-fn fixes (cabinet round-4) ───────────────────────────────
+
+#[test]
+fn does_not_fire_on_openoptions_write_false() {
+    // Round-4 #1: `OpenOptions::new().write(false).open(p)` is NOT a write
+    // (the flag is disabled). With a surface check present it would fire if
+    // the false-arg call were mis-projected as a write → must NOT fire.
+    assert!(!fires(
+        r#"
+        #[test]
+        fn open_options_write_false() -> std::io::Result<()> {
+            let p = "/tmp/scrap-oo-false.txt";
+            OpenOptions::new().write(false).open(p)?;
+            assert!(std::path::Path::new(p).exists());
+            Ok(())
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn fires_on_openoptions_write_true_surface_only() {
+    // Round-4 #1 regression: `.write(true).open(p)` IS a write; with a
+    // surface-only check + no read → fires.
+    assert!(fires(
+        r#"
+        #[test]
+        fn open_options_write_true() -> std::io::Result<()> {
+            let p = "/tmp/scrap-oo-true.txt";
+            OpenOptions::new().write(true).open(p)?;
+            assert!(std::path::Path::new(p).exists());
+            Ok(())
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn fires_on_ufcs_path_surface_check() {
+    // Round-4 #2: a UFCS surface check `Path::exists(p)` after a write,
+    // with no read → fires (the surface check is now recognised through
+    // the free-function `fs_call_family` path).
+    assert!(fires(
+        r#"
+        #[test]
+        fn ufcs_surface_check() {
+            let p = "/tmp/scrap-ufcs.txt";
+            std::fs::write(p, b"data").unwrap();
+            assert!(std::path::Path::exists(p));
+        }
+        "#,
+    ));
+}
