@@ -39,14 +39,14 @@
 //! lands, link to it here for the dumb-parser/smart-detector boundary
 //! (D10) rationale.
 
-use crate::cli::config::DetectorConfig;
 use crate::domain::classification::{Actionability, Severity};
+use crate::domain::config::DetectorConfig;
 use crate::domain::finding::Finding;
 use crate::domain::parsed::ParsedTest;
 use crate::domain::smell::{Smell, SmellCategory};
 
 /// Default penalty per CLAUDE.md detection rules table.
-const DEFAULT_PENALTY: u32 = 10;
+pub(crate) const DEFAULT_PENALTY: u32 = 10;
 
 /// Default severity for the zero-assertion smell.
 const DEFAULT_SEVERITY: Severity = Severity::High;
