@@ -308,7 +308,15 @@ fn analyze_one_file<P>(
 where
     P: TestParserPort,
 {
-    let source_text = match std::fs::read_to_string(file_path.as_path()) {
+    // The walker emits paths RELATIVE to `AnalysisConfig::src` (per
+    // FsWalker's contract — keeps report stamps machine-independent),
+    // so disk reads must join onto `opts.src`, not resolve against the
+    // process CWD (scrap-rs#125). `Path::join` replaces the base when
+    // handed an absolute path, so absolute `FilePath`s (library
+    // embedders, tests) keep working unchanged. The relative path
+    // stays on the diagnostic + `TestIdentity` stamps below.
+    let read_path = opts.src.join(file_path.as_path());
+    let source_text = match std::fs::read_to_string(&read_path) {
         Ok(s) => s,
         Err(e) => {
             return FileOutcome::ReadFailure(SourceDiagnostic::new(
@@ -568,6 +576,40 @@ mod tests {
         // diagnostic still gets pushed before the all-failed check.
         let err = analyze(&opts, &source, &parser).expect_err("single-failure → all-failed");
         assert!(matches!(err, AnalyzeError::AllFilesFailedToParse { .. }));
+    }
+
+    #[test]
+    fn analyze_reads_relative_walker_paths_against_opts_src() {
+        // Regression scrap-rs#125: the walker emits paths RELATIVE to
+        // `AnalysisConfig::src`; the per-file read must join them onto
+        // `opts.src` rather than resolve against the process CWD. With
+        // the old CWD-read behavior this produced one MidwalkIo
+        // diagnostic and an empty report (the silent-empty-run bug the
+        // #97 config-dogfood gate first surfaced).
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "#[test] fn it() {}").unwrap();
+        let fp = FilePath::new("a.rs"); // relative, exactly as FsWalker emits
+        let source = MemorySource::with_files(vec![fp]);
+        let parser = MockParser {
+            mode: MockMode::OneTestOk,
+        };
+        let opts = AnalyzeOptions {
+            src: dir.path().to_path_buf(),
+            ..AnalyzeOptions::default()
+        };
+        let output = analyze(&opts, &source, &parser).expect("relative-path analyze succeeds");
+        assert!(
+            output.source_diagnostics.is_empty(),
+            "read must join opts.src — got diagnostics: {:?}",
+            output.source_diagnostics
+        );
+        assert_eq!(output.report.files.len(), 1, "file analyzed");
+        // The report stamp stays relative (machine-independent).
+        assert_eq!(
+            output.report.files[0].file_path,
+            FilePath::new("a.rs"),
+            "identity keeps the walker-relative path"
+        );
     }
 
     #[test]
