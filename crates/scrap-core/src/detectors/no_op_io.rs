@@ -64,7 +64,7 @@ use crate::domain::parsed::ParsedTest;
 use crate::domain::smell::{Smell, SmellCategory};
 
 /// Default penalty per the CLAUDE.md / kickstart-plan detection table.
-const DEFAULT_PENALTY: u32 = 8;
+pub(crate) const DEFAULT_PENALTY: u32 = 8;
 
 /// Default severity: below `zero-assertion`'s `High` (penalty 8 < 10).
 const DEFAULT_SEVERITY: Severity = Severity::Moderate;

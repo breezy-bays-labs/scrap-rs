@@ -31,6 +31,7 @@
 //! advisor pass caught. Round-trip-clean is verified via a
 //! dedicated unit test.
 
+use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
@@ -225,18 +226,13 @@ pub(crate) fn render_config(meta: &AdapterMeta, detection: &SrcDetection) -> Str
     // Extensions.
     out.push_str("# File extensions the walker keeps (no leading dot). Defaults to the\n");
     out.push_str("# adapter's own list; an empty array means \"every file the walker visits\".\n");
-    out.push_str("# extensions = [");
-    let mut first = true;
-    for ext in meta.extensions {
-        if !first {
-            out.push_str(", ");
-        }
-        out.push('"');
-        out.push_str(ext);
-        out.push('"');
-        first = false;
-    }
-    out.push_str("]\n\n");
+    let extensions = meta
+        .extensions
+        .iter()
+        .map(|ext| format!("\"{ext}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let _ = writeln!(out, "# extensions = [{extensions}]\n");
 
     // Opt-out policy.
     out.push_str("# Which per-test `#[allow(scrap::*)]` suppressions the project honors.\n");
@@ -245,32 +241,57 @@ pub(crate) fn render_config(meta: &AdapterMeta, detection: &SrcDetection) -> Str
     out.push_str("# [opt_outs]\n");
     out.push_str("# honor = [\"no_asserts\", \"tautology\", \"no_op\"]\n\n");
 
-    // Per-detector tables — defaults annotated so uncommenting a line
-    // and keeping the value is always a no-op.
+    // Per-detector tables — penalties + threshold formatted from the
+    // canonical `DEFAULT_*` consts in `crate::detectors::*` so the
+    // annotated values can never drift from the code (Gemini review,
+    // PR #129 — the same "documentation rots; CI doesn't" rationale as
+    // the sync test, enforced at compile time instead).
     out.push_str("# Per-detector tunables. Every detector is enabled by default; the\n");
     out.push_str("# values shown ARE the defaults, so uncommenting without editing\n");
     out.push_str("# changes nothing. `penalty = 0` is rejected (silently-neutering);\n");
     out.push_str("# disable a detector with `enabled = false` instead.\n");
-    out.push_str("# [detectors.zero_assertion]\n");
-    out.push_str("# enabled = true\n");
-    out.push_str("# penalty = 10\n");
-    out.push_str("#\n");
-    out.push_str("# [detectors.tautological_assertion]\n");
-    out.push_str("# enabled = true\n");
-    out.push_str("# penalty = 10\n");
-    out.push_str("#\n");
-    out.push_str("# [detectors.no_op_io]\n");
-    out.push_str("# enabled = true\n");
-    out.push_str("# penalty = 8\n");
-    out.push_str("#\n");
-    out.push_str("# [detectors.surface_only_io]\n");
-    out.push_str("# enabled = true\n");
-    out.push_str("# penalty = 6\n");
-    out.push_str("#\n");
-    out.push_str("# [detectors.large_example]\n");
-    out.push_str("# enabled = true\n");
-    out.push_str("# penalty = 4\n");
-    out.push_str("# line_threshold = 30  # only valid on large_example\n\n");
+    let detector_defaults: [(&str, u32, Option<u32>); 5] = [
+        (
+            "zero_assertion",
+            crate::detectors::zero_assertion::DEFAULT_PENALTY,
+            None,
+        ),
+        (
+            "tautological_assertion",
+            crate::detectors::tautological_assertion::DEFAULT_PENALTY,
+            None,
+        ),
+        (
+            "no_op_io",
+            crate::detectors::no_op_io::DEFAULT_PENALTY,
+            None,
+        ),
+        (
+            "surface_only_io",
+            crate::detectors::surface_only_io::DEFAULT_PENALTY,
+            None,
+        ),
+        (
+            "large_example",
+            crate::detectors::large_example::DEFAULT_PENALTY,
+            Some(crate::detectors::large_example::DEFAULT_LINE_THRESHOLD),
+        ),
+    ];
+    for (i, (name, penalty, line_threshold)) in detector_defaults.iter().enumerate() {
+        if i > 0 {
+            out.push_str("#\n");
+        }
+        let _ = writeln!(out, "# [detectors.{name}]");
+        out.push_str("# enabled = true\n");
+        let _ = writeln!(out, "# penalty = {penalty}");
+        if let Some(threshold) = line_threshold {
+            let _ = writeln!(
+                out,
+                "# line_threshold = {threshold}  # only valid on {name}"
+            );
+        }
+    }
+    out.push('\n');
 
     // Overrides.
     out.push_str("# Glob-matched overrides — tune or disable detectors for matching\n");

@@ -46,7 +46,7 @@ use crate::domain::parsed::ParsedTest;
 use crate::domain::smell::{Smell, SmellCategory};
 
 /// Default penalty per CLAUDE.md detection rules table.
-const DEFAULT_PENALTY: u32 = 10;
+pub(crate) const DEFAULT_PENALTY: u32 = 10;
 
 /// Default severity for the zero-assertion smell.
 const DEFAULT_SEVERITY: Severity = Severity::High;
