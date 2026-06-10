@@ -1,0 +1,21 @@
+# scrap-rs workspace dogfood config (scrap-rs#97).
+#
+# This is the real, minimal config the analyzer auto-discovers when run
+# anywhere inside this workspace (`discover_config` walks up from
+# `--src` to the workspace root). The exhaustive, every-knob example is
+# generated separately (`scrap4rs init`, scrap-rs#107); THIS file is
+# the policy the workspace actually loads — keep it minimal and honest.
+#
+# Consumed in CI by the `config-dogfood` job, which proves end-to-end
+# that discovery + load + merge actually happen through the released
+# CLI surface (differential against an explicit empty config).
+
+# The demo corpus (crates/scrap-examples/examples/) is bad BY DESIGN —
+# it exists to pin detector behavior via golden snapshots, and the
+# scrap-examples harness analyzes it programmatically (it does not read
+# this file). Excluding it here keeps ad-hoc `scrap4rs` runs inside the
+# workspace honest about real test quality instead of flagging the
+# intentional fixtures. The glob is src-position-independent ("any
+# examples directory under any --src"): the workspace has no cargo
+# example targets, so the only thing it matches is the corpus.
+exclude = ["**/examples/**"]

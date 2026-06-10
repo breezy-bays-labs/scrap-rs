@@ -123,6 +123,46 @@ jobs:
       - uses: ./.github/actions/setup-rust
       - run: cargo test -p scrap-examples --locked
 
+  config-dogfood:
+    name: scrap.toml config dogfood (discovery + load + merge)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Proves the committed workspace scrap.toml is a real product
+    # surface (scrap-rs#97): the released CLI auto-discovers it
+    # (discover_config walks up from --src), loads it, and applies the
+    # merge — end-to-end through the binary, not the library harness.
+    #
+    # Differential design: Run A (no --config) must see the root
+    # config's corpus exclude → zero smells; Run B (explicit empty
+    # config over the SAME tree) must fire the bad-by-design corpus →
+    # nonzero smells. A alone could pass via defaults; B proves the
+    # zero came from the DISCOVERED file. Counts use smells, not
+    # findings — the envelope emits a per-test finding entry even when
+    # a test is clean.
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - run: cargo build -p scrap4rs --locked
+      - name: Differential — discovered scrap.toml vs explicit empty config
+        run: |
+          bin=target/debug/scrap4rs
+          "$bin" --src crates/scrap-examples --format json --no-fail > /tmp/discovered.json
+          a=$(jq '[.result.files[].findings[].smells[]] | length' /tmp/discovered.json)
+          : > /tmp/empty-scrap.toml
+          "$bin" --src crates/scrap-examples --config /tmp/empty-scrap.toml --format json --no-fail > /tmp/explicit.json
+          b=$(jq '[.result.files[].findings[].smells[]] | length' /tmp/explicit.json)
+          echo "discovered-config smells: $a / empty-config smells: $b"
+          if [ "$a" -ne 0 ]; then
+            echo "::error::workspace scrap.toml was not discovered/applied — expected 0 smells, got $a. Fix the flagged test or the root config; do NOT exclude the harness (scrap-rs#97)."
+            exit 1
+          fi
+          if [ "$b" -eq 0 ]; then
+            echo "::error::differential broken — explicit empty config produced no smells over the bad-by-design corpus; detector or corpus regression (scrap-rs#97)."
+            exit 1
+          fi
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
