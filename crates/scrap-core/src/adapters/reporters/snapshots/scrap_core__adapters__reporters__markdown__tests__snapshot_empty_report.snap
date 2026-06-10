@@ -1,0 +1,12 @@
+---
+source: crates/scrap-core/src/adapters/reporters/markdown.rs
+assertion_line: 328
+expression: out
+---
+# Test-smell report — test-adapter v0.1.0
+
+**Result:** FAIL · **Tests scanned:** 0 · **Files:** 0 · **Over threshold:** 0
+
+**Scrap score:** max 0.0 · avg 0.0
+
+No test smells in view.

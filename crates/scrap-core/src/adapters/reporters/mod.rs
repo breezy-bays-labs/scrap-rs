@@ -22,10 +22,11 @@
 //! - [`sarif`] — SARIF 2.1.0 GitHub Code Scanning (`scrap-rs#17`).
 //! - [`github_annotations`] — GH Actions inline `::warning` workflow
 //!   commands, a peer format to SARIF (`scrap-rs#17`).
+//! - [`markdown`] — askama-templated GFM reporter (`scrap-rs#15`).
 //!
 //! Module roster (planned):
-//! - `markdown` — GFM table reporter (`scrap-rs#15`).
-//! - `scorecard_row` — mokumo `Row::TestSmell` producer (v0.2).
+//! - `scorecard_row` — generic `Row::TestSmell` scorecard producer
+//!   for any CI consumer (v0.2; mokumo is the first adopter).
 //!
 //! tracked: scrap-rs#73 — `adr-port-surface-and-domain-conventions`
 //! ADR not yet authored; this module's design references the existing
@@ -35,6 +36,7 @@
 
 pub mod github_annotations;
 pub mod json;
+pub mod markdown;
 pub mod sarif;
 pub mod stdout;
 pub mod table;

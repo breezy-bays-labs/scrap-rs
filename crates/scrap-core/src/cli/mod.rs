@@ -232,9 +232,8 @@ pub struct InputArgs {
 pub struct OutputArgs {
     /// Output format(s) — `FORMAT` (to stdout) or `FORMAT:FILE`,
     /// comma-separated for multiple sinks. Formats: `json`, `stdout`,
-    /// `sarif`, `github-annotations` (`markdown` is tracked under
-    /// scrap-rs#15 and currently exits "not yet implemented"). At most
-    /// one entry may target stdout. Canonical CI usage:
+    /// `markdown`, `sarif`, `github-annotations`. At most one entry
+    /// may target stdout. Canonical CI usage:
     /// `--format sarif:results.sarif,github-annotations`.
     #[arg(
         short,
@@ -775,21 +774,11 @@ fn emit_completions<W: io::Write>(shell: ShellArg, bin_name: &str, writer: &mut 
     }
 }
 
-/// Render a `DispatchError` to stderr. `NotImplemented` carries
-/// its own format/issue token; the I/O + Json variants Display
-/// their underlying errors.
+/// Render a `DispatchError` to stderr. The I/O + Json variants Display
+/// their underlying errors. (The `NotImplemented` variant retired with
+/// scrap-rs#15 — every declared format now has a shipped reporter.)
 fn handle_dispatch_error(err: &DispatchError) {
-    match err {
-        DispatchError::NotImplemented {
-            format,
-            tracking_issue,
-        } => {
-            eprintln!("error: {format} reporter not yet implemented (tracked: {tracking_issue})");
-        }
-        DispatchError::Json(_) | DispatchError::Io(_) => {
-            eprintln!("error: {err}");
-        }
-    }
+    eprintln!("error: {err}");
 }
 
 /// Validate that at most one [`FormatSpec`] targets stdout.
@@ -843,7 +832,7 @@ fn format_arg_kebab(arg: FormatArg) -> &'static str {
 /// # Errors
 ///
 /// Returns [`DispatchError::Io`] on file create/write failure, or the
-/// reporter's own `DispatchError` (`Json` / `NotImplemented`).
+/// reporter's own `DispatchError` (`Json` / `Io`).
 fn emit_to_sink(
     spec: &FormatSpec,
     report: &crate::domain::report::Report,

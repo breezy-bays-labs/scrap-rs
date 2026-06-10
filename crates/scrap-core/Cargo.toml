@@ -62,6 +62,14 @@ serde_json = { workspace = true }
 # AGENTS.md scrap-core deps table. Shared version via
 # `[workspace.dependencies]`.
 comfy-table = { workspace = true }
+# `askama` powers the compile-time-checked markdown reporter template
+# at `adapters/reporters/markdown.rs` (scrap-rs#15; HTML reporter
+# scrap-rs#39 shares the recipe + `templates/` dir). Its `Template`
+# derive pulls the proc-macro chain (proc-macro2, syn, quote) as a
+# proc-macro-only transitive — same shape as serde_derive + clap_derive;
+# the ast-purity source grep is unaffected. Allowed dep per AGENTS.md
+# scrap-core deps table (cross-tool recipe: crap-rs#260, dry-rs#17).
+askama = { workspace = true }
 # `clap` powers the CLI surface in `cli/mod.rs` (scrap-rs#21 W4). The
 # `derive` feature drives `Parser`/`Args`/`Subcommand`/`ValueEnum`;
 # the `string` feature is required for the runtime-`argv[0]`-derived

@@ -23,7 +23,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::adapter_meta::AdapterMeta;
-use crate::adapters::reporters::{github_annotations, json, sarif, stdout};
+use crate::adapters::reporters::{github_annotations, json, markdown, sarif, stdout};
 use crate::core::{AnalyzeError, AnalyzeOutput};
 use crate::domain::report::Report;
 use crate::domain::threshold::ThresholdMode;
@@ -52,7 +52,10 @@ pub enum FormatArg {
     /// raw println style at v0.1; comfy-table prettification lands
     /// with scrap-rs#16 / table reporter).
     Stdout,
-    /// Markdown — NOT yet implemented (tracked: scrap-rs#15).
+    /// GitHub-Flavored Markdown — routes to
+    /// `adapters::reporters::markdown::emit` (askama-templated,
+    /// scrap-rs#15). Follows `view.*` shaping (`--top`,
+    /// `--only-failing`) for its findings table.
     Markdown,
     /// SARIF 2.1.0 — routes to `adapters::reporters::sarif::emit`
     /// (GitHub Code Scanning + IDE SARIF viewers).
@@ -75,16 +78,6 @@ pub enum DispatchError {
     /// Stdout reporter writer failed.
     #[error("stdout reporter failed: {0}")]
     Io(#[source] std::io::Error),
-    /// Caller asked for a format whose reporter isn't shipped yet.
-    /// The CLI surface eprintln-s the tracking-issue reference +
-    /// returns `ExitCode::from(2)`.
-    #[error("{format} reporter not yet implemented (tracked: {tracking_issue})")]
-    NotImplemented {
-        /// User-facing format token (`"markdown"`, `"sarif"`).
-        format: &'static str,
-        /// Tracking issue reference (e.g., `"scrap-rs#15"`).
-        tracking_issue: &'static str,
-    },
 }
 
 /// Reporter dispatch — routes `(format, report, options, ...)` to
@@ -96,9 +89,10 @@ pub enum DispatchError {
 /// `--format sarif` → `sarif::emit` (SARIF 2.1.0 JSON, scrap-rs#17).
 /// `--format github-annotations` → `github_annotations::emit`
 ///   (`::warning` workflow commands, capped at `annotation_limit`).
-/// `--format markdown` → `DispatchError::NotImplemented` (#15).
+/// `--format markdown` → `markdown::emit` (askama GFM, scrap-rs#15).
 ///
-/// `EmitOptions` (`top` + `only_failing`) is consumed by `json::emit`;
+/// `EmitOptions` (`top` + `only_failing`) is consumed by `json::emit`
+/// AND `markdown::emit` (the human format follows `view.*` shaping);
 /// the stdout / sarif / github-annotations reporters are gate
 /// translations — they ignore view-shaping flags (SARIF and
 /// annotations must reflect the truthful gate, not a display choice).
@@ -136,10 +130,7 @@ pub fn render_format<W: Write>(
                 .map_err(DispatchError::Io)?;
         }
         FormatArg::Markdown => {
-            return Err(DispatchError::NotImplemented {
-                format: "markdown",
-                tracking_issue: "scrap-rs#15",
-            });
+            markdown::emit(report, meta, options, writer).map_err(DispatchError::Io)?;
         }
     }
     Ok(())
@@ -375,12 +366,12 @@ mod tests {
     }
 
     #[test]
-    fn render_format_markdown_returns_not_implemented_with_issue_15() {
+    fn render_format_markdown_routes_to_emit_and_writes_gfm() {
         let report = empty_report();
         let meta = fixture_meta();
         let opts = json::EmitOptions::default();
         let mut buf: Vec<u8> = Vec::new();
-        let err = render_format(
+        render_format(
             FormatArg::Markdown,
             &report,
             &meta,
@@ -389,17 +380,16 @@ mod tests {
             10,
             &mut buf,
         )
-        .expect_err("markdown returns NotImplemented");
-        match err {
-            DispatchError::NotImplemented {
-                format,
-                tracking_issue,
-            } => {
-                assert_eq!(format, "markdown");
-                assert_eq!(tracking_issue, "scrap-rs#15");
-            }
-            other => panic!("expected NotImplemented, got {other:?}"),
-        }
+        .expect("markdown emit succeeds (scrap-rs#15 — was NotImplemented)");
+        let s = String::from_utf8(buf).unwrap();
+        assert!(
+            s.starts_with("# Test-smell report"),
+            "GFM header line; got: {s}"
+        );
+        assert!(
+            s.contains("test-adapter"),
+            "header must include tool_name; got: {s}"
+        );
     }
 
     #[test]
