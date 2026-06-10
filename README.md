@@ -86,6 +86,16 @@ directory with commented-out detector blocks + exclude templates;
 `crates/scrap4rs/scrap4rs.example.toml` is the canonical reference
 copy committed to the repo.
 
+### Configuration
+
+The workspace-root [`scrap.toml`](scrap.toml) is the canonical live
+example: it is the real, minimal config this repository dogfoods —
+auto-discovered by the CLI (`discover_config` walks up from `--src`)
+and consumed in CI by the `config-dogfood` job, which proves the
+discovery + load + merge path end-to-end on every PR. Precedence:
+CLI flags > `--config FILE` > auto-discovered `scrap.toml` >
+adapter defaults.
+
 The CLI surface accepts:
 `--src`, `--config`, `-f/--format json|stdout|markdown|sarif`,
 `--threshold-mode strict|default|lenient`, `--no-fail`, `--exclude`
@@ -96,8 +106,9 @@ Subcommands: `init [--force] [--non-interactive]`,
 Exit codes: 0 = passed, 1 = over threshold, 2 = config error,
 3 = all files failed to parse.
 
-Mokumo CI consumes scrap-rs via the composite action published from
-this repo:
+Any downstream CI consumes scrap-rs via the composite action
+published from this repo (mokumo is the first adopter; the surface is
+generic):
 
 ```yaml
 - uses: actions/checkout@v4
