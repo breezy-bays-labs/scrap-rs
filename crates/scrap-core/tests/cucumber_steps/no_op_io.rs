@@ -17,9 +17,9 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use cucumber::{given, then, when};
-use scrap_core::cli::config::DetectorConfig;
 use scrap_core::detectors::no_op_io;
 use scrap_core::domain::behavioral_fact::{BehavioralFact, ResultDiscardKind};
+use scrap_core::domain::config::DetectorConfig;
 use scrap_core::domain::parsed::{ParsedAssertion, ParsedTest};
 use scrap_core::domain::smell::SmellCategory;
 use scrap_core::domain::types::{FilePath, QualifiedName, Span, TestIdentity};

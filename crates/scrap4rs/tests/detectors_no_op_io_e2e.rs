@@ -13,8 +13,8 @@
 //! - **Negative**: the `behavioral_facts/` fixtures (`.unwrap()` /
 //!   `.expect()` chains) MUST NOT trigger — `ResultAsserted` suppresses.
 
-use scrap_core::cli::config::DetectorConfig;
 use scrap_core::detectors::no_op_io::detect;
+use scrap_core::domain::config::DetectorConfig;
 use scrap_core::domain::parsed::ParsedTest;
 use scrap_core::domain::types::FilePath;
 use scrap_core::ports::parser::TestParserPort;

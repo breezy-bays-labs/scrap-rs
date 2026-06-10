@@ -56,9 +56,9 @@
 //! the pipeline driver's job (scrap-rs#72); the driver applies opt-out
 //! suppression post-emission.
 
-use crate::cli::config::DetectorConfig;
 use crate::domain::behavioral_fact::BehavioralFact;
 use crate::domain::classification::{Actionability, Severity};
+use crate::domain::config::DetectorConfig;
 use crate::domain::finding::Finding;
 use crate::domain::parsed::ParsedTest;
 use crate::domain::smell::{Smell, SmellCategory};

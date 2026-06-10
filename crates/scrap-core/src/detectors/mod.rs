@@ -26,7 +26,7 @@
 //! produced by enabled detectors. The function is the single
 //! integration point for `core::analyze`'s detector loop — each new
 //! detector PR extends `detect_all` by routing through
-//! `cli::config::resolve_detector_for_path` for the appropriate
+//! `domain::config::resolve_detector_for_path` for the appropriate
 //! `[detectors.<smell>]` table, then calling the detector's
 //! `detect(parsed, cfg)` fn. Wired so far: zero-assertion (#30),
 //! no-op-io (#25), tautological-assertion (#24, wired at #99),

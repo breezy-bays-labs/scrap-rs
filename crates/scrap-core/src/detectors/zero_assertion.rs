@@ -39,8 +39,8 @@
 //! lands, link to it here for the dumb-parser/smart-detector boundary
 //! (D10) rationale.
 
-use crate::cli::config::DetectorConfig;
 use crate::domain::classification::{Actionability, Severity};
+use crate::domain::config::DetectorConfig;
 use crate::domain::finding::Finding;
 use crate::domain::parsed::ParsedTest;
 use crate::domain::smell::{Smell, SmellCategory};
