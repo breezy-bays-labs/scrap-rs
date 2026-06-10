@@ -245,58 +245,67 @@ fn bless_mode() -> bool {
 // Tests (per shape doc D11)
 // ────────────────────────────────────────────────────────────────────
 
+/// Bless-or-verify one fixture's `bad.rs` emission; pushes a
+/// human-readable mismatch entry instead of asserting so the caller
+/// accumulates across the whole corpus.
+///
+/// Verify mode treats a missing `expected.json` as a HARD FAILURE: a
+/// fixture with `bad.rs` but no `expected.json` is a half-blessed
+/// state that must not land on main; the dev needs to run BLESS=1 and
+/// commit the result before the PR merges. Per
+/// `feedback_pristine-test-output`: never emit stderr "skipping" noise
+/// that agentic loops would misread as a passing test.
+fn check_bad_fixture(fixture_dir: &Path, bless: bool, mismatches: &mut Vec<String>) {
+    // discover_fixtures already filtered by bad.rs presence.
+    let bad_path = fixture_dir.join("bad.rs");
+    let fixture_name = fixture_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .expect("fixture directory has a valid UTF-8 name");
+    let relative_path = format!("crates/scrap-examples/examples/{fixture_name}/bad.rs");
+
+    let report = run_pipeline(&bad_path, &relative_path);
+    let actual = emit_envelope(&report);
+
+    if bless {
+        write_expected(fixture_dir, &actual);
+        return;
+    }
+
+    if !fixture_dir.join("expected.json").is_file() {
+        mismatches.push(format!(
+            "fixture: {fixture_name} — bad.rs exists but expected.json is missing; run BLESS=1 cargo test -p scrap-examples and commit the result",
+        ));
+        return;
+    }
+
+    let expected = read_expected(fixture_dir);
+    if actual != expected {
+        let actual_pretty = serde_json::to_string_pretty(&actual).unwrap_or_default();
+        let expected_pretty = serde_json::to_string_pretty(&expected).unwrap_or_default();
+        mismatches.push(format!(
+            "fixture: {fixture_name}\n--- expected ---\n{expected_pretty}\n--- actual ---\n{actual_pretty}",
+        ));
+    }
+}
+
 /// For every discovered fixture: parse `bad.rs`, run the detector
 /// pipeline, emit the envelope, and either bless `expected.json`
 /// (if `BLESS=1`) or compare via `serde_json::Value` equality.
 ///
 /// Accumulates mismatches before asserting (pristine-test-output
 /// pattern per `feedback_pristine-test-output`) — one bad fixture
-/// must not hide the others from downstream agentic loops.
+/// must not hide the others from downstream agentic loops. The
+/// per-fixture body lives in `check_bad_fixture`, which also keeps
+/// this `#[test]` under the workspace's large-example threshold (the
+/// scrap.toml config-dogfood gate analyzes this file — scrap-rs#97).
 #[test]
 fn bad_rs_emission_matches_expected_json() {
     let bless = bless_mode();
     let mut mismatches: Vec<String> = Vec::new();
 
     for fixture_dir in discover_fixtures() {
-        let bad_path = fixture_dir.join("bad.rs");
-        // discover_fixtures already filtered by bad.rs presence.
-
-        let fixture_name = fixture_dir
-            .file_name()
-            .and_then(|s| s.to_str())
-            .expect("fixture directory has a valid UTF-8 name");
-        let relative_path = format!("crates/scrap-examples/examples/{fixture_name}/bad.rs");
-
-        let report = run_pipeline(&bad_path, &relative_path);
-        let actual = emit_envelope(&report);
-
-        if bless {
-            write_expected(&fixture_dir, &actual);
-            continue;
-        }
-
-        // Verify mode: missing `expected.json` is a HARD FAILURE.
-        // A fixture with `bad.rs` but no `expected.json` is a
-        // half-blessed state that must not land on main; the dev
-        // needs to run BLESS=1 and commit the result before the PR
-        // merges. Per `feedback_pristine-test-output`: never emit
-        // stderr "skipping" noise that agentic loops would misread
-        // as a passing test.
-        if !fixture_dir.join("expected.json").is_file() {
-            mismatches.push(format!(
-                "fixture: {fixture_name} — bad.rs exists but expected.json is missing; run BLESS=1 cargo test -p scrap-examples and commit the result",
-            ));
-            continue;
-        }
-
-        let expected = read_expected(&fixture_dir);
-        if actual != expected {
-            let actual_pretty = serde_json::to_string_pretty(&actual).unwrap_or_default();
-            let expected_pretty = serde_json::to_string_pretty(&expected).unwrap_or_default();
-            mismatches.push(format!(
-                "fixture: {fixture_name}\n--- expected ---\n{expected_pretty}\n--- actual ---\n{actual_pretty}",
-            ));
-        }
+        check_bad_fixture(&fixture_dir, bless, &mut mismatches);
     }
 
     assert!(
