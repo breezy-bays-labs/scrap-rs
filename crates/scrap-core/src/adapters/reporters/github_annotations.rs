@@ -34,6 +34,7 @@ use std::path::Path;
 
 use crate::adapter_meta::AdapterMeta;
 use crate::domain::report::Report;
+use crate::domain::smell::SmellCategory;
 use crate::domain::types::Span;
 
 /// One annotation candidate, projected from a smell + its enclosing
@@ -44,7 +45,7 @@ struct Annotation {
     file: String,
     line: u32,
     column: u32,
-    title: String,
+    category: SmellCategory,
     message: String,
 }
 
@@ -96,15 +97,7 @@ fn render(report: &Report, annotation_limit: usize, cwd: Option<&Path>) -> Strin
                     file: file_path.clone(),
                     line: span.start_line,
                     column: span.start_column,
-                    // Smell wire string + penalty — the per-smell analog
-                    // of crap-rs's `title=CRAP {score}` (cross-tool
-                    // annotation-header parity), and the same identity
-                    // SARIF uses for `ruleId`.
-                    title: format!(
-                        "{} (penalty {})",
-                        smell.category.as_wire_str(),
-                        smell.penalty
-                    ),
+                    category: smell.category,
                     message: smell.ai_actionability_message.clone(),
                 }
             })
@@ -132,7 +125,16 @@ fn render(report: &Report, annotation_limit: usize, cwd: Option<&Path>) -> Strin
         //   * message data (after `::`) escapes only %, CR, LF
         // `line` / `col` are integers (no escape needed).
         let file = gha_escape_property(&relativize_path(&ann.file, cwd));
-        let title = gha_escape_property(&ann.title);
+        // Smell wire string + penalty — the per-smell analog of
+        // crap-rs's `title=CRAP {score}` (cross-tool annotation-header
+        // parity), and the same identity SARIF uses for `ruleId`.
+        // Formatted here, post-truncation, so dropped annotations never
+        // allocate a title.
+        let title = gha_escape_property(&format!(
+            "{} (penalty {})",
+            ann.category.as_wire_str(),
+            ann.penalty
+        ));
         let message = gha_escape(&ann.message);
         // `writeln!` into a String is infallible (the `fmt::Write` impl
         // for String never errors); the `let _` discards the Result.
