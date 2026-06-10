@@ -1,0 +1,45 @@
+{#- Markdown reporter template (scrap-rs#15).
+
+   Renders the test-smell report: tool/version header, the truthful
+   summary block (RESULT-side totals + gate verdict), the by-smell /
+   by-severity distribution tables, and the view-shaped findings table
+   (one row per smell; rows follow the JSON `view.*` semantics —
+   filter → truncate, source order).
+
+   Numeric formatting is pre-rendered in Rust (askama's `{{ }}` does
+   not honor Rust format specifiers); the template only composes
+   structure. Mirrors crap-rs's markdown_report.txt conventions
+   (crap-rs#260) for cross-tool recipe parity.
+
+   escape = "none" because markdown special chars (|, *, _, #) must
+   pass through verbatim. Cell escaping (pipes, newlines) is the
+   reporter's job (`md_cell`).
+-#}
+# Test-smell report — {{ tool_name }} v{{ tool_version }}
+
+**Result:** {{ pass_fail }} · **Tests scanned:** {{ total_tests }} · **Files:** {{ total_files }} · **Over threshold:** {{ exceeding_threshold }}
+
+**Scrap score:** max {{ max_score }} · avg {{ avg_score }}
+{% if has_distribution %}
+## Findings by smell
+
+| Smell | Count |
+| --- | ---: |
+{% for r in smell_rows %}| `{{ r.name }}` | {{ r.count }} |
+{% endfor %}
+## Findings by severity
+
+| Severity | Count |
+| --- | ---: |
+{% for r in severity_rows %}| {{ r.name }} | {{ r.count }} |
+{% endfor %}{% endif %}
+{%- if has_rows %}
+## Findings{% if truncated %} (showing {{ shown_count }} of {{ eligible_count }} eligible){% endif %}
+
+| Location | Test | Smell | Severity | Penalty | Suggestion |
+| --- | --- | --- | --- | ---: | --- |
+{% for row in rows %}| `{{ row.location }}` | `{{ row.test_name }}` | `{{ row.smell }}` | {{ row.severity }} | {{ row.penalty }} | {{ row.suggestion }} |
+{% endfor %}
+{%- else %}
+No test smells in view.
+{%- endif %}

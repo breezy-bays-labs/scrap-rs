@@ -1,0 +1,30 @@
+---
+source: crates/scrap-core/src/adapters/reporters/markdown.rs
+assertion_line: 338
+expression: out
+---
+# Test-smell report — test-adapter v0.1.0
+
+**Result:** FAIL · **Tests scanned:** 3 · **Files:** 2 · **Over threshold:** 0
+
+**Scrap score:** max 10.0 · avg 4.7
+
+## Findings by smell
+
+| Smell | Count |
+| --- | ---: |
+| `zero_assertion` | 1 |
+| `large_example` | 1 |
+
+## Findings by severity
+
+| Severity | Count |
+| --- | ---: |
+| Low | 1 |
+| High | 1 |
+
+## Findings (showing 1 of 2 eligible)
+
+| Location | Test | Smell | Severity | Penalty | Suggestion |
+| --- | --- | --- | --- | ---: | --- |
+| `src/a.rs:7` | `tests::no_asserts` | `zero_assertion` | High | 10 | Add assertions on observable behavior. |

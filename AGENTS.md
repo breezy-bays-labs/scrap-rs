@@ -32,7 +32,7 @@ scrap4ts (depends on scrap-core; adds swc_ecma_parser or oxc, napi-rs)  [v0.6+]
 
 | Crate | Purpose | Allowed deps |
 |-------|---------|--------------|
-| `scrap-core` | Domain types, port traits, generic orchestration, detector logic, CLI surface, language-agnostic adapters (file walker, reporters) | `serde` (derive), `serde_json`, `walkdir`, `ignore`, `globset`, `comfy-table`, `clap` (derive), `thiserror` |
+| `scrap-core` | Domain types, port traits, generic orchestration, detector logic, CLI surface, language-agnostic adapters (file walker, reporters) | `serde` (derive), `serde_json`, `walkdir`, `ignore`, `globset`, `comfy-table`, `clap` (derive), `thiserror`, `askama` (Template derive — reporter templates, scrap-rs#15) |
 | `scrap4rs` | Rust-source parser adapter + binary | `scrap-core`, `syn`, `proc-macro2`, `quote` |
 | `scrap4ts` | TypeScript-source parser adapter + binary | `scrap-core`, `swc_ecma_parser` *or* `oxc_parser`, `napi-rs` |
 

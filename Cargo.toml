@@ -21,6 +21,13 @@ serde_json = "1"
 insta = { version = "1", features = ["json", "yaml"] }
 proptest = "1"
 thiserror = "2"
+# askama powers the compile-time-checked markdown reporter template
+# (scrap-rs#15; the HTML reporter scrap-rs#39 joins on the same
+# version). 0.16 matches crap-rs for cross-tool recipe parity. Its
+# derive pulls the same proc-macro chain serde_derive already does;
+# the ast-purity CI grep matches `use`/`extern crate` lines only, so
+# no gate change is needed — see AGENTS.md "Allowed deps".
+askama = "0.16"
 globset = "0.4"
 ignore = "0.4"
 static_assertions = "1"
