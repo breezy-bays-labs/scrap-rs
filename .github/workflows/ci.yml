@@ -352,11 +352,17 @@ jobs:
     # adapter-name-purity bans name literals, neither catches
     # `detectors/ → cli/`. This job closes that gap (scrap-rs#104).
     #
-    # `use`-form only (same documented limitation as ast-purity):
-    # anchoring on `^\s*use` keeps doc-comment prose mentioning
-    # `crate::cli` from false-positivizing. Known out-of-scope edge:
-    # `core/mod.rs` imports `cli::config::ConfigError` (loader-error
-    # plumbing) — tracked in the #104 PR discussion, not banned here.
+    # `use`-line anchored (same heuristic class as ast-purity): catches
+    # direct (`use crate::cli::…`) AND grouped (`use crate::{…, cli::…}`)
+    # single-line forms — the grouped arm closes the bypass Gemini
+    # flagged on PR #128. Anchoring on `^\s*use` keeps doc-comment prose
+    # mentioning `crate::cli` from false-positivizing. Documented
+    # limitations (heuristic, not a parser): multi-line grouped imports
+    # and inline fully-qualified `crate::cli::…` paths in code — the
+    # codebase idiom always imports, and clippy/review cover the rest.
+    # Known out-of-scope edge: `core/mod.rs` imports
+    # `cli::config::ConfigError` (loader-error plumbing) — tracked in
+    # the #104 PR discussion, not banned here.
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -364,7 +370,7 @@ jobs:
       - name: Reject cli/ imports inside scrap-core detectors
         run: |
           set -euo pipefail
-          if grep -rEn '^[[:space:]]*use[[:space:]]+(::)?crate::cli(::|;|[[:space:]]|$)' crates/scrap-core/src/detectors/; then
+          if grep -rEn '^[[:space:]]*use[[:space:]]+(::)?crate::(cli(::|;|[[:space:]]|$)|\{[^}]*cli(::|,|[[:space:]]|\}))' crates/scrap-core/src/detectors/; then
             echo "::error::detectors/ must never import from cli/ — POD config types live in crate::domain::config (adr-hexagonal-layout, scrap-rs#104)"
             exit 1
           fi

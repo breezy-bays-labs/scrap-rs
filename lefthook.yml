@@ -48,7 +48,7 @@ pre-push:
       # `crate::cli` from false-positivizing.
       run: |
         set -euo pipefail
-        if grep -rEn '^[[:space:]]*use[[:space:]]+(::)?crate::cli(::|;|[[:space:]]|$)' crates/scrap-core/src/detectors/; then
+        if grep -rEn '^[[:space:]]*use[[:space:]]+(::)?crate::(cli(::|;|[[:space:]]|$)|\{[^}]*cli(::|,|[[:space:]]|\}))' crates/scrap-core/src/detectors/; then
           echo "detectors/ must never import from cli/ — use crate::domain::config (adr-hexagonal-layout, scrap-rs#104)"
           exit 1
         fi
