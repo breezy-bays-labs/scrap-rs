@@ -166,6 +166,13 @@ jobs:
     name: MSRV (1.93)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The repo-root rust-toolchain.toml (channel = "stable") shadows the
+    # action's toolchain selection for every in-directory cargo/rustc
+    # invocation — without this env the job silently compiles on stable
+    # (scrap-rs#118). RUSTUP_TOOLCHAIN sits ABOVE the toolchain file in
+    # rustup's override precedence, so it makes 1.93 actually effective.
+    env:
+      RUSTUP_TOOLCHAIN: "1.93"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -178,6 +185,20 @@ jobs:
         with:
           toolchain: "1.93"
           shared-key: scrap-rs-msrv
+      # Self-proving guard (scrap-rs#118): assert the MSRV toolchain is
+      # the one actually in effect, so any future re-shadowing fails
+      # loudly instead of minting a green check that proves nothing.
+      - name: Assert 1.93 is the effective toolchain
+        run: |
+          version="$(rustc --version)"
+          echo "effective toolchain: $version"
+          case "$version" in
+            "rustc 1.93."*) ;;
+            *)
+              echo "::error::MSRV job is not running 1.93 — got '$version'. Check rust-toolchain.toml shadowing (scrap-rs#118)."
+              exit 1
+              ;;
+          esac
       - run: cargo check --workspace --all-targets --locked
 
   deny:
@@ -192,7 +213,7 @@ jobs:
       # tag-poisoning attack on the action would silently disable every
       # other supply-chain check. Tag v2 → 91bf2b6 (verified via
       # `gh api repos/EmbarkStudios/cargo-deny-action/git/ref/tags/v2`).
-      - uses: EmbarkStudios/cargo-deny-action@6c8f9facfa5047ec02d8485b6bf52b587b7777d1 # v2
+      - uses: EmbarkStudios/cargo-deny-action@a531616d8ce3b9177443e48a1159bc945a099823 # v2
         with:
           command: check
 
@@ -484,7 +505,7 @@ jobs:
           cargo llvm-cov --no-report test -p scrap-core --test cucumber --locked
           cargo llvm-cov --no-report test -p scrap4rs --test cucumber --locked
           cargo llvm-cov report --lcov --output-path lcov.info
-      - uses: breezy-bays-labs/crap-rs/.github/actions/scorecard@726b8050cba87860af221c78516d49ff7f5db5fe # crap-rs CAPSTONE quick-start template
+      - uses: breezy-bays-labs/crap-rs/.github/actions/scorecard@ba71ba492073cda7aeae8936866a2fd480a0ba5a # crap-rs CAPSTONE quick-start template
         with:
           coverage: lcov.info
           src: crates/
