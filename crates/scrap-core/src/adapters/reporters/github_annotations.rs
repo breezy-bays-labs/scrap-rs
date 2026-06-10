@@ -3,8 +3,9 @@
 //! Emits `::warning` workflow-command lines so test-smell findings
 //! render inline on the PR "Files changed" tab — universal, free, no
 //! GHAS / Code Scanning dependency. The GitHub Actions runner
-//! intercepts the `::warning file=…,line=…,col=…::message` shape from
-//! stdout and renders an inline annotation at the named location.
+//! intercepts the `::warning file=…,line=…,col=…,title=…::message`
+//! shape from stdout and renders an inline annotation at the named
+//! location, with `title=` as the annotation header (crap-rs parity).
 //!
 //! Free function `emit()` per the reporter design (see
 //! [`crate::adapters::reporters`] module docstring). A PEER format to
@@ -33,6 +34,7 @@ use std::path::Path;
 
 use crate::adapter_meta::AdapterMeta;
 use crate::domain::report::Report;
+use crate::domain::smell::SmellCategory;
 use crate::domain::types::Span;
 
 /// One annotation candidate, projected from a smell + its enclosing
@@ -43,14 +45,16 @@ struct Annotation {
     file: String,
     line: u32,
     column: u32,
+    category: SmellCategory,
     message: String,
 }
 
 /// Emit GitHub Actions `::warning` workflow commands for every smell in
 /// the report, sorted by penalty DESC, truncated at `annotation_limit`.
 ///
-/// One `::warning file=X,line=Y,col=Z::message` per smell (scrap-rs#17
-/// D2 per-Smell granularity). Location is `smell.span.unwrap_or(test
+/// One `::warning file=X,line=Y,col=Z,title=T::message` per smell
+/// (scrap-rs#17 D2 per-Smell granularity), where `T` is the smell's
+/// wire string + penalty. Location is `smell.span.unwrap_or(test
 /// span)`. When the eligible set exceeds `annotation_limit`, the top-N
 /// are emitted and a single trailing `::notice` line names the dropped
 /// count so reviewers know findings were withheld.
@@ -93,6 +97,7 @@ fn render(report: &Report, annotation_limit: usize, cwd: Option<&Path>) -> Strin
                     file: file_path.clone(),
                     line: span.start_line,
                     column: span.start_column,
+                    category: smell.category,
                     message: smell.ai_actionability_message.clone(),
                 }
             })
@@ -120,15 +125,26 @@ fn render(report: &Report, annotation_limit: usize, cwd: Option<&Path>) -> Strin
         //   * message data (after `::`) escapes only %, CR, LF
         // `line` / `col` are integers (no escape needed).
         let file = gha_escape_property(&relativize_path(&ann.file, cwd));
+        // Smell wire string + penalty — the per-smell analog of
+        // crap-rs's `title=CRAP {score}` (cross-tool annotation-header
+        // parity), and the same identity SARIF uses for `ruleId`.
+        // Formatted here, post-truncation, so dropped annotations never
+        // allocate a title.
+        let title = gha_escape_property(&format!(
+            "{} (penalty {})",
+            ann.category.as_wire_str(),
+            ann.penalty
+        ));
         let message = gha_escape(&ann.message);
         // `writeln!` into a String is infallible (the `fmt::Write` impl
         // for String never errors); the `let _` discards the Result.
         let _ = writeln!(
             out,
-            "::warning file={file},line={line},col={col}::{message}",
+            "::warning file={file},line={line},col={col},title={title}::{message}",
             file = file,
             line = ann.line,
             col = ann.column,
+            title = title,
             message = message,
         );
     }
@@ -283,7 +299,42 @@ mod tests {
             line.contains("col=5"),
             "uses test span start_column: {line}"
         );
+        assert!(
+            line.contains("title=zero_assertion (penalty 10)"),
+            "title names the smell + penalty (crap-rs parity): {line}"
+        );
         assert!(line.ends_with("::Add assertions."), "message tail: {line}");
+    }
+
+    #[test]
+    fn title_property_is_escaped_and_precedes_message_delimiter() {
+        // The title is built from wire strings + integers (no specials
+        // today), but it sits in property position — pin that it goes
+        // through the property escape and lands before the `::` message
+        // delimiter so a future dynamic title can't corrupt the line.
+        let finding = finding_with(
+            "src/lib.rs",
+            "tests::it",
+            Span::new(3, 4, 1, 2),
+            vec![smell_with(
+                SmellCategory::LargeExample,
+                Severity::Low,
+                4,
+                None,
+                "shrink",
+            )],
+        );
+        let report = report_with(vec![finding]);
+        let out = render_no_cwd(&report, usize::MAX);
+        let line = out.lines().next().expect("one line");
+        let (props, message) = line
+            .rsplit_once("::")
+            .expect("workflow-command delimiter present");
+        assert!(
+            props.contains("title=large_example (penalty 4)"),
+            "title in property list: {props}"
+        );
+        assert_eq!(message, "shrink");
     }
 
     #[test]
@@ -553,13 +604,15 @@ mod tests {
             line.contains("file=src/a%3Ab%2Cc.rs"),
             "escaped path: {line}"
         );
-        // Exactly two `,` separators between three properties
-        // (file/line/col), then the `::` data marker.
+        // Exactly three `,` separators between four properties
+        // (file/line/col/title), then the `::` data marker. The title's
+        // own content is property-escaped, so a literal `,` can never
+        // smuggle in a fourth separator.
         let props = line.split("::").nth(1).expect("`::` present");
         assert_eq!(
             props.matches(',').count(),
-            2,
-            "file/line/col props: {props}"
+            3,
+            "file/line/col/title props: {props}"
         );
     }
 
