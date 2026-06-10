@@ -58,11 +58,11 @@ use crate::domain::parsed::ParsedTest;
 use crate::domain::smell::{Smell, SmellCategory};
 
 /// Default penalty per the CLAUDE.md / kickstart-plan detection table.
-const DEFAULT_PENALTY: u32 = 4;
+pub(crate) const DEFAULT_PENALTY: u32 = 4;
 
 /// Default body-line threshold above which the smell fires. Tuned to
 /// `30` for Rust (vs Clojure `scrap`'s `20`) — see module-level docs.
-const DEFAULT_LINE_THRESHOLD: u32 = 30;
+pub(crate) const DEFAULT_LINE_THRESHOLD: u32 = 30;
 
 /// Default severity: below `no-op-io`'s `Moderate` (penalty 4 < 8).
 const DEFAULT_SEVERITY: Severity = Severity::Low;

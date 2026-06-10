@@ -69,7 +69,7 @@ use crate::domain::smell::{Smell, SmellCategory};
 /// Pinned at v0.1 per the kickstart-plan detection table; overridable
 /// via `[detectors.tautological_assertion]` in `scrap.toml` (the
 /// `cfg.penalty` knob resolved in [`detect`]).
-const DEFAULT_PENALTY: u32 = 10;
+pub(crate) const DEFAULT_PENALTY: u32 = 10;
 
 /// Detector entry point. Returns `Some(Finding)` when one or more
 /// assertions on the test trip the tautology rule

@@ -128,7 +128,7 @@ use crate::domain::parsed::ParsedTest;
 use crate::domain::smell::{Smell, SmellCategory};
 
 /// Default penalty per the CLAUDE.md / kickstart-plan detection table.
-const DEFAULT_PENALTY: u32 = 6;
+pub(crate) const DEFAULT_PENALTY: u32 = 6;
 
 /// Default severity: between `no-op-io`'s `Moderate` (penalty 8) and
 /// `large-example`'s `Low` (penalty 4) — the table places `surface-only-io`

@@ -9,8 +9,8 @@
 //!   trigger — each is a runner-shell or attribute-source that the
 //!   detector's three-clause suppression catches.
 
-use scrap_core::cli::config::DetectorConfig;
 use scrap_core::detectors::zero_assertion::detect;
+use scrap_core::domain::config::DetectorConfig;
 use scrap_core::domain::parsed::ParsedTest;
 use scrap_core::domain::types::FilePath;
 use scrap_core::ports::parser::TestParserPort;
