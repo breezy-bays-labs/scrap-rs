@@ -484,7 +484,7 @@ jobs:
           cargo llvm-cov --no-report test -p scrap-core --test cucumber --locked
           cargo llvm-cov --no-report test -p scrap4rs --test cucumber --locked
           cargo llvm-cov report --lcov --output-path lcov.info
-      - uses: breezy-bays-labs/crap-rs/.github/actions/scorecard@726b8050cba87860af221c78516d49ff7f5db5fe # crap-rs CAPSTONE quick-start template
+      - uses: breezy-bays-labs/crap-rs/.github/actions/scorecard@ba71ba492073cda7aeae8936866a2fd480a0ba5a # crap-rs CAPSTONE quick-start template
         with:
           coverage: lcov.info
           src: crates/
