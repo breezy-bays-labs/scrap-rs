@@ -66,22 +66,29 @@
 //! is a genuine surface-only-io — an accepted recall tradeoff, tracked at
 //! [scrap-rs#119](https://github.com/breezy-bays-labs/scrap-rs/issues/119).
 //!
-//! **What this does NOT cover (a separate, tracked false positive).** The
+//! **What this does NOT cover (a disclosed, by-design residual).** The
 //! guarantee above is scoped to *unanalyzed contexts*. It does NOT make
-//! the detector FP-free in general: read recognition is a fixed v0.1 API
-//! set, so a genuine content read-back through an **analyzed but
-//! unrecognized** read API — a custom helper (`load(p)`, `slurp(p)`),
-//! `fs_err::*`, `OpenOptions::new().read(true).open(p)`, an extension-trait
-//! `.read*()`, or any container segment that isn't literally `fs`/`File` —
-//! stays visible-as-clean and **over-fires** (the test really does read
-//! the content, but the detector still reports surface-only). This is a
-//! **false positive** (unrecognized read API), NOT a recall gap. Common
-//! std idioms ARE recognized and safe: `fs::read` / `fs::read_to_string`,
-//! `File::open`, `BufReader::new(File::open(..))` (and `tokio::fs::read*`
-//! via the `fs::` container match). Widening the recognized read set is
-//! the fix; it is deferred and
-//! [tracked: scrap-rs#120](https://github.com/breezy-bays-labs/scrap-rs/issues/120),
-//! not addressed by the poison mechanism.
+//! the detector FP-free in general. The recognized read set (widened at
+//! [scrap-rs#120](https://github.com/breezy-bays-labs/scrap-rs/issues/120))
+//! covers the common std and std-adjacent idioms: `fs::read` /
+//! `fs::read_to_string`, `File::open`,
+//! `BufReader::new(File::open(..))`, `tokio::fs::read*` /
+//! `async_std`-style modules (any `fs::` container segment), `fs_err::*`
+//! (incl. `fs_err::File::open` via the `File` container match), and
+//! `OpenOptions::new().read(true).open(p)` builder chains. What remains
+//! — **deliberately, as a static single-body analysis** — is the
+//! interprocedural class: a custom read helper (`load(p)`,
+//! `read_fixture(p)`), an ident-level aliased re-import
+//! (`use std::fs::read as slurp;`), or an extension-trait `.read*()` on
+//! a handle whose origin the body doesn't reveal. A genuine read-back
+//! through one of those still over-fires. This stance is a scope
+//! decision, not an oversight: resolving helper bodies or file-level
+//! `use` aliases is interprocedural/whole-file analysis the v0.x parser
+//! does not do, and the bounded shape (write + surface-check + helper
+//! read of the SAME path) keeps the residual a tail case. (Note the
+//! `.read*()`-on-write-only-handle variant is not a real read at
+//! runtime — a write-only handle cannot read content — so origin-site
+//! recognition of read-capable opens covers every visible-origin case.)
 //!
 //! ## Suppression reconciliation — does NOT consult `has_positive_check`
 //!

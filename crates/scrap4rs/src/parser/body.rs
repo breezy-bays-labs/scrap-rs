@@ -932,19 +932,37 @@ impl BodyVisitor {
                 });
             return;
         }
-        // OpenOptions write-open: `<builder>.open(p)` where the receiver
-        // chain configures a write (`.write(true)` / `.append(true)` /
-        // `.create(true)` / `.create_new(true)`). The path is the ARGUMENT.
+        // OpenOptions open: `<builder>.open(p)` — the path is the
+        // ARGUMENT. A chain that ENABLES writing (`.write(true)` /
+        // `.append(true)` / `.create(true)` / `.create_new(true)`)
+        // projects a `FilesystemWrite{OpenWrite}`; a chain that ENABLES
+        // reading (`.read(true)`) projects a `FilesystemRead{OpenRead}` —
+        // opening for read is the same read-back signal as `File::open`
+        // (scrap-rs#120). A read+write chain projects BOTH (the read
+        // disarms `surface-only-io` for that key — the fail-safe
+        // direction). Flags default false and only enable on a literal
+        // `true`, so `.read(false)` projects nothing (same rule as the
+        // write flags — scrap-rs#26 round-4).
         if node.method == "open"
-            && receiver_is_write_openoptions(&node.receiver)
+            && chain_has_openoptions_root(&node.receiver)
             && let Some(arg) = node.args.first()
         {
             let key = self.resolve_path_key(arg);
-            self.behavioral_facts.push(BehavioralFact::FilesystemWrite {
-                kind: FsCallKind::OpenWrite,
-                path_key: key,
-                path_arg_span: span_from_spanned(arg),
-            });
+            let span = span_from_spanned(arg);
+            if chain_has_write_option(&node.receiver) {
+                self.behavioral_facts.push(BehavioralFact::FilesystemWrite {
+                    kind: FsCallKind::OpenWrite,
+                    path_key: key.clone(),
+                    path_arg_span: span,
+                });
+            }
+            if chain_has_read_option(&node.receiver) {
+                self.behavioral_facts.push(BehavioralFact::FilesystemRead {
+                    kind: FsReadKind::OpenRead,
+                    path_key: key,
+                    path_arg_span: span,
+                });
+            }
         }
     }
 }
@@ -979,6 +997,13 @@ fn fs_call_family(path: &syn::Path) -> Option<FsCallFamily> {
     let container = (segs.len() >= 2).then(|| &segs[segs.len() - 2].ident);
     match container {
         Some(c) if c == "fs" => fs_module_call_family(leaf),
+        // `fs_err` is a drop-in `std::fs` wrapper with the same leaf set —
+        // its reads must disarm `surface-only-io` exactly like `std::fs`
+        // reads, and its writes must arm it (scrap-rs#120). Note
+        // `fs_err::File::open` needs no special case: the container match
+        // keys on the LAST TWO segments, so any `File::open` qualifies
+        // regardless of crate prefix.
+        Some(c) if c == "fs_err" => fs_module_call_family(leaf),
         Some(c) if c == "File" => file_type_call_family(leaf),
         // UFCS surface checks: `Path::exists(p)` / `try_exists` / `is_file`
         // / `is_dir` are free-function Calls (round-4 #2 recall-gap fix).
@@ -1090,15 +1115,6 @@ fn unwrap_fallible_terminal(expr: &syn::Expr) -> &syn::Expr {
     }
 }
 
-/// `true` when a method-call receiver chain is an `OpenOptions` builder
-/// configured for writing — `OpenOptions::new()` somewhere at the chain
-/// root AND at least one write-ENABLING option (`.write(true)` /
-/// `.append(true)` / `.create(true)` / `.create_new(true)` — with a
-/// literal `true` arg) on the chain. Walks the receiver chain.
-fn receiver_is_write_openoptions(receiver: &syn::Expr) -> bool {
-    chain_has_openoptions_root(receiver) && chain_has_write_option(receiver)
-}
-
 /// `true` when a method call's first argument is the literal `true`.
 /// Used to distinguish `OpenOptions::new().write(true)` (enables writing)
 /// from `.write(false)` (disables it — the flags default false and only
@@ -1146,6 +1162,22 @@ fn chain_has_write_option(expr: &syn::Expr) -> bool {
             return true;
         }
         return chain_has_write_option(&mc.receiver);
+    }
+    false
+}
+
+/// `true` when some method in the receiver chain ENABLES reading — a
+/// `.read` call whose first arg is the literal `true` (scrap-rs#120).
+/// Same literal-`true` rule as [`chain_has_write_option`]: the flag
+/// defaults false, so `.read(false)` does not enable and is skipped.
+/// No collision with `io::Read::read(&mut buf)` — that form's argument
+/// is a buffer, never a literal bool.
+fn chain_has_read_option(expr: &syn::Expr) -> bool {
+    if let syn::Expr::MethodCall(mc) = expr {
+        if mc.method == "read" && method_call_has_true_arg(mc) {
+            return true;
+        }
+        return chain_has_read_option(&mc.receiver);
     }
     false
 }
@@ -2070,15 +2102,24 @@ mod tests {
     }
 
     #[test]
-    fn openoptions_read_only_open_does_not_project_write() {
-        // `.read(true).open(p)` is a READ-configured open — NOT a write.
-        // It also is not `File::open`, so it projects no fs fact at all.
+    fn openoptions_read_only_open_projects_read_not_write() {
+        // `.read(true).open(p)` is a READ-configured open — the same
+        // content-read-back signal as `File::open` (scrap-rs#120). It
+        // projects exactly one `FilesystemRead{OpenRead}` and NO write.
+        // (Pre-#120 this projected nothing — the unrecognized-read FP.)
         let facts = fs_facts(
             r#"fn it() -> std::io::Result<()> { OpenOptions::new().read(true).open("/tmp/r")?; Ok(()) }"#,
         );
+        assert_eq!(facts.len(), 1, "exactly one fact: {facts:?}");
         assert!(
-            facts.is_empty(),
-            "read-only OpenOptions must not project a write: {facts:?}"
+            matches!(
+                &facts[0],
+                BehavioralFact::FilesystemRead {
+                    kind: FsReadKind::OpenRead,
+                    ..
+                }
+            ),
+            "read-only OpenOptions projects an OpenRead, got: {facts:?}"
         );
     }
 
