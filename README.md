@@ -81,10 +81,13 @@ cargo run -p scrap4rs -- --src crates/scrap-core --format stdout --top 20 --only
 cargo run -p scrap4rs -- --help
 ```
 
-`scrap4rs init` writes a `scrap.toml` skeleton in the current
-directory with commented-out detector blocks + exclude templates;
-`crates/scrap4rs/scrap4rs.example.toml` is the canonical reference
-copy committed to the repo.
+`scrap4rs init` writes a fully-annotated `scrap.toml` skeleton in the
+current directory covering every config section (excludes, extensions,
+opt-outs, per-detector tables, overrides) with defaults annotated.
+[`scrap.example.toml`](scrap.example.toml) at the workspace root is
+that exact output, committed as the canonical option reference and
+kept byte-identical to fresh `init` output by a CI sync test
+(documentation rots; CI doesn't).
 
 ### Configuration
 

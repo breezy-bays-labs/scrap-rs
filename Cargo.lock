@@ -1098,6 +1098,7 @@ dependencies = [
  "serde_json",
  "static_assertions",
  "syn",
+ "tempfile",
  "tokio",
 ]
 

@@ -56,6 +56,9 @@ quote = { workspace = true }
 # `insta` snapshots — per-fixture `ParsedTestFile` shape assertions
 # at `tests/parser_snapshots.rs` (lands in S2.1+).
 insta = { workspace = true }
+# `tempfile` — isolated CWD for the `scrap.example.toml` byte-identity
+# sync test (`tests/example_config_sync.rs`, scrap-rs#107).
+tempfile = { workspace = true }
 # `proptest` invariants — no-panic + idempotent re-parse + span
 # monotonicity at `tests/parser_props.rs` (lands in S3.1).
 proptest = { workspace = true }
