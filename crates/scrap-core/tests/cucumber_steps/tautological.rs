@@ -17,8 +17,8 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use cucumber::{given, then, when};
-use scrap_core::cli::config::DetectorConfig;
 use scrap_core::detectors::tautological_assertion;
+use scrap_core::domain::config::DetectorConfig;
 use scrap_core::domain::literal_value::LiteralValue;
 use scrap_core::domain::parsed::{ParsedAssertion, ParsedTest};
 use scrap_core::domain::smell::SmellCategory;

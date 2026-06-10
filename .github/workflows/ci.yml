@@ -299,6 +299,37 @@ jobs:
           fi
           echo "scrap4rs adapter is parser-confined (syn/quote/proc_macro2/tree_sitter/swc/oxc only inside parser/)"
 
+  detectors-layer-purity:
+    name: scrap-core detectors layering purity (detectors → cli ban)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # adr-hexagonal-layout: `detectors/` must never depend on `cli/`.
+    # The POD config types (`FileConfig`, `DetectorConfig`, `Override`,
+    # `resolve_detector_for_path`) live in `domain::config`; `cli::config`
+    # only re-exports them for loader-side back-compat. Two detectors
+    # shipped with the re-export path (Gemini HIGH on PR #103) because
+    # no mechanical gate covered this edge — ast-purity bans AST libs,
+    # adapter-name-purity bans name literals, neither catches
+    # `detectors/ → cli/`. This job closes that gap (scrap-rs#104).
+    #
+    # `use`-form only (same documented limitation as ast-purity):
+    # anchoring on `^\s*use` keeps doc-comment prose mentioning
+    # `crate::cli` from false-positivizing. Known out-of-scope edge:
+    # `core/mod.rs` imports `cli::config::ConfigError` (loader-error
+    # plumbing) — tracked in the #104 PR discussion, not banned here.
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Reject cli/ imports inside scrap-core detectors
+        run: |
+          set -euo pipefail
+          if grep -rEn '^[[:space:]]*use[[:space:]]+(::)?crate::cli(::|;|[[:space:]]|$)' crates/scrap-core/src/detectors/; then
+            echo "::error::detectors/ must never import from cli/ — POD config types live in crate::domain::config (adr-hexagonal-layout, scrap-rs#104)"
+            exit 1
+          fi
+          echo "scrap-core detectors are cli-free (domain-only imports)"
+
   adapter-name-purity:
     # NOTE: the `name:` string below is a REQUIRED branch-protection
     # context on `main`. It is INTENTIONALLY kept verbatim across the

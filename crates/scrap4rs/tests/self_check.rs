@@ -31,9 +31,9 @@
 //! offending fixture so the next step is clear.
 
 use scrap_core::adapters::source::fs::FsWalker;
-use scrap_core::cli::config::DetectorConfig;
 use scrap_core::detectors::{no_op_io, surface_only_io, tautological_assertion, zero_assertion};
 use scrap_core::domain::config::AnalysisConfig;
+use scrap_core::domain::config::DetectorConfig;
 use scrap_core::domain::types::{FilePath, SourceRoot};
 use scrap_core::ports::parser::TestParserPort;
 use scrap_core::ports::source::SourcePort;
