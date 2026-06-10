@@ -680,3 +680,133 @@ fn fires_on_ufcs_path_surface_check() {
         "#,
     ));
 }
+
+// ── Widened read recognition (scrap-rs#120) ──────────────────────────────
+
+#[test]
+fn does_not_fire_on_fs_err_read_to_string_readback() {
+    // `fs_err` is a drop-in std::fs wrapper; its read-back must disarm
+    // the smell exactly like `std::fs::read_to_string` (scrap-rs#120).
+    assert!(!fires(
+        r#"
+        #[test]
+        fn fs_err_read_to_string() -> std::io::Result<()> {
+            let p = "/tmp/scrap-fse-rts.txt";
+            std::fs::write(p, b"data")?;
+            assert!(std::path::Path::new(p).exists());
+            let s = fs_err::read_to_string(p)?;
+            assert_eq!(s, "data");
+            Ok(())
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn does_not_fire_on_fs_err_read_readback() {
+    assert!(!fires(
+        r#"
+        #[test]
+        fn fs_err_read() -> std::io::Result<()> {
+            let p = "/tmp/scrap-fse-r.txt";
+            fs_err::write(p, b"data")?;
+            assert!(std::path::Path::new(p).exists());
+            let bytes = fs_err::read(p)?;
+            assert_eq!(bytes, b"data");
+            Ok(())
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn does_not_fire_on_fs_err_file_open_readback() {
+    // `fs_err::File::open(p)` — the container match keys on the path's
+    // last two segments, so the `File` container already recognises this
+    // regardless of crate prefix. Safe-idiom regression guard.
+    assert!(!fires(
+        r#"
+        #[test]
+        fn fs_err_file_open() -> std::io::Result<()> {
+            let p = "/tmp/scrap-fse-fo.txt";
+            std::fs::write(p, b"data")?;
+            assert!(std::path::Path::new(p).exists());
+            let f = fs_err::File::open(p)?;
+            drop(f);
+            Ok(())
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn fires_on_fs_err_write_then_exists() {
+    // Symmetric widening: `fs_err::write` is a WRITE — with only a
+    // surface check and no read-back it must fire (recall guard for the
+    // fs_err container addition).
+    assert!(fires(
+        r#"
+        #[test]
+        fn fs_err_write_only_surface() -> std::io::Result<()> {
+            let p = "/tmp/scrap-fse-w.txt";
+            fs_err::write(p, b"data")?;
+            assert!(std::path::Path::new(p).exists());
+            Ok(())
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn does_not_fire_on_openoptions_read_true_open() {
+    // `OpenOptions::new().read(true).open(p)` is a content read-back —
+    // opening for read is the same signal as `File::open` (scrap-rs#120).
+    assert!(!fires(
+        r#"
+        #[test]
+        fn open_options_read_true() -> std::io::Result<()> {
+            let p = "/tmp/scrap-oo-rt.txt";
+            std::fs::write(p, b"data")?;
+            assert!(std::path::Path::new(p).exists());
+            OpenOptions::new().read(true).open(p)?;
+            Ok(())
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn does_not_fire_on_openoptions_read_write_open() {
+    // A read+write open emits BOTH facts; the read disarms the smell
+    // even though the same call is also the write under inspection.
+    assert!(!fires(
+        r#"
+        #[test]
+        fn open_options_read_write() -> std::io::Result<()> {
+            let p = "/tmp/scrap-oo-rw.txt";
+            OpenOptions::new().read(true).write(true).create(true).open(p)?;
+            assert!(std::path::Path::new(p).exists());
+            Ok(())
+        }
+        "#,
+    ));
+}
+
+#[test]
+fn fires_on_openoptions_read_false_open() {
+    // `.read(false)` does NOT enable reading (flags default false and
+    // only enable on a literal `true` — same rule as the write flags).
+    // With a std write + surface check and no real read → must fire.
+    assert!(fires(
+        r#"
+        #[test]
+        fn open_options_read_false() -> std::io::Result<()> {
+            let p = "/tmp/scrap-oo-rf.txt";
+            std::fs::write(p, b"data")?;
+            assert!(std::path::Path::new(p).exists());
+            OpenOptions::new().read(false).write(true).open(p)?;
+            Ok(())
+        }
+        "#,
+    ));
+}
