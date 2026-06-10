@@ -39,6 +39,20 @@ pre-push:
           exit 1
         fi
       timeout: 30s
+    detectors-layer-purity:
+      # Mirror the `scrap-core detectors layering purity` CI job
+      # (scrap-rs#104). `detectors/` must never import from `cli/` per
+      # adr-hexagonal-layout — POD config types live in
+      # `crate::domain::config`; `cli::config` only re-exports them.
+      # `use`-form anchor keeps doc-comment prose mentioning
+      # `crate::cli` from false-positivizing.
+      run: |
+        set -euo pipefail
+        if grep -rEn '^[[:space:]]*use[[:space:]]+(::)?crate::(cli(::|;|[[:space:]]|$)|\{[^}]*cli(::|,|[[:space:]]|\}))' crates/scrap-core/src/detectors/; then
+          echo "detectors/ must never import from cli/ — use crate::domain::config (adr-hexagonal-layout, scrap-rs#104)"
+          exit 1
+        fi
+      timeout: 30s
     adapter-name-purity:
       # Mirror the `scrap-core adapter-name literal purity` CI job
       # (scrap-rs#18 → scrap-rs#37). Rejects double-quoted "scrap4rs" /

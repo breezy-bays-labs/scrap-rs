@@ -17,8 +17,8 @@
 //! together at rebase time; the regeneration is an expected, known
 //! diff, not a regression.
 
-use scrap_core::cli::config::DetectorConfig;
 use scrap_core::detectors::zero_assertion::detect;
+use scrap_core::domain::config::DetectorConfig;
 use scrap_core::domain::parsed::ParsedTest;
 use scrap_core::domain::types::{FilePath, QualifiedName, Span, TestIdentity};
 use std::collections::BTreeSet;

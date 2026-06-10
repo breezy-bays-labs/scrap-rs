@@ -123,6 +123,46 @@ jobs:
       - uses: ./.github/actions/setup-rust
       - run: cargo test -p scrap-examples --locked
 
+  config-dogfood:
+    name: scrap.toml config dogfood (discovery + load + merge)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Proves the committed workspace scrap.toml is a real product
+    # surface (scrap-rs#97): the released CLI auto-discovers it
+    # (discover_config walks up from --src), loads it, and applies the
+    # merge — end-to-end through the binary, not the library harness.
+    #
+    # Differential design: Run A (no --config) must see the root
+    # config's corpus exclude → zero smells; Run B (explicit empty
+    # config over the SAME tree) must fire the bad-by-design corpus →
+    # nonzero smells. A alone could pass via defaults; B proves the
+    # zero came from the DISCOVERED file. Counts use smells, not
+    # findings — the envelope emits a per-test finding entry even when
+    # a test is clean.
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - run: cargo build -p scrap4rs --locked
+      - name: Differential — discovered scrap.toml vs explicit empty config
+        run: |
+          bin=target/debug/scrap4rs
+          "$bin" --src crates/scrap-examples --format json --no-fail > /tmp/discovered.json
+          a=$(jq '[.result.files[].findings[].smells[]] | length' /tmp/discovered.json)
+          : > /tmp/empty-scrap.toml
+          "$bin" --src crates/scrap-examples --config /tmp/empty-scrap.toml --format json --no-fail > /tmp/explicit.json
+          b=$(jq '[.result.files[].findings[].smells[]] | length' /tmp/explicit.json)
+          echo "discovered-config smells: $a / empty-config smells: $b"
+          if [ "$a" -ne 0 ]; then
+            echo "::error::workspace scrap.toml was not discovered/applied — expected 0 smells, got $a. Fix the flagged test or the root config; do NOT exclude the harness (scrap-rs#97)."
+            exit 1
+          fi
+          if [ "$b" -eq 0 ]; then
+            echo "::error::differential broken — explicit empty config produced no smells over the bad-by-design corpus; detector or corpus regression (scrap-rs#97)."
+            exit 1
+          fi
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
@@ -298,6 +338,43 @@ jobs:
             exit 1
           fi
           echo "scrap4rs adapter is parser-confined (syn/quote/proc_macro2/tree_sitter/swc/oxc only inside parser/)"
+
+  detectors-layer-purity:
+    name: scrap-core detectors layering purity (detectors → cli ban)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # adr-hexagonal-layout: `detectors/` must never depend on `cli/`.
+    # The POD config types (`FileConfig`, `DetectorConfig`, `Override`,
+    # `resolve_detector_for_path`) live in `domain::config`; `cli::config`
+    # only re-exports them for loader-side back-compat. Two detectors
+    # shipped with the re-export path (Gemini HIGH on PR #103) because
+    # no mechanical gate covered this edge — ast-purity bans AST libs,
+    # adapter-name-purity bans name literals, neither catches
+    # `detectors/ → cli/`. This job closes that gap (scrap-rs#104).
+    #
+    # `use`-line anchored (same heuristic class as ast-purity): catches
+    # direct (`use crate::cli::…`) AND grouped (`use crate::{…, cli::…}`)
+    # single-line forms — the grouped arm closes the bypass Gemini
+    # flagged on PR #128. Anchoring on `^\s*use` keeps doc-comment prose
+    # mentioning `crate::cli` from false-positivizing. Documented
+    # limitations (heuristic, not a parser): multi-line grouped imports
+    # and inline fully-qualified `crate::cli::…` paths in code — the
+    # codebase idiom always imports, and clippy/review cover the rest.
+    # Known out-of-scope edge: `core/mod.rs` imports
+    # `cli::config::ConfigError` (loader-error plumbing) — tracked in
+    # the #104 PR discussion, not banned here.
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Reject cli/ imports inside scrap-core detectors
+        run: |
+          set -euo pipefail
+          if grep -rEn '^[[:space:]]*use[[:space:]]+(::)?crate::(cli(::|;|[[:space:]]|$)|\{[^}]*cli(::|,|[[:space:]]|\}))' crates/scrap-core/src/detectors/; then
+            echo "::error::detectors/ must never import from cli/ — POD config types live in crate::domain::config (adr-hexagonal-layout, scrap-rs#104)"
+            exit 1
+          fi
+          echo "scrap-core detectors are cli-free (domain-only imports)"
 
   adapter-name-purity:
     # NOTE: the `name:` string below is a REQUIRED branch-protection
